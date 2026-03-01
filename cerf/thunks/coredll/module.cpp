@@ -177,6 +177,43 @@ void Win32Thunks::RegisterModuleHandlers() {
         regs[0] = 1; /* TRUE */
         return true;
     });
+    Thunk("DisableThreadLibraryCalls", 1232, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] DisableThreadLibraryCalls(hModule=0x%08X) -> TRUE\n", regs[0]);
+        regs[0] = 1;
+        return true;
+    });
+    Thunk("LoadLibraryExW", 1241, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring name = ReadWStringFromEmu(mem, regs[0]);
+        uint32_t flags = regs[2];
+        LOG(THUNK, "[THUNK] LoadLibraryExW('%ls', flags=0x%X)\n", name.c_str(), flags);
+        std::wstring lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+        auto* info = FindThunkedDllW(lower);
+        if (info) { regs[0] = info->fake_handle; return true; }
+        std::string narrow_name;
+        for (auto c : name) narrow_name += (char)c;
+        LoadedDll* dll = LoadArmDll(narrow_name);
+        if (!dll) {
+            LOG(THUNK, "[THUNK]   DLL not found: %s\n", narrow_name.c_str());
+            regs[0] = 0; return true;
+        }
+        /* LOAD_LIBRARY_AS_DATAFILE (0x2) — skip DllMain, just return handle for resources */
+        bool as_datafile = (flags & 0x2) != 0;
+        if (!as_datafile && callback_executor) {
+            for (auto it2 = pending_dll_inits.begin(); it2 != pending_dll_inits.end(); ) {
+                if (it2->base_addr == dll->base_addr) {
+                    LOG(THUNK, "[THUNK]   Calling DllMain at 0x%08X\n", it2->entry_point);
+                    uint32_t args[3] = { it2->base_addr, 1, 0 };
+                    callback_executor(it2->entry_point, args, 3);
+                    it2 = pending_dll_inits.erase(it2);
+                } else {
+                    ++it2;
+                }
+            }
+        }
+        regs[0] = dll->base_addr;
+        return true;
+    });
     Thunk("GetExitCodeThread", 518, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         LOG(THUNK, "[THUNK] GetExitCodeThread(hThread=0x%08X, lpExitCode=0x%08X) -> stub\n", regs[0], regs[1]);
         if (regs[1]) mem.Write32(regs[1], 0);

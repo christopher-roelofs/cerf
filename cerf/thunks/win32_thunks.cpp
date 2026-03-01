@@ -467,16 +467,39 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     case WM_SETICON:            /* lParam = HICON (64-bit on x64) */
     case WM_GETICON:
     case WM_COPYDATA:           /* lParam = COPYDATASTRUCT* */
-    case WM_NOTIFY:             /* lParam = NMHDR* */
-    case WM_DELETEITEM:         /* lParam = DELETEITEMSTRUCT* */
-    case WM_COMPAREITEM:        /* lParam = COMPAREITEMSTRUCT* */
-    case WM_DISPLAYCHANGE:
     case WM_DEVICECHANGE:
     case WM_POWERBROADCAST:
     case WM_INPUT:              /* lParam = HRAWINPUT */
-    case WM_NCHITTEST:
     case WM_NCPAINT:
         return DefWindowProcW(hwnd, msg, wParam, lParam);
+    case WM_NOTIFY: {
+        /* WM_NOTIFY from ARM commctrl: lParam is a pointer to NMHDR in ARM memory.
+           Check if it's an ARM pointer (fits in 32 bits) and forward to ARM WndProc.
+           Native WM_NOTIFY (rare for ARM-registered windows) gets DefWindowProcW. */
+        if (lParam > 0 && (lParam >> 32) == 0) {
+            break; /* Forward to ARM WndProc */
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+    case WM_NCHITTEST:
+        /* lParam = MAKELPARAM(x, y) — no pointers, safe to forward to ARM WndProc.
+           Needed for commctrl hit-testing (toolbar buttons, rebar bands, etc.) */
+        break;
+    case WM_DISPLAYCHANGE:
+        break; /* wParam=bpp, lParam=MAKELPARAM(cx,cy) — no pointers */
+    case WM_DELETEITEM: {
+        /* lParam = DELETEITEMSTRUCT* — ARM commctrl sends this with ARM pointers */
+        if (lParam > 0 && (lParam >> 32) == 0) {
+            break;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+    case WM_COMPAREITEM: {
+        if (lParam > 0 && (lParam >> 32) == 0) {
+            break;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
     case WM_CREATE:
     case WM_NCCREATE: {
         /* Marshal CREATESTRUCT into emulated memory (32-bit layout) */
@@ -591,12 +614,31 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterModuleHandlers();
     RegisterShellHandlers();
     current_dll_context.clear();
-    /* Ensure native host common controls are initialized.
-       ARM commctrl.dll will call CreateWindowExW("ToolbarWindow32") etc. which
-       we thunk to native — these classes must be registered on the host first. */
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_WIN95_CLASSES | ICC_BAR_CLASSES |
-        ICC_COOL_CLASSES | ICC_USEREX_CLASSES };
-    InitCommonControlsEx(&icc);
+
+    /* WinCE UserKData page at fixed address 0xFFFFC800.
+       ARM code reads GetCurrentThreadId/GetCurrentProcessId directly from here
+       (PUserKData[SH_CURTHREAD] at offset +4, PUserKData[SH_CURPROC] at offset +8).
+       Without this, GetCurrentThreadId returns 0 → COMMCTRL g_CriticalSectionOwner
+       assert fires on every entry (0 != 0 is false). */
+    mem.Alloc(0xFFFFC000, 0x1000);
+    mem.Write32(0xFFFFC800 + 0x004, GetCurrentThreadId());  /* SH_CURTHREAD */
+    mem.Write32(0xFFFFC800 + 0x008, GetCurrentProcessId()); /* SH_CURPROC */
+
+    /* Register WinCE system window classes that don't exist on desktop Windows.
+       On WinCE, these are provided by gwes.dll (the OS windowing kernel). */
+    auto registerWinCEClass = [](const wchar_t* name) {
+        WNDCLASSEXW wcx = {};
+        wcx.cbSize = sizeof(wcx);
+        wcx.style = CS_GLOBALCLASS;  /* WinCE system classes are global */
+        wcx.lpfnWndProc = DefWindowProcW;
+        wcx.hInstance = GetModuleHandleW(NULL);
+        wcx.hCursor = LoadCursorW(NULL, IDC_ARROW);
+        wcx.lpszClassName = name;
+        ATOM a = RegisterClassExW(&wcx);
+        LOG(THUNK, "[THUNK] Pre-register WinCE class '%ls' -> atom=%d (err=%d)\n",
+            name, a, a ? 0 : GetLastError());
+    };
+    registerWinCEClass(L"Menu");
 }
 
 uint32_t Win32Thunks::AllocThunk(const std::string& dll, const std::string& func,
@@ -686,6 +728,7 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
     /* For each import, try to resolve from a loaded ARM DLL first,
        then fall back to creating a thunk stub. ARM DLLs are loaded
        on demand (cascading: their imports are resolved recursively). */
+    std::set<std::string> warned_dlls;
     for (auto& imp : info.imports) {
         /* Thunked system DLL (coredll) — always create a thunk */
         if (IsThunkedDll(imp.dll_name)) {
@@ -726,10 +769,12 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
             LOG(THUNK, "[THUNK] WARNING: Export not found in %s for %s@%d, using thunk stub\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), imp.ordinal);
         } else {
-            LOG(THUNK, "[THUNK] ARM DLL not found: %s (will use thunk stubs)\n", imp.dll_name.c_str());
+            if (warned_dlls.insert(imp.dll_name).second) {
+                LOG_ERR("[THUNK] ERROR: DLL not found: %s — imports will fail at runtime!\n", imp.dll_name.c_str());
+            }
         }
 
-        /* Unresolved — create a thunk stub */
+        /* Unresolved — create a thunk stub that will log loudly if called */
         uint32_t thunk_addr = AllocThunk(imp.dll_name, imp.func_name, imp.ordinal, imp.by_ordinal);
         mem.Write32(imp.iat_addr, thunk_addr);
         if (imp.by_ordinal) {

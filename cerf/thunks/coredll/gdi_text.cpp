@@ -44,10 +44,53 @@ void Win32Thunks::RegisterGdiTextHandlers() {
     Thunk("GetTextAlign", 1655, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetTextAlign((HDC)(intptr_t)(int32_t)regs[0]); return true; });
     Thunk("ExtTextOutW", 896, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("GetTextExtentExPointW", 897, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
-    Thunk("EnumFontFamiliesW", 965, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] EnumFontFamiliesW(hdc=0x%08X, family=0x%08X, proc=0x%08X, lParam=0x%08X) -> 1 (stub)\n",
-               regs[0], regs[1], regs[2], regs[3]);
-        regs[0] = 1; return true;
+    Thunk("EnumFontFamiliesW", 965, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t arm_callback = regs[2];
+        uint32_t arm_lparam = regs[3];
+        LOG(THUNK, "[THUNK] EnumFontFamiliesW(hdc=0x%08X, proc=0x%08X)\n", regs[0], arm_callback);
+        if (!callback_executor || !arm_callback) { regs[0] = 1; return true; }
+
+        /* Scratch area for LOGFONT (92 bytes) + TEXTMETRIC (60 bytes) in ARM memory */
+        static uint32_t scratch = 0x3F004000;
+        if (!mem.IsValid(scratch)) mem.Alloc(scratch, 0x1000);
+        uint32_t lf_addr = scratch;
+        uint32_t tm_addr = scratch + 96;
+
+        /* Provide a hardcoded Tahoma font — avoids native GDI calls that may
+           fail in deeply nested callback context. WinCE apps just need to know
+           at least one font exists. */
+        static const wchar_t* font_names[] = { L"Tahoma", L"Arial", L"Courier New" };
+        int result = 1;
+        for (int f = 0; f < 3 && result != 0; f++) {
+            /* Zero-fill both structures */
+            for (uint32_t i = 0; i < 92; i++) mem.Write8(lf_addr + i, 0);
+            for (uint32_t i = 0; i < 60; i++) mem.Write8(tm_addr + i, 0);
+            /* LOGFONTW: height=-13, weight=400, charset=1(DEFAULT), face name */
+            mem.Write32(lf_addr + 0, (uint32_t)-13);  /* lfHeight */
+            mem.Write32(lf_addr + 16, 400);            /* lfWeight (FW_NORMAL) */
+            mem.Write8(lf_addr + 23, 1);               /* lfCharSet (DEFAULT_CHARSET) */
+            mem.Write8(lf_addr + 27, 0x22);            /* lfPitchAndFamily (VARIABLE_PITCH | FF_SWISS) */
+            const wchar_t* name = font_names[f];
+            for (int i = 0; name[i] && i < 31; i++) mem.Write16(lf_addr + 28 + i * 2, name[i]);
+            /* TEXTMETRICW: reasonable defaults */
+            mem.Write32(tm_addr + 0, 16);   /* tmHeight */
+            mem.Write32(tm_addr + 4, 13);   /* tmAscent */
+            mem.Write32(tm_addr + 8, 3);    /* tmDescent */
+            mem.Write32(tm_addr + 20, 7);   /* tmAveCharWidth */
+            mem.Write32(tm_addr + 24, 14);  /* tmMaxCharWidth */
+            mem.Write32(tm_addr + 28, 400); /* tmWeight */
+            mem.Write16(tm_addr + 44, 0x20); /* tmFirstChar */
+            mem.Write16(tm_addr + 46, 0xFFFD); /* tmLastChar */
+            mem.Write8(tm_addr + 55, 0x22); /* tmPitchAndFamily */
+            mem.Write8(tm_addr + 56, 1);    /* tmCharSet (DEFAULT_CHARSET) */
+
+            uint32_t args[4] = { lf_addr, tm_addr, 4 /* TRUETYPE_FONTTYPE */, arm_lparam };
+            LOG(THUNK, "[THUNK] EnumFontFamiliesW: callback for '%ls'\n", name);
+            result = (int)callback_executor(arm_callback, args, 4);
+            LOG(THUNK, "[THUNK] EnumFontFamiliesW: callback returned %d\n", result);
+        }
+        regs[0] = (uint32_t)result;
+        return true;
     });
     Thunk("GetTextFaceW", 967, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(THUNK, "[THUNK] GetTextFaceW(hdc=0x%08X, nCount=%d, lpFaceName=0x%08X) -> 0 (stub)\n",

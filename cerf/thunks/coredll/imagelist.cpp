@@ -9,18 +9,39 @@
 #include <commctrl.h>
 
 void Win32Thunks::RegisterImageListHandlers() {
-    Thunk("InitCommonControlsEx", [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t icc_addr = regs[0];
+    /* InitCommonControlsEx / InitCommonControls — forward to ARM commctrl.dll.
+       The ARM DLL must run its own init (sets fControlInitalized, registers window
+       classes with ARM WndProcs, initializes critical sections). We resolve the
+       export and call into ARM code. If commctrl isn't loaded yet, we load it. */
+    Thunk("InitCommonControlsEx", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(THUNK, "[THUNK] InitCommonControlsEx(icc=0x%08X)\n", regs[0]);
+        LoadedDll* cc = LoadArmDll("commctrl.dll");
+        if (cc && callback_executor) {
+            uint32_t addr = PELoader::ResolveExportName(mem, cc->pe_info, "InitCommonControlsEx");
+            if (addr) {
+                uint32_t args[1] = { regs[0] };
+                regs[0] = callback_executor(addr, args, 1);
+                return true;
+            }
+        }
+        LOG(THUNK, "[THUNK]   commctrl.dll not available, using native fallback\n");
         INITCOMMONCONTROLSEX icc = {};
         icc.dwSize = sizeof(icc);
-        icc.dwICC = icc_addr ? mem.Read32(icc_addr + 4) : ICC_WIN95_CLASSES;
-        BOOL ret = InitCommonControlsEx(&icc);
-        LOG(THUNK, "[THUNK] InitCommonControlsEx(dwICC=0x%X) -> %d\n", icc.dwICC, ret);
-        regs[0] = ret;
+        icc.dwICC = regs[0] ? mem.Read32(regs[0] + 4) : 0xFFFF;
+        regs[0] = InitCommonControlsEx(&icc);
         return true;
     });
-    Thunk("InitCommonControls", [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("InitCommonControls", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         LOG(THUNK, "[THUNK] InitCommonControls()\n");
+        LoadedDll* cc = LoadArmDll("commctrl.dll");
+        if (cc && callback_executor) {
+            uint32_t addr = PELoader::ResolveExportName(mem, cc->pe_info, "InitCommonControls");
+            if (addr) {
+                callback_executor(addr, nullptr, 0);
+                regs[0] = 0;
+                return true;
+            }
+        }
         InitCommonControls(); regs[0] = 0; return true;
     });
     Thunk("ImageList_Create", 742, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -70,5 +91,14 @@ void Win32Thunks::RegisterImageListHandlers() {
         int cx, cy; BOOL ret = ImageList_GetIconSize((HIMAGELIST)(intptr_t)(int32_t)regs[0], &cx, &cy);
         if (regs[1]) mem.Write32(regs[1], cx); if (regs[2]) mem.Write32(regs[2], cy);
         regs[0] = ret; return true;
+    });
+    Thunk("ImageList_AddMasked", 739, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_AddMasked((HIMAGELIST)(intptr_t)(int32_t)regs[0],
+            (HBITMAP)(intptr_t)(int32_t)regs[1], (COLORREF)regs[2]);
+        return true;
+    });
+    Thunk("ImageList_SetBkColor", 763, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_SetBkColor((HIMAGELIST)(intptr_t)(int32_t)regs[0], (COLORREF)regs[1]);
+        return true;
     });
 }

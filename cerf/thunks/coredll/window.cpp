@@ -42,6 +42,12 @@ void Win32Thunks::RegisterWindowHandlers() {
         HWND parent = (HWND)(intptr_t)(int32_t)ReadStackArg(regs,mem,4);
         HMENU menu_h = (HMENU)(intptr_t)(int32_t)ReadStackArg(regs,mem,5);
         exStyle &= 0x0FFFFFFF;
+        /* WinCE allows WS_CHILD windows with NULL parent (e.g. "Menu" class).
+           Desktop Windows doesn't — strip WS_CHILD when parent is NULL. */
+        if (parent == NULL && (style & WS_CHILD)) {
+            style &= ~(uint32_t)WS_CHILD;
+            style |= WS_POPUP;
+        }
         bool is_toplevel = (parent == NULL && !(style & WS_CHILD));
         if (is_toplevel) {
             RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
@@ -53,10 +59,14 @@ void Win32Thunks::RegisterWindowHandlers() {
             if (x==(int)0x80000000) x=CW_USEDEFAULT; if (y==(int)0x80000000) y=CW_USEDEFAULT;
             if (w==(int)0x80000000||w==0) w=320; if (h==(int)0x80000000||h==0) h=240;
         }
-        LOG(THUNK, "[THUNK] CreateWindowExW: class='%ls' title='%ls' style=0x%08X size=(%dx%d)\n", className.c_str(), windowName.c_str(), style, w, h);
+        LOG(THUNK, "[THUNK] CreateWindowExW: class='%ls' title='%ls' style=0x%08X exStyle=0x%08X parent=0x%p size=(%dx%d)\n", className.c_str(), windowName.c_str(), style, exStyle, parent, w, h);
         HWND hwnd = CreateWindowExW(exStyle, className.c_str(), windowName.c_str(), style, x, y, w, h, parent, menu_h, GetModuleHandleW(NULL), NULL);
         if (!hwnd) {
-            LOG(THUNK, "[THUNK]   CreateWindowExW FAILED (error=%d)\n", GetLastError());
+            DWORD err = GetLastError();
+            WNDCLASSEXW probe = {}; probe.cbSize = sizeof(probe);
+            BOOL found = GetClassInfoExW(GetModuleHandleW(NULL), className.c_str(), &probe);
+            BOOL foundGlobal = found ? TRUE : GetClassInfoExW(NULL, className.c_str(), &probe);
+            LOG(THUNK, "[THUNK]   CreateWindowExW FAILED (error=%d, classFound=%d/%d)\n", err, found, foundGlobal);
         }
         if (hwnd) {
             /* Case-insensitive lookup: window classes are case-insensitive */
@@ -96,6 +106,17 @@ void Win32Thunks::RegisterWindowHandlers() {
     Thunk("SetParent", 268, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)(uintptr_t)SetParent((HWND)(intptr_t)(int32_t)regs[0], (HWND)(intptr_t)(int32_t)regs[1]); return true; });
     Thunk("MapWindowPoints", 284, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
     Thunk("GetClassInfoW", 878, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    Thunk("GetClassNameW", 283, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        wchar_t buf[256] = {};
+        int len = GetClassNameW((HWND)(intptr_t)(int32_t)regs[0], buf, 256);
+        uint32_t dst = regs[1], max_count = regs[2];
+        uint32_t copy_len = (uint32_t)len < max_count - 1 ? (uint32_t)len : max_count - 1;
+        for (uint32_t i = 0; i < copy_len; i++)
+            mem.Write16(dst + i * 2, buf[i]);
+        mem.Write16(dst + copy_len * 2, 0);
+        regs[0] = len;
+        return true;
+    });
     Thunk("UnregisterClassW", 884, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
     Thunk("CallWindowProcW", 285, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         regs[0] = (uint32_t)DefWindowProcW((HWND)(intptr_t)(int32_t)regs[1], regs[2], regs[3], ReadStackArg(regs,mem,0)); return true;

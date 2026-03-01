@@ -58,6 +58,9 @@ static void DumpRegisters(ArmCpu& cpu) {
 }
 
 int main(int argc, char* argv[]) {
+    /* Unbuffered stdout so log output is never lost on crash */
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     const char* exe_path = nullptr;
     const char* wince_sys = nullptr;
     bool trace = false;

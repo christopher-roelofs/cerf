@@ -56,14 +56,16 @@ void Win32Thunks::RegisterMemoryHandlers() {
     Thunk("GetProcessHeap", 50, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0xDEAD0001; return true;
     });
-    Thunk("HeapAlloc", 46, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+    auto heapAllocImpl = [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size_arg = regs[2];
         static uint32_t next_heap = 0x40000000;
         mem.Alloc(next_heap, size_arg);
         regs[0] = next_heap;
         next_heap += (size_arg + 0xFFF) & ~0xFFF;
         return true;
-    });
+    };
+    Thunk("HeapAlloc", 46, heapAllocImpl);
+    Thunk("HeapAllocTrace", 20, heapAllocImpl);
     Thunk("HeapCreate", 44, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size_arg = regs[1];
         static uint32_t next_heap = 0x40000000;

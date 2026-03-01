@@ -24,6 +24,10 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("NKDbgPrintfW", 545, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         LOG(DBG, "[NKDbg] %ls\n", ReadWStringFromEmu(mem, regs[0]).c_str()); return true;
     });
+    Thunk("RegisterDbgZones", 546, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] RegisterDbgZones(hMod=0x%08X, lpdbgZones=0x%08X) -> TRUE (stub)\n", regs[0], regs[1]);
+        regs[0] = 1; return true;
+    });
     /* Clipboard */
     Thunk("OpenClipboard", 668, stub1("OpenClipboard"));
     Thunk("CloseClipboard", 669, stub1("CloseClipboard"));
@@ -69,7 +73,21 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("GlobalAddAtomW", 1519, stub1("GlobalAddAtomW"));
     Thunk("GetAPIAddress", 32, stub0("GetAPIAddress"));
     Thunk("WaitForAPIReady", 2562, stub0("WaitForAPIReady"));
-    Thunk("__GetUserKData", 2528, stub0("__GetUserKData"));
+    Thunk("__GetUserKData", 2528, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* WinCE UserKData page: system handle array at offset 0x004.
+           GetCurrentThreadId/GetCurrentProcessId read thread/process handles from here.
+           SH_CURTHREAD=0 (offset 0x004), SH_CURPROC=1 (offset 0x008) */
+        static uint32_t kdata_addr = 0x3FF00000;
+        static bool initialized = false;
+        if (!initialized) {
+            mem.Alloc(kdata_addr, 0x1000);
+            mem.Write32(kdata_addr + 0x004, GetCurrentThreadId());  /* SH_CURTHREAD */
+            mem.Write32(kdata_addr + 0x008, GetCurrentProcessId()); /* SH_CURPROC */
+            initialized = true;
+        }
+        regs[0] = kdata_addr;
+        return true;
+    });
     /* Gesture stubs */
     Thunk("RegisterDefaultGestureHandler", 2928, stub0("RegisterDefaultGestureHandler"));
     Thunk("GetGestureInfo", 2925, stub0("GetGestureInfo"));

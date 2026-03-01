@@ -136,6 +136,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;shell32.lib;comctl32.lib;advapi32.lib;comdlg32.lib;imm32.lib;winmm.lib;msimg32.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <StackReserveSize>67108864</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -183,13 +184,15 @@
     <ClCompile Include="thunks\coredll\module.cpp" />
     <ClCompile Include="thunks\coredll\shell.cpp" />
   </ItemGroup>
-  <!-- WinCE ARM system DLLs — copied to windows/ next to cerf.exe -->
+  <!-- WinCE ARM system DLLs and PDBs — copied to windows/ next to cerf.exe -->
   <ItemGroup>
     <WinceDll Include="$(ProjectDir)..\wince_sys\*.dll" />
+    <WincePdb Include="$(ProjectDir)..\wince_sys\*.pdb" />
   </ItemGroup>
   <Target Name="CopyWinceDlls" AfterTargets="Build">
     <MakeDir Directories="$(OutDir)windows" />
     <Copy SourceFiles="@(WinceDll)" DestinationFolder="$(OutDir)windows" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WincePdb)" DestinationFolder="$(OutDir)windows" SkipUnchangedFiles="true" />
   </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

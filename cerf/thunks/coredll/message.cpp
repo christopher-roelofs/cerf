@@ -65,7 +65,35 @@ void Win32Thunks::RegisterMessageHandlers() {
     });
     Thunk("SendMessageW", 868, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0]; UINT umsg = regs[1]; WPARAM wp = regs[2]; LPARAM lp = regs[3];
-        if (umsg == WM_SETTEXT && lp != 0) {
+        /* For ARM windows, dispatch directly via callback_executor to keep ARM
+           pointers in ARM address space. Depth-limited to prevent stack overflow
+           from commctrl re-entrancy (ARM → SendMessage → ARM → SendMessage → ...). */
+        auto it = hwnd_wndproc_map.find(hw);
+        if (it != hwnd_wndproc_map.end() && callback_executor) {
+            static int send_depth = 0;
+            if (send_depth < 5) {
+                send_depth++;
+                uint32_t args[4] = { regs[0], (uint32_t)umsg, (uint32_t)wp, (uint32_t)lp };
+                regs[0] = callback_executor(it->second, args, 4);
+                send_depth--;
+                return true;
+            }
+            /* Too deep — return DefWindowProc to break recursion */
+            regs[0] = (uint32_t)DefWindowProcW(hw, umsg, wp, lp);
+            return true;
+        }
+        /* Target is a native window — marshal ARM pointers to native.
+           Messages that pass strings in lParam need conversion from
+           emulated ARM addresses to native pointers. */
+        bool lp_is_string = (lp != 0) && (
+            umsg == WM_SETTEXT ||
+            umsg == CB_ADDSTRING || umsg == CB_FINDSTRING ||
+            umsg == CB_FINDSTRINGEXACT || umsg == CB_INSERTSTRING ||
+            umsg == CB_SELECTSTRING ||
+            umsg == LB_ADDSTRING || umsg == LB_FINDSTRING ||
+            umsg == LB_FINDSTRINGEXACT || umsg == LB_INSERTSTRING ||
+            umsg == LB_SELECTSTRING);
+        if (lp_is_string) {
             std::wstring text = ReadWStringFromEmu(mem, (uint32_t)lp);
             regs[0] = (uint32_t)SendMessageW(hw, umsg, wp, (LPARAM)text.c_str());
         } else if (umsg == WM_GETTEXT && lp != 0) {
@@ -74,6 +102,13 @@ void Win32Thunks::RegisterMessageHandlers() {
             LRESULT len = SendMessageW(hw, umsg, wp, (LPARAM)buf.data());
             for (int i = 0; i <= (int)len && i < maxlen; i++) mem.Write16((uint32_t)lp + i * 2, buf[i]);
             mem.Write16((uint32_t)lp + (int)len * 2, 0);
+            regs[0] = (uint32_t)len;
+        } else if ((umsg == CB_GETLBTEXT || umsg == LB_GETTEXT) && lp != 0) {
+            wchar_t buf[256] = {};
+            LRESULT len = SendMessageW(hw, umsg, wp, (LPARAM)buf);
+            if (len != CB_ERR) {
+                for (int i = 0; i <= (int)len; i++) mem.Write16((uint32_t)lp + i * 2, buf[i]);
+            }
             regs[0] = (uint32_t)len;
         } else {
             regs[0] = (uint32_t)SendMessageW(hw, umsg, wp, lp);

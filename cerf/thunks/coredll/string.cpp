@@ -90,6 +90,9 @@ void Win32Thunks::RegisterStringHandlers() {
     Thunk("wcstol", 1082, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         regs[0] = (uint32_t)wcstol(ReadWStringFromEmu(mem, regs[0]).c_str(), NULL, regs[2]); return true;
     });
+    Thunk("wcstoul", 1083, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        regs[0] = (uint32_t)wcstoul(ReadWStringFromEmu(mem, regs[0]).c_str(), NULL, regs[2]); return true;
+    });
     Thunk("towlower", 194, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)towlower((wint_t)regs[0]); return true; });
     Thunk("towupper", 195, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)towupper((wint_t)regs[0]); return true; });
     Thunk("iswctype", 193, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)iswctype((wint_t)regs[0], regs[1]); return true; });
@@ -280,7 +283,21 @@ void Win32Thunks::RegisterStringHandlers() {
     });
     /* Ordinal-only entries (name mapping, no handler) */
     ThunkOrdinal("wvsprintfW", 57);
-    ThunkOrdinal("wcsncat", 64);
+    Thunk("wcsncat", 64, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[0], src = regs[1], count = regs[2];
+        uint32_t dlen = 0;
+        while (mem.Read16(dst + dlen * 2)) dlen++;
+        uint32_t i = 0;
+        while (i < count) {
+            uint16_t ch = mem.Read16(src + i * 2);
+            mem.Write16(dst + (dlen + i) * 2, ch);
+            if (ch == 0) break;
+            i++;
+        }
+        mem.Write16(dst + (dlen + i) * 2, 0);
+        regs[0] = dst;
+        return true;
+    });
     ThunkOrdinal("wcspbrk", 68);
     ThunkOrdinal("swprintf", 1097);
     ThunkOrdinal("swscanf", 1098);

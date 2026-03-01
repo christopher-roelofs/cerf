@@ -143,6 +143,18 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     Thunk("CreateSolidBrush", 931, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)CreateSolidBrush(regs[0]); return true;
     });
+    Thunk("CreateDIBPatternBrushPt", 929, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* lpPackedDIB points to a BITMAPINFO + bits in emulated memory.
+           Copy it to host memory and create the brush natively. */
+        uint32_t dib_addr = regs[0], usage = regs[1];
+        uint8_t* host = mem.Translate(dib_addr);
+        if (host) {
+            regs[0] = (uint32_t)(uintptr_t)CreateDIBPatternBrushPt(host, usage);
+        } else {
+            regs[0] = 0;
+        }
+        return true;
+    });
     Thunk("DrawEdge", 932, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc;
         rc.left = mem.Read32(regs[1]); rc.top = mem.Read32(regs[1]+4);
