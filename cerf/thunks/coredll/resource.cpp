@@ -2,6 +2,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 /* Resource loading thunks: LoadStringW, LoadBitmapW, LoadImageW, FindResource, LoadAcceleratorsW */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterResourceHandlers() {
@@ -174,7 +175,7 @@ void Win32Thunks::RegisterResourceHandlers() {
     });
     Thunk("LoadAcceleratorsW", 94, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t hmod = regs[0], name_id = regs[1];
-        printf("[THUNK] LoadAcceleratorsW(0x%08X, %d)\n", hmod, name_id);
+        LOG(THUNK, "[THUNK] LoadAcceleratorsW(0x%08X, %d)\n", hmod, name_id);
         uint32_t rsrc_rva = 0, rsrc_sz = 0;
         bool is_arm = (hmod == emu_hinstance);
         if (is_arm) {
@@ -207,7 +208,7 @@ void Win32Thunks::RegisterResourceHandlers() {
                     HACCEL h = CreateAcceleratorTableW(accels, count);
                     delete[] accels;
                     regs[0] = (uint32_t)(uintptr_t)h;
-                    printf("[THUNK]   -> HACCEL 0x%08X (%d entries)\n", regs[0], count);
+                    LOG(THUNK, "[THUNK]   -> HACCEL 0x%08X (%d entries)\n", regs[0], count);
                     return true;
                 }
             }

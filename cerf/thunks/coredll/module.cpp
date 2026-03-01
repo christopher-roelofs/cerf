@@ -2,6 +2,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 /* Module/process management thunks */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include "../../loader/pe_loader.h"
 #include <algorithm>
 #include <cstdio>
@@ -11,10 +12,10 @@ void Win32Thunks::RegisterModuleHandlers() {
         uint32_t name_addr = regs[0];
         if (name_addr == 0) {
             regs[0] = emu_hinstance;
-            printf("[THUNK] GetModuleHandleW(NULL) -> 0x%08X\n", regs[0]);
+            LOG(THUNK, "[THUNK] GetModuleHandleW(NULL) -> 0x%08X\n", regs[0]);
         } else {
             std::wstring name = ReadWStringFromEmu(mem, name_addr);
-            printf("[THUNK] GetModuleHandleW('%ls')\n", name.c_str());
+            LOG(THUNK, "[THUNK] GetModuleHandleW('%ls')\n", name.c_str());
             std::wstring lower = name;
             std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
             auto* info = FindThunkedDllW(lower);
@@ -33,15 +34,15 @@ void Win32Thunks::RegisterModuleHandlers() {
     });
     Thunk("LoadLibraryW", 528, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring name = ReadWStringFromEmu(mem, regs[0]);
-        printf("[THUNK] LoadLibraryW('%ls')\n", name.c_str());
+        LOG(THUNK, "[THUNK] LoadLibraryW('%ls')\n", name.c_str());
         std::wstring lower = name;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
         auto* info = FindThunkedDllW(lower);
-        if (info) { regs[0] = info->fake_handle; printf("[THUNK]   -> thunked (%s)\n", info->name); return true; }
+        if (info) { regs[0] = info->fake_handle; LOG(THUNK, "[THUNK]   -> thunked (%s)\n", info->name); return true; }
         auto it = loaded_dlls.find(lower);
         if (it != loaded_dlls.end()) {
             regs[0] = it->second.base_addr;
-            printf("[THUNK]   Already loaded at 0x%08X\n", regs[0]);
+            LOG(THUNK, "[THUNK]   Already loaded at 0x%08X\n", regs[0]);
             return true;
         }
         std::string narrow_name;
@@ -49,12 +50,12 @@ void Win32Thunks::RegisterModuleHandlers() {
         std::string dll_path = exe_dir + narrow_name;
         FILE* f = fopen(dll_path.c_str(), "rb");
         if (!f) { dll_path = narrow_name; f = fopen(dll_path.c_str(), "rb"); }
-        if (!f) { printf("[THUNK]   DLL not found: %s\n", narrow_name.c_str()); regs[0] = 0; return true; }
+        if (!f) { LOG(THUNK, "[THUNK]   DLL not found: %s\n", narrow_name.c_str()); regs[0] = 0; return true; }
         fclose(f);
         PEInfo dll_info = {};
         uint32_t entry = PELoader::LoadDll(dll_path.c_str(), mem, dll_info);
         if (entry == 0 && dll_info.image_base == 0) {
-            printf("[THUNK]   Failed to load ARM DLL: %s\n", dll_path.c_str());
+            LOG(THUNK, "[THUNK]   Failed to load ARM DLL: %s\n", dll_path.c_str());
             regs[0] = 0; return true;
         }
         LoadedDll loaded;
@@ -64,7 +65,7 @@ void Win32Thunks::RegisterModuleHandlers() {
         loaded.native_rsrc_handle = NULL;
         loaded_dlls[lower] = loaded;
         regs[0] = dll_info.image_base;
-        printf("[THUNK]   Loaded ARM DLL at 0x%08X\n", regs[0]);
+        LOG(THUNK, "[THUNK]   Loaded ARM DLL at 0x%08X\n", regs[0]);
         return true;
     });
     /* Shared logic for GetProcAddress variants. is_wide=true for GetProcAddressW
@@ -82,7 +83,7 @@ void Win32Thunks::RegisterModuleHandlers() {
         if ((regs[1] & 0xFFFF0000) == 0 && regs[1] != 0) {
             uint16_t ordinal = (uint16_t)regs[1];
             std::string resolved = ResolveOrdinal(ordinal);
-            printf("[THUNK] GetProcAddress(0x%08X [%s], ordinal %d -> %s)\n", hmod, dll_name.c_str(), ordinal,
+            LOG(THUNK, "[THUNK] GetProcAddress(0x%08X [%s], ordinal %d -> %s)\n", hmod, dll_name.c_str(), ordinal,
                    resolved.empty() ? "UNKNOWN" : resolved.c_str());
             regs[0] = AllocThunk(dll_name, resolved, ordinal, resolved.empty());
             return true;
@@ -94,11 +95,11 @@ void Win32Thunks::RegisterModuleHandlers() {
         } else {
             func_name = ReadStringFromEmu(mem, regs[1]);
         }
-        printf("[THUNK] GetProcAddress%s(0x%08X [%s], '%s')\n",
+        LOG(THUNK, "[THUNK] GetProcAddress%s(0x%08X [%s], '%s')\n",
                is_wide ? "W" : "", hmod, dll_name.c_str(), func_name.c_str());
         if (FindThunkedDll(dll_name) != nullptr || func_name.size() > 0) {
             regs[0] = AllocThunk(dll_name, func_name, 0, false);
-            printf("[THUNK]   -> thunk at 0x%08X\n", regs[0]);
+            LOG(THUNK, "[THUNK]   -> thunk at 0x%08X\n", regs[0]);
         } else {
             regs[0] = 0;
         }
@@ -128,21 +129,21 @@ void Win32Thunks::RegisterModuleHandlers() {
     Thunk("CacheSync", 577, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("CacheRangeFlush", 1765, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("ExitProcess", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] ExitProcess(%d)\n", regs[0]); ExitProcess(regs[0]); return true;
+        LOG(THUNK, "[THUNK] ExitProcess(%d)\n", regs[0]); ExitProcess(regs[0]); return true;
     });
     Thunk("TerminateProcess", 544, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] ExitProcess(%d)\n", regs[0]); ExitProcess(regs[0]); return true;
+        LOG(THUNK, "[THUNK] ExitProcess(%d)\n", regs[0]); ExitProcess(regs[0]); return true;
     });
     Thunk("ExitThread", 6, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] ExitThread(%d)\n", regs[0]); ExitThread(regs[0]); return true;
+        LOG(THUNK, "[THUNK] ExitThread(%d)\n", regs[0]); ExitThread(regs[0]); return true;
     });
     Thunk("FreeLibrary", 529, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] FreeLibrary(hModule=0x%08X) -> TRUE (stub)\n", regs[0]);
+        LOG(THUNK, "[THUNK] FreeLibrary(hModule=0x%08X) -> TRUE (stub)\n", regs[0]);
         regs[0] = 1; /* TRUE */
         return true;
     });
     Thunk("GetExitCodeThread", 518, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] GetExitCodeThread(hThread=0x%08X, lpExitCode=0x%08X) -> stub\n", regs[0], regs[1]);
+        LOG(THUNK, "[THUNK] GetExitCodeThread(hThread=0x%08X, lpExitCode=0x%08X) -> stub\n", regs[0], regs[1]);
         if (regs[1]) mem.Write32(regs[1], 0);
         regs[0] = 1;
         return true;

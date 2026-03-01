@@ -1,5 +1,6 @@
 /* ARM mode instruction implementations */
 #include "arm_cpu.h"
+#include "../log.h"
 #include <cstdlib>
 
 void ArmCpu::ExecuteArm(uint32_t insn) {
@@ -117,7 +118,7 @@ void ArmCpu::ExecuteArm(uint32_t insn) {
     }
 
     /* Coprocessor / undefined */
-    fprintf(stderr, "[ARM] Unhandled instruction: 0x%08X at PC=0x%08X\n", insn, r[REG_PC] - 4);
+    LOG_ERR("[ARM] Unhandled instruction: 0x%08X at PC=0x%08X\n", insn, r[REG_PC] - 4);
     halted = true;
     halt_code = 1;
 }
@@ -592,7 +593,7 @@ void ArmCpu::ArmSwap(uint32_t insn) {
 
 void ArmCpu::ArmSoftwareInterrupt(uint32_t insn) {
     uint32_t swi_num = insn & 0x00FFFFFF;
-    fprintf(stderr, "[ARM] SWI #0x%X at PC=0x%08X\n", swi_num, r[REG_PC] - 4);
+    LOG(CPU, "[ARM] SWI #0x%X at PC=0x%08X\n", swi_num, r[REG_PC] - 4);
 
     /* Windows CE uses SWI for system calls - we handle these through thunks */
     if (thunk_handler) {

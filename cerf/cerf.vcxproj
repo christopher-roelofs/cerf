@@ -143,6 +143,7 @@
     <ClInclude Include="cpu\mem.h" />
     <ClInclude Include="loader\pe_loader.h" />
     <ClInclude Include="thunks\win32_thunks.h" />
+    <ClInclude Include="log.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- CPU emulation -->
@@ -151,6 +152,8 @@
     <ClCompile Include="cpu\thumb_insn.cpp" />
     <!-- PE loader -->
     <ClCompile Include="loader\pe_loader.cpp" />
+    <!-- Logging -->
+    <ClCompile Include="log.cpp" />
     <!-- Entry point -->
     <ClCompile Include="main.cpp" />
     <!-- Thunk infrastructure -->

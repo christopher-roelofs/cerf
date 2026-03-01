@@ -1,5 +1,6 @@
 /* Registry thunks: RegOpenKeyEx, RegCreateKeyEx, RegCloseKey, etc. */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterRegistryHandlers() {
@@ -12,13 +13,13 @@ void Win32Thunks::RegisterRegistryHandlers() {
         std::wstring full_path = ResolveHKey(parent_hkey, subkey);
         auto it = registry.find(full_path);
         if (it == registry.end()) {
-            printf("[REG] RegOpenKeyExW('%ls') -> NOT FOUND\n", full_path.c_str());
+            LOG(REG, "[REG] RegOpenKeyExW('%ls') -> NOT FOUND\n", full_path.c_str());
             regs[0] = ERROR_FILE_NOT_FOUND; return true;
         }
         uint32_t fake = next_fake_hkey++;
         hkey_map[fake] = full_path;
         if (phkResult) mem.Write32(phkResult, fake);
-        printf("[REG] RegOpenKeyExW('%ls') -> 0x%08X\n", full_path.c_str(), fake);
+        LOG(REG, "[REG] RegOpenKeyExW('%ls') -> 0x%08X\n", full_path.c_str(), fake);
         regs[0] = ERROR_SUCCESS; return true;
     });
     Thunk("RegCreateKeyExW", 456, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

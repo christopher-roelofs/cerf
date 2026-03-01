@@ -1,5 +1,6 @@
 /* Thumb mode instruction implementations */
 #include "arm_cpu.h"
+#include "../log.h"
 
 void ArmCpu::ExecuteThumb(uint16_t insn) {
     uint16_t op = (insn >> 8) & 0xFF;
@@ -118,7 +119,7 @@ void ArmCpu::ExecuteThumb(uint16_t insn) {
         return;
     }
 
-    fprintf(stderr, "[THUMB] Unhandled instruction: 0x%04X at PC=0x%08X\n", insn, r[REG_PC] - 2);
+    LOG_ERR("[THUMB] Unhandled instruction: 0x%04X at PC=0x%08X\n", insn, r[REG_PC] - 2);
     halted = true;
     halt_code = 1;
 }
@@ -533,7 +534,7 @@ void ArmCpu::ThumbCondBranch(uint16_t insn) {
 
 void ArmCpu::ThumbSWI(uint16_t insn) {
     uint32_t swi_num = insn & 0xFF;
-    fprintf(stderr, "[THUMB] SWI #0x%X at PC=0x%08X\n", swi_num, r[REG_PC] - 2);
+    LOG(CPU, "[THUMB] SWI #0x%X at PC=0x%08X\n", swi_num, r[REG_PC] - 2);
 
     if (thunk_handler) {
         uint32_t swi_addr = 0xFFFF0000 | swi_num;

@@ -1,5 +1,6 @@
 /* CRT thunks: memcpy, memset, qsort, rand, math */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -37,7 +38,7 @@ void Win32Thunks::RegisterCrtHandlers() {
         return true;
     });
     Thunk("qsort", 1052, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] WARNING: qsort called - stubbed\n"); return true;
+        LOG(THUNK, "[THUNK] WARNING: qsort called - stubbed\n"); return true;
     });
     Thunk("rand", 1053, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)rand(); return true;

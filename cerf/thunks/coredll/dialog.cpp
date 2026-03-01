@@ -1,6 +1,7 @@
 /* Dialog thunks: CreateDialog, DialogBox, EndDialog, DlgItem functions */
 #define NOMINMAX
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <vector>
 

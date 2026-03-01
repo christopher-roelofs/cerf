@@ -1,5 +1,6 @@
 /* ARM compiler runtime: integer division, 64-bit shifts, soft-float helpers */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstring>
 
 void Win32Thunks::RegisterArmRuntimeHandlers() {

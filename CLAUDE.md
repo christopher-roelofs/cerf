@@ -64,7 +64,9 @@ The `references/` directory (gitignored) holds local WinCE SDK materials. See `r
 
 - C++17, MSVC (Visual Studio 2022, v143 toolset)
 - No external dependencies beyond Win32 SDK
-- `printf` for debug/trace output with `[THUNK]`, `[PE]`, `[EMU]` prefixes
+- `LOG()` macro for categorized output: `LOG(THUNK, ...)`, `LOG(PE, ...)`, `LOG(EMU, ...)`, etc.
+- Categories: THUNK, PE, EMU, TRACE, CPU, REG, DBG (defined in `log.h`)
+- `LOG_ERR(...)` for errors (always prints to stderr), `LOG_RAW(...)` for uncategorized output
 - Static linking (`/MT` runtime)
 - Thunk functions return `true` when handled, setting `regs[0]` as the return value
 
@@ -83,6 +85,6 @@ The `references/` directory (gitignored) holds local WinCE SDK materials. See `r
 
 **Every stub function MUST print a console warning** so unimplemented calls are visible during testing. Use the format:
 ```cpp
-printf("[THUNK] FunctionName(...) -> stub\n");
+LOG(THUNK, "[THUNK] FunctionName(...) -> stub\n");
 ```
 Never create a silent stub that just returns a value without logging. This is critical for debugging which functions apps actually call.

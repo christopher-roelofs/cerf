@@ -1,6 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 #include "pe_loader.h"
+#include "../log.h"
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -10,7 +11,7 @@ bool PELoader::ParseHeaders(const uint8_t* data, size_t size, PEInfo& info) {
 
     auto* dos = (IMAGE_DOS_HEADER*)data;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        fprintf(stderr, "[PE] Invalid DOS signature\n");
+        LOG_ERR("[PE] Invalid DOS signature\n");
         return false;
     }
 
@@ -19,7 +20,7 @@ bool PELoader::ParseHeaders(const uint8_t* data, size_t size, PEInfo& info) {
 
     auto* nt = (IMAGE_NT_HEADERS32*)(data + pe_off);
     if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        fprintf(stderr, "[PE] Invalid PE signature\n");
+        LOG_ERR("[PE] Invalid PE signature\n");
         return false;
     }
 
@@ -31,12 +32,12 @@ bool PELoader::ParseHeaders(const uint8_t* data, size_t size, PEInfo& info) {
     info.is_dll = (fh.Characteristics & IMAGE_FILE_DLL) != 0;
 
     if (info.machine != 0x01C0 && info.machine != 0x01C2) {
-        fprintf(stderr, "[PE] Not an ARM binary (machine=0x%04X)\n", info.machine);
+        LOG_ERR("[PE] Not an ARM binary (machine=0x%04X)\n", info.machine);
         return false;
     }
 
     if (oh.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
-        fprintf(stderr, "[PE] Not PE32 format\n");
+        LOG_ERR("[PE] Not PE32 format\n");
         return false;
     }
 
@@ -66,14 +67,14 @@ bool PELoader::ParseHeaders(const uint8_t* data, size_t size, PEInfo& info) {
         info.sections.push_back(sections[i]);
     }
 
-    printf("[PE] Machine=0x%04X ImageBase=0x%08X Entry=0x%08X SizeOfImage=0x%X Subsys=%d\n",
+    LOG(PE, "[PE] Machine=0x%04X ImageBase=0x%08X Entry=0x%08X SizeOfImage=0x%X Subsys=%d\n",
            info.machine, info.image_base, info.entry_point_rva, info.size_of_image, info.subsystem);
-    printf("[PE] Sections: %d, DLL=%d\n", info.num_sections, info.is_dll);
+    LOG(PE, "[PE] Sections: %d, DLL=%d\n", info.num_sections, info.is_dll);
 
     for (auto& s : info.sections) {
         char name[9] = {};
         memcpy(name, s.Name, 8);
-        printf("[PE]   %-8s VirtRVA=0x%08X VirtSize=0x%08X RawOff=0x%08X RawSize=0x%08X\n",
+        LOG(PE, "[PE]  %-8s VirtRVA=0x%08X VirtSize=0x%08X RawOff=0x%08X RawSize=0x%08X\n",
                name, s.VirtualAddress, s.Misc.VirtualSize, s.PointerToRawData, s.SizeOfRawData);
     }
 
@@ -93,7 +94,7 @@ bool PELoader::LoadSections(const uint8_t* data, size_t size, EmulatedMemory& me
     for (auto& s : info.sections) {
         if (s.SizeOfRawData == 0 || s.PointerToRawData == 0) continue;
         if (s.PointerToRawData + s.SizeOfRawData > size) {
-            fprintf(stderr, "[PE] Section raw data exceeds file size\n");
+            LOG_ERR("[PE] Section raw data exceeds file size\n");
             continue;
         }
         DWORD vsize = s.Misc.VirtualSize ? s.Misc.VirtualSize : s.SizeOfRawData;
@@ -134,7 +135,7 @@ bool PELoader::ProcessRelocations(EmulatedMemory& mem, const PEInfo& info, uint3
         offset += block_size;
     }
 
-    printf("[PE] Relocations applied, delta=0x%X\n", delta);
+    LOG(PE, "[PE] Relocations applied, delta=0x%X\n", delta);
     return true;
 }
 
@@ -167,7 +168,7 @@ bool PELoader::ResolveImports(const uint8_t* data, size_t size, EmulatedMemory& 
             strncpy(dll_name, (char*)name_ptr, 255);
         }
 
-        printf("[PE] Import DLL: %s\n", dll_name);
+        LOG(PE, "[PE] Import DLL: %s\n", dll_name);
 
         /* Parse import entries from ILT (or IAT if ILT is 0) */
         uint32_t lookup_rva = (ilt_rva != 0) ? ilt_rva : iat_rva;
@@ -185,7 +186,7 @@ bool PELoader::ResolveImports(const uint8_t* data, size_t size, EmulatedMemory& 
             if (entry & 0x80000000) {
                 imp.by_ordinal = true;
                 imp.ordinal = (uint16_t)(entry & 0xFFFF);
-                printf("[PE]   Import by ordinal: %d\n", imp.ordinal);
+                LOG(PE, "[PE]  Import by ordinal: %d\n", imp.ordinal);
             } else {
                 imp.by_ordinal = false;
                 uint8_t* hint_ptr = mem.Translate(base + entry);
@@ -201,7 +202,7 @@ bool PELoader::ResolveImports(const uint8_t* data, size_t size, EmulatedMemory& 
         desc_addr += 20; /* Next IMAGE_IMPORT_DESCRIPTOR */
     }
 
-    printf("[PE] Total imports: %zu\n", info.imports.size());
+    LOG(PE, "[PE] Total imports: %zu\n", info.imports.size());
     return true;
 }
 
@@ -234,7 +235,7 @@ uint32_t PELoader::Load(const char* path, EmulatedMemory& mem, PEInfo& info) {
     /* Read the file */
     FILE* f = fopen(path, "rb");
     if (!f) {
-        fprintf(stderr, "[PE] Cannot open: %s\n", path);
+        LOG_ERR("[PE] Cannot open: %s\n", path);
         return 0;
     }
 
@@ -246,7 +247,7 @@ uint32_t PELoader::Load(const char* path, EmulatedMemory& mem, PEInfo& info) {
     fread(data.data(), 1, size, f);
     fclose(f);
 
-    printf("[PE] Loading %s (%zu bytes)\n", path, size);
+    LOG(PE, "[PE] Loading %s (%zu bytes)\n", path, size);
 
     if (!ParseHeaders(data.data(), size, info)) return 0;
     if (!LoadSections(data.data(), size, mem, info)) return 0;
@@ -254,7 +255,7 @@ uint32_t PELoader::Load(const char* path, EmulatedMemory& mem, PEInfo& info) {
     if (!ResolveImports(data.data(), size, mem, info)) return 0;
 
     uint32_t entry = info.image_base + info.entry_point_rva;
-    printf("[PE] Entry point: 0x%08X\n", entry);
+    LOG(PE, "[PE] Entry point: 0x%08X\n", entry);
     return entry;
 }
 
@@ -262,7 +263,7 @@ uint32_t PELoader::LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info) 
     /* Read the file */
     FILE* f = fopen(path, "rb");
     if (!f) {
-        fprintf(stderr, "[PE] Cannot open: %s\n", path);
+        LOG_ERR("[PE] Cannot open: %s\n", path);
         return 0;
     }
 
@@ -274,7 +275,7 @@ uint32_t PELoader::LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info) 
     fread(data.data(), 1, size, f);
     fclose(f);
 
-    printf("[PE] Loading DLL %s (%zu bytes)\n", path, size);
+    LOG(PE, "[PE] Loading DLL %s (%zu bytes)\n", path, size);
 
     if (!ParseHeaders(data.data(), size, info)) return 0;
 
@@ -282,11 +283,11 @@ uint32_t PELoader::LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info) 
     uint32_t original_base = info.image_base;
     uint32_t actual_base = FindFreeBase(mem, info.image_base, info.size_of_image);
     if (actual_base == 0) {
-        fprintf(stderr, "[PE] Cannot find free base for DLL %s\n", path);
+        LOG_ERR("[PE] Cannot find free base for DLL %s\n", path);
         return 0;
     }
     if (actual_base != original_base) {
-        printf("[PE] Relocating DLL from 0x%08X to 0x%08X\n", original_base, actual_base);
+        LOG(PE, "[PE] Relocating DLL from 0x%08X to 0x%08X\n", original_base, actual_base);
         info.image_base = actual_base;
     }
 
@@ -295,7 +296,7 @@ uint32_t PELoader::LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info) 
     /* Apply relocations using the original PE base to compute delta */
     if (actual_base != original_base) {
         if (info.reloc_rva == 0 || info.reloc_size == 0) {
-            fprintf(stderr, "[PE] DLL needs relocation but has no .reloc section!\n");
+            LOG_ERR("[PE] DLL needs relocation but has no .reloc section!\n");
             return 0;
         }
         int32_t delta = (int32_t)actual_base - (int32_t)original_base;
@@ -319,13 +320,13 @@ uint32_t PELoader::LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info) 
             }
             offset += block_size;
         }
-        printf("[PE] DLL relocated with delta=0x%X (%d reloc fixups)\n", delta, offset > 0 ? 1 : 0);
+        LOG(PE, "[PE] DLL relocated with delta=0x%X (%d reloc fixups)\n", delta, offset > 0 ? 1 : 0);
     }
 
     if (!ResolveImports(data.data(), size, mem, info)) return 0;
 
     uint32_t entry = info.image_base + info.entry_point_rva;
-    printf("[PE] DLL entry point: 0x%08X\n", entry);
+    LOG(PE, "[PE] DLL entry point: 0x%08X\n", entry);
     return entry;
 }
 
@@ -354,7 +355,7 @@ uint32_t PELoader::ResolveExportOrdinal(EmulatedMemory& mem, const PEInfo& info,
     /* Convert ordinal to index */
     uint32_t index = ordinal - ordinal_base;
     if (index >= num_functions) {
-        printf("[PE] Export ordinal %d out of range (base=%d, count=%d)\n",
+        LOG(PE, "[PE] Export ordinal %d out of range (base=%d, count=%d)\n",
                ordinal, ordinal_base, num_functions);
         return 0;
     }
@@ -366,13 +367,13 @@ uint32_t PELoader::ResolveExportOrdinal(EmulatedMemory& mem, const PEInfo& info,
     if (func_rva >= info.export_rva && func_rva < info.export_rva + info.export_size) {
         uint8_t* fwd = mem.Translate(base + func_rva);
         if (fwd) {
-            printf("[PE] Export ordinal %d is forwarded to: %s\n", ordinal, (char*)fwd);
+            LOG(PE, "[PE] Export ordinal %d is forwarded to: %s\n", ordinal, (char*)fwd);
         }
         return 0; /* Can't resolve forwarded exports */
     }
 
     uint32_t addr = base + func_rva;
-    printf("[PE] Resolved export ordinal %d -> 0x%08X (RVA=0x%08X)\n", ordinal, addr, func_rva);
+    LOG(PE, "[PE] Resolved export ordinal %d -> 0x%08X (RVA=0x%08X)\n", ordinal, addr, func_rva);
     return addr;
 }
 
@@ -398,7 +399,7 @@ uint32_t PELoader::ResolveExportName(EmulatedMemory& mem, const PEInfo& info, co
             uint32_t func_rva = mem.Read32(addr_of_functions + ordinal_index * 4);
             if (func_rva == 0) return 0;
             uint32_t addr = base + func_rva;
-            printf("[PE] Resolved export '%s' -> 0x%08X\n", name.c_str(), addr);
+            LOG(PE, "[PE] Resolved export '%s' -> 0x%08X\n", name.c_str(), addr);
             return addr;
         }
     }

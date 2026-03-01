@@ -1,5 +1,6 @@
 /* GDI thunks: regions, clipping, palette, paint */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterGdiRegionHandlers() {

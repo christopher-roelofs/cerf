@@ -1,6 +1,7 @@
 /* String and locale thunks */
 #define NOMINMAX
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <vector>
 
@@ -192,7 +193,7 @@ void Win32Thunks::RegisterStringHandlers() {
     });
 
     Thunk("LCMapStringW", 199, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] LCMapStringW(locale=0x%X, flags=0x%X, src=0x%08X, srcLen=%d) -> 0 (stub)\n",
+        LOG(THUNK, "[THUNK] LCMapStringW(locale=0x%X, flags=0x%X, src=0x%08X, srcLen=%d) -> 0 (stub)\n",
                regs[0], regs[1], regs[2], (int32_t)regs[3]);
         regs[0] = 0; return true;
     });

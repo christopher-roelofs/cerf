@@ -1,5 +1,6 @@
 /* ARM CPU core: condition checking, barrel shifter, run loop, stepping */
 #include "arm_cpu.h"
+#include "../log.h"
 #include <cstdlib>
 
 bool ArmCpu::CheckCondition(uint32_t cond) const {
@@ -119,7 +120,7 @@ void ArmCpu::Step() {
         trace_idx++;
 
         if (trace) {
-            printf("[TRACE] %08X: %08X  R0=%08X R1=%08X LR=%08X\n",
+            LOG(TRACE, "[TRACE] %08X: %08X  R0=%08X R1=%08X LR=%08X\n",
                    pc, insn, r[0], r[1], r[REG_LR]);
         }
 
@@ -135,16 +136,16 @@ void ArmCpu::Step() {
         return;
     }
     if (!halted && (current_pc == 0xDEADDEAD || current_pc == 0xDEADDEAC)) {
-        printf("\n[EMU] Hit sentinel return address - program returned from entry point\n");
-        printf("[EMU]   Return code (R0) = %d (0x%08X)\n", r[0], r[0]);
+        LOG(EMU, "\n[EMU] Hit sentinel return address - program returned from entry point\n");
+        LOG(EMU, "[EMU]   Return code (R0) = %d (0x%08X)\n", r[0], r[0]);
         halted = true;
         halt_code = r[0];
     }
 
     /* Detect execution from unmapped memory */
     if (!halted && !mem->Translate(current_pc)) {
-        printf("\n[EMU] FAULT: PC at unmapped address 0x%08X!\n", current_pc);
-        printf("[EMU]   R0=%08X R1=%08X LR=%08X SP=%08X\n",
+        LOG(EMU, "\n[EMU] FAULT: PC at unmapped address 0x%08X!\n", current_pc);
+        LOG(EMU, "[EMU]   R0=%08X R1=%08X LR=%08X SP=%08X\n",
                r[0], r[1], r[REG_LR], r[REG_SP]);
         halted = true;
         halt_code = 4;
@@ -152,22 +153,22 @@ void ArmCpu::Step() {
 
     /* Detect execution from stack/non-code memory */
     if (!halted && current_pc >= 0x000F0000 && current_pc < 0x00100000) {
-        printf("\n[EMU] WARNING: Execution entered stack area at PC=0x%08X!\n", current_pc);
-        printf("[EMU]   Previous instruction #%llu at %08X\n", insn_count - 1,
+        LOG(EMU, "\n[EMU] WARNING: Execution entered stack area at PC=0x%08X!\n", current_pc);
+        LOG(EMU, "[EMU]   Previous instruction #%llu at %08X\n", insn_count - 1,
                trace_buf[(trace_idx - 2) % TRACE_SIZE].pc);
-        printf("[EMU]   R0=%08X R1=%08X LR=%08X SP=%08X\n",
+        LOG(EMU, "[EMU]   R0=%08X R1=%08X LR=%08X SP=%08X\n",
                r[0], r[1], r[REG_LR], r[REG_SP]);
         /* Dump last 32 instructions */
         int count = (trace_idx > 64) ? 64 : trace_idx;
         int start = trace_idx - count;
-        printf("--- Last %d instructions ---\n", count);
+        LOG(EMU, "--- Last %d instructions ---\n", count);
         for (int i = start; i < trace_idx; i++) {
             auto& e = trace_buf[i % TRACE_SIZE];
             if (e.thumb) {
-                printf("  [%08X] %04X (Thumb) R0=%08X R1=%08X LR=%08X\n",
+                LOG(EMU, "  [%08X] %04X (Thumb) R0=%08X R1=%08X LR=%08X\n",
                        e.pc, e.insn, e.r0, e.r1, e.lr);
             } else {
-                printf("  [%08X] %08X (ARM)   R0=%08X R1=%08X LR=%08X\n",
+                LOG(EMU, "  [%08X] %08X (ARM)   R0=%08X R1=%08X LR=%08X\n",
                        e.pc, e.insn, e.r0, e.r1, e.lr);
             }
         }
@@ -179,14 +180,14 @@ void ArmCpu::Step() {
     if (halted) {
         int count = (trace_idx > 64) ? 64 : trace_idx;
         int start = trace_idx - count;
-        printf("\n--- Last %d instructions before halt ---\n", count);
+        LOG(EMU, "\n--- Last %d instructions before halt ---\n", count);
         for (int i = start; i < trace_idx; i++) {
             auto& e = trace_buf[i % TRACE_SIZE];
             if (e.thumb) {
-                printf("  [%08X] %04X (Thumb) R0=%08X R1=%08X LR=%08X\n",
+                LOG(EMU, "  [%08X] %04X (Thumb) R0=%08X R1=%08X LR=%08X\n",
                        e.pc, e.insn, e.r0, e.r1, e.lr);
             } else {
-                printf("  [%08X] %08X (ARM)   R0=%08X R1=%08X LR=%08X\n",
+                LOG(EMU, "  [%08X] %08X (ARM)   R0=%08X R1=%08X LR=%08X\n",
                        e.pc, e.insn, e.r0, e.r1, e.lr);
             }
         }

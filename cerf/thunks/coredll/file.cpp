@@ -1,5 +1,6 @@
 /* File I/O thunks: CreateFile, ReadFile, WriteFile, Find*, directory ops */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <vector>
 
@@ -11,7 +12,7 @@ void Win32Thunks::RegisterFileHandlers() {
         std::wstring host_path = MapWinCEPath(wce_path);
         HANDLE h = CreateFileW(host_path.c_str(), access, share, NULL, creation, flags, NULL);
         regs[0] = WrapHandle(h);
-        printf("[THUNK] CreateFileW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
+        LOG(THUNK, "[THUNK] CreateFileW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
         return true;
     });
     Thunk("ReadFile", 170, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -123,7 +124,7 @@ void Win32Thunks::RegisterFileHandlers() {
     Thunk("SetFileAttributesW", 169, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring path = ReadWStringFromEmu(mem, regs[0]);
         std::wstring mapped = MapWinCEPath(path);
-        printf("[THUNK] SetFileAttributesW('%ls', 0x%X)\n", path.c_str(), regs[1]);
+        LOG(THUNK, "[THUNK] SetFileAttributesW('%ls', 0x%X)\n", path.c_str(), regs[1]);
         regs[0] = SetFileAttributesW(mapped.c_str(), regs[1]);
         return true;
     });

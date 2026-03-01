@@ -5,45 +5,46 @@
  * GUID conversion, and marshalling stubs.
  */
 #include "../win32_thunks.h"
+#include "../../log.h"
 
 void Win32Thunks::RegisterOle32Handlers() {
     /* COM Initialization — CoInitializeEx/CoUninitialize are registered in
        coredll/misc.cpp (WinCE exports them from coredll). These are OLE-specific. */
     Thunk("CoInitialize", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoInitialize(pvReserved=0x%08X) -> S_OK (stub)\n", regs[0]);
+        LOG(THUNK, "[THUNK] CoInitialize(pvReserved=0x%08X) -> S_OK (stub)\n", regs[0]);
         regs[0] = 0; /* S_OK */
         return true;
     });
     Thunk("OleInitialize", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] OleInitialize(pvReserved=0x%08X) -> S_OK (stub)\n", regs[0]);
+        LOG(THUNK, "[THUNK] OleInitialize(pvReserved=0x%08X) -> S_OK (stub)\n", regs[0]);
         regs[0] = 0; /* S_OK */
         return true;
     });
     Thunk("OleUninitialize", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] OleUninitialize() -> stub\n");
+        LOG(THUNK, "[THUNK] OleUninitialize() -> stub\n");
         /* void */
         return true;
     });
 
     /* Object Creation */
     Thunk("CoCreateInstance", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoCreateInstance(rclsid=0x%08X, pUnkOuter=0x%08X, dwClsCtx=0x%08X, riid=0x%08X) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] CoCreateInstance(rclsid=0x%08X, pUnkOuter=0x%08X, dwClsCtx=0x%08X, riid=0x%08X) -> E_NOTIMPL (stub)\n",
                regs[0], regs[1], regs[2], regs[3]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
     });
     Thunk("CoCreateInstanceEx", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoCreateInstanceEx(...) -> E_NOTIMPL (stub)\n");
+        LOG(THUNK, "[THUNK] CoCreateInstanceEx(...) -> E_NOTIMPL (stub)\n");
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
     });
     Thunk("CoGetClassObject", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoGetClassObject(...) -> E_NOTIMPL (stub)\n");
+        LOG(THUNK, "[THUNK] CoGetClassObject(...) -> E_NOTIMPL (stub)\n");
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
     });
     Thunk("CoCreateGuid", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoCreateGuid(pguid=0x%08X) -> S_OK (stub)\n", regs[0]);
+        LOG(THUNK, "[THUNK] CoCreateGuid(pguid=0x%08X) -> S_OK (stub)\n", regs[0]);
         if (regs[0]) {
             /* Write a pseudo-random GUID */
             for (int i = 0; i < 16; i++)
@@ -56,7 +57,7 @@ void Win32Thunks::RegisterOle32Handlers() {
     /* COM Memory Management */
     Thunk("CoTaskMemAlloc", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size = regs[0];
-        printf("[THUNK] CoTaskMemAlloc(cb=%u)\n", size);
+        LOG(THUNK, "[THUNK] CoTaskMemAlloc(cb=%u)\n", size);
         /* Allocate from emulated heap */
         uint32_t ptr = 0;
         if (size > 0) {
@@ -69,17 +70,17 @@ void Win32Thunks::RegisterOle32Handlers() {
         return true;
     });
     Thunk("CoTaskMemFree", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoTaskMemFree(pv=0x%08X) -> stub\n", regs[0]);
+        LOG(THUNK, "[THUNK] CoTaskMemFree(pv=0x%08X) -> stub\n", regs[0]);
         /* leak — no free tracking */
         return true;
     });
     Thunk("CoTaskMemRealloc", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoTaskMemRealloc(pv=0x%08X, cb=%u) -> stub (returns NULL)\n", regs[0], regs[1]);
+        LOG(THUNK, "[THUNK] CoTaskMemRealloc(pv=0x%08X, cb=%u) -> stub (returns NULL)\n", regs[0], regs[1]);
         regs[0] = 0;
         return true;
     });
     Thunk("CoGetMalloc", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoGetMalloc(dwMemContext=%d, ppMalloc=0x%08X) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] CoGetMalloc(dwMemContext=%d, ppMalloc=0x%08X) -> E_NOTIMPL (stub)\n",
                regs[0], regs[1]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
@@ -88,7 +89,7 @@ void Win32Thunks::RegisterOle32Handlers() {
     /* GUID/String Conversion */
     Thunk("StringFromGUID2", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t guid_addr = regs[0], buf_addr = regs[1], cchMax = regs[2];
-        printf("[THUNK] StringFromGUID2(rguid=0x%08X, lpsz=0x%08X, cchMax=%d)\n",
+        LOG(THUNK, "[THUNK] StringFromGUID2(rguid=0x%08X, lpsz=0x%08X, cchMax=%d)\n",
                guid_addr, buf_addr, cchMax);
         if (guid_addr && buf_addr && cchMax >= 39) {
             uint32_t d1 = mem.Read32(guid_addr);
@@ -111,25 +112,25 @@ void Win32Thunks::RegisterOle32Handlers() {
         return true;
     });
     Thunk("StringFromCLSID", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] StringFromCLSID(rclsid=0x%08X, lplpsz=0x%08X) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] StringFromCLSID(rclsid=0x%08X, lplpsz=0x%08X) -> E_NOTIMPL (stub)\n",
                regs[0], regs[1]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
     });
     Thunk("CLSIDFromString", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CLSIDFromString(lpsz=0x%08X, pclsid=0x%08X) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] CLSIDFromString(lpsz=0x%08X, pclsid=0x%08X) -> E_NOTIMPL (stub)\n",
                regs[0], regs[1]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
     });
     Thunk("CLSIDFromProgID", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CLSIDFromProgID(lpszProgID=0x%08X, lpclsid=0x%08X) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] CLSIDFromProgID(lpszProgID=0x%08X, lpclsid=0x%08X) -> E_NOTIMPL (stub)\n",
                regs[0], regs[1]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
     });
     Thunk("ProgIDFromCLSID", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] ProgIDFromCLSID(clsid=0x%08X, lplpszProgID=0x%08X) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] ProgIDFromCLSID(clsid=0x%08X, lplpszProgID=0x%08X) -> E_NOTIMPL (stub)\n",
                regs[0], regs[1]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;
@@ -137,35 +138,35 @@ void Win32Thunks::RegisterOle32Handlers() {
 
     /* Marshalling */
     Thunk("CoMarshalInterface", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoMarshalInterface(...) -> E_NOTIMPL (stub)\n");
+        LOG(THUNK, "[THUNK] CoMarshalInterface(...) -> E_NOTIMPL (stub)\n");
         regs[0] = 0x80004001;
         return true;
     });
     Thunk("CoUnmarshalInterface", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoUnmarshalInterface(...) -> E_NOTIMPL (stub)\n");
+        LOG(THUNK, "[THUNK] CoUnmarshalInterface(...) -> E_NOTIMPL (stub)\n");
         regs[0] = 0x80004001;
         return true;
     });
 
     /* Misc */
     Thunk("CoLockObjectExternal", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoLockObjectExternal(pUnk=0x%08X, fLock=%d, fLastUnlockReleases=%d) -> S_OK (stub)\n",
+        LOG(THUNK, "[THUNK] CoLockObjectExternal(pUnk=0x%08X, fLock=%d, fLastUnlockReleases=%d) -> S_OK (stub)\n",
                regs[0], regs[1], regs[2]);
         regs[0] = 0; /* S_OK */
         return true;
     });
     Thunk("CoDisconnectObject", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoDisconnectObject(pUnk=0x%08X, dwReserved=%d) -> S_OK (stub)\n",
+        LOG(THUNK, "[THUNK] CoDisconnectObject(pUnk=0x%08X, dwReserved=%d) -> S_OK (stub)\n",
                regs[0], regs[1]);
         regs[0] = 0;
         return true;
     });
     Thunk("CoFreeUnusedLibraries", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoFreeUnusedLibraries() -> stub\n");
+        LOG(THUNK, "[THUNK] CoFreeUnusedLibraries() -> stub\n");
         return true;
     });
     Thunk("CoFileTimeNow", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] CoFileTimeNow(lpFileTime=0x%08X) -> S_OK (stub)\n", regs[0]);
+        LOG(THUNK, "[THUNK] CoFileTimeNow(lpFileTime=0x%08X) -> S_OK (stub)\n", regs[0]);
         if (regs[0]) {
             FILETIME ft;
             GetSystemTimeAsFileTime(&ft);
@@ -176,21 +177,21 @@ void Win32Thunks::RegisterOle32Handlers() {
         return true;
     });
     Thunk("ReleaseStgMedium", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] ReleaseStgMedium(pmedium=0x%08X) -> stub\n", regs[0]);
+        LOG(THUNK, "[THUNK] ReleaseStgMedium(pmedium=0x%08X) -> stub\n", regs[0]);
         return true;
     });
 
     /* Structured Storage */
     Thunk("StgOpenStorage", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring path = ReadWStringFromEmu(mem, regs[0]);
-        printf("[THUNK] StgOpenStorage('%ls', pstgPriority=0x%08X, grfMode=0x%08X, ...) -> STG_E_FILENOTFOUND (stub)\n",
+        LOG(THUNK, "[THUNK] StgOpenStorage('%ls', pstgPriority=0x%08X, grfMode=0x%08X, ...) -> STG_E_FILENOTFOUND (stub)\n",
                path.c_str(), regs[1], regs[2]);
         regs[0] = 0x80030002; /* STG_E_FILENOTFOUND */
         return true;
     });
     Thunk("StgCreateDocfile", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring path = regs[0] ? ReadWStringFromEmu(mem, regs[0]) : L"(null)";
-        printf("[THUNK] StgCreateDocfile('%ls', grfMode=0x%08X, ...) -> E_NOTIMPL (stub)\n",
+        LOG(THUNK, "[THUNK] StgCreateDocfile('%ls', grfMode=0x%08X, ...) -> E_NOTIMPL (stub)\n",
                path.c_str(), regs[1]);
         regs[0] = 0x80004001; /* E_NOTIMPL */
         return true;

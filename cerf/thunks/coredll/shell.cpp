@@ -2,6 +2,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 /* Shell thunks: ShellExecuteEx, Shell_NotifyIcon, SHGetSpecialFolderPath */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <shellapi.h>
 #include <vector>
@@ -9,7 +10,7 @@
 void Win32Thunks::RegisterShellHandlers() {
     auto stub0 = [](const char* name) -> ThunkHandler {
         return [name](uint32_t* regs, EmulatedMemory&) -> bool {
-            printf("[THUNK] [STUB] %s -> 0\n", name); regs[0] = 0; return true;
+            LOG(THUNK, "[THUNK] [STUB] %s -> 0\n", name); regs[0] = 0; return true;
         };
     };
     Thunk("SHGetSpecialFolderPath", 295, stub0("SHGetSpecialFolderPath"));
@@ -33,7 +34,7 @@ void Win32Thunks::RegisterShellHandlers() {
         if (file_ptr) file = ReadWStringFromEmu(mem, file_ptr);
         if (params_ptr) params = ReadWStringFromEmu(mem, params_ptr);
         if (dir_ptr) dir = ReadWStringFromEmu(mem, dir_ptr);
-        printf("[THUNK] ShellExecuteEx(verb='%ls', file='%ls', params='%ls', dir='%ls', nShow=%d)\n",
+        LOG(THUNK, "[THUNK] ShellExecuteEx(verb='%ls', file='%ls', params='%ls', dir='%ls', nShow=%d)\n",
                verb.c_str(), file.c_str(), params.c_str(), dir.c_str(), nShow);
         SHELLEXECUTEINFOW native_sei = {};
         native_sei.cbSize = sizeof(SHELLEXECUTEINFOW);
@@ -48,7 +49,7 @@ void Win32Thunks::RegisterShellHandlers() {
         mem.Write32(sei_addr + 0x20, (uint32_t)(uintptr_t)native_sei.hInstApp);
         if (fMask & SEE_MASK_NOCLOSEPROCESS)
             mem.Write32(sei_addr + 0x38, (uint32_t)(uintptr_t)native_sei.hProcess);
-        printf("[THUNK]   -> %s\n", ret ? "OK" : "FAILED");
+        LOG(THUNK, "[THUNK]   -> %s\n", ret ? "OK" : "FAILED");
         regs[0] = ret;
         return true;
     });
@@ -72,14 +73,14 @@ void Win32Thunks::RegisterShellHandlers() {
             if (c == 0) break;
         }
         nid.szTip[63] = 0;
-        printf("[THUNK] Shell_NotifyIcon(msg=%d, uID=%d, tip='%ls')\n",
+        LOG(THUNK, "[THUNK] Shell_NotifyIcon(msg=%d, uID=%d, tip='%ls')\n",
                dwMessage, nid.uID, nid.szTip);
         BOOL ret = Shell_NotifyIconW(dwMessage, &nid);
         regs[0] = ret;
         return true;
     });
     Thunk("SHGetFileInfo", 482, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] SHGetFileInfo(pszPath=0x%08X, attrs=0x%X, psfi=0x%08X, cbFileInfo=%d) -> 0 (stub)\n",
+        LOG(THUNK, "[THUNK] SHGetFileInfo(pszPath=0x%08X, attrs=0x%X, psfi=0x%08X, cbFileInfo=%d) -> 0 (stub)\n",
                regs[0], regs[1], regs[2], regs[3]);
         regs[0] = 0;
         return true;

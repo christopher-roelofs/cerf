@@ -15,6 +15,7 @@
 #include <vector>
 #include <algorithm>
 
+#include "log.h"
 #include "cpu/mem.h"
 #include "cpu/arm_cpu.h"
 #include "loader/pe_loader.h"
@@ -25,38 +26,59 @@ static void PrintUsage(const char* prog) {
     printf("Emulates Windows CE ARM executables on x86 desktop Windows.\n\n");
     printf("Usage: %s [options] <arm-wince-exe>\n\n", prog);
     printf("Options:\n");
-    printf("  --trace    Enable instruction tracing\n");
-    printf("  --help     Show this help\n");
+    printf("  --trace              Enable instruction tracing\n");
+    printf("  --log=CATEGORIES     Enable only listed categories (comma-separated)\n");
+    printf("                       Categories: THUNK,PE,EMU,TRACE,CPU,REG,DBG,ALL,NONE\n");
+    printf("  --no-log=CATEGORIES  Disable specific categories\n");
+    printf("  --log-file=PATH      Write logs to file (in addition to console)\n");
+    printf("  --quiet              Disable all log output\n");
+    printf("  --help               Show this help\n");
 }
 
 static void DumpRegisters(ArmCpu& cpu) {
-    printf("\n--- CPU State ---\n");
+    LOG_RAW("\n--- CPU State ---\n");
     for (int i = 0; i < 16; i++) {
         const char* names[] = {
             "R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7",
             "R8", "R9", "R10", "R11", "R12", "SP", "LR", "PC"
         };
-        printf("  %-3s = 0x%08X", names[i], cpu.r[i]);
-        if ((i & 3) == 3) printf("\n");
+        LOG_RAW("  %-3s = 0x%08X", names[i], cpu.r[i]);
+        if ((i & 3) == 3) LOG_RAW("\n");
     }
-    printf("  CPSR = 0x%08X [%c%c%c%c %s]\n",
+    LOG_RAW("  CPSR = 0x%08X [%c%c%c%c %s]\n",
            cpu.cpsr,
            cpu.GetN() ? 'N' : '-',
            cpu.GetZ() ? 'Z' : '-',
            cpu.GetC() ? 'C' : '-',
            cpu.GetV() ? 'V' : '-',
            cpu.IsThumb() ? "Thumb" : "ARM");
-    printf("  Instructions executed: %llu\n", cpu.insn_count);
-    printf("-----------------\n\n");
+    LOG_RAW("  Instructions executed: %llu\n", cpu.insn_count);
+    LOG_RAW("-----------------\n\n");
 }
 
 int main(int argc, char* argv[]) {
     const char* exe_path = nullptr;
     bool trace = false;
+    bool explicit_log = false;
+    const char* log_file = nullptr;
+    uint32_t no_log_mask = 0;
+
+    Log::Init();
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0) {
             trace = true;
+            Log::EnableCategory(Log::TRACE);
+        } else if (strncmp(argv[i], "--log=", 6) == 0) {
+            Log::SetEnabled(Log::ParseCategories(argv[i] + 6));
+            explicit_log = true;
+        } else if (strncmp(argv[i], "--no-log=", 9) == 0) {
+            no_log_mask |= Log::ParseCategories(argv[i] + 9);
+        } else if (strncmp(argv[i], "--log-file=", 11) == 0) {
+            log_file = argv[i] + 11;
+        } else if (strcmp(argv[i], "--quiet") == 0) {
+            Log::SetEnabled(Log::NONE);
+            explicit_log = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             PrintUsage(argv[0]);
             return 0;
@@ -65,13 +87,22 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    /* Apply --no-log after everything else */
+    if (no_log_mask) {
+        Log::SetEnabled(Log::GetEnabled() & ~no_log_mask);
+    }
+
+    if (log_file) {
+        Log::SetFile(log_file);
+    }
+
     if (!exe_path) {
         PrintUsage(argv[0]);
         return 1;
     }
 
-    printf("=== CERF - Windows CE Runtime Foundation ===\n");
-    printf("Loading: %s\n\n", exe_path);
+    LOG_RAW("=== CERF - Windows CE Runtime Foundation ===\n");
+    LOG_RAW("Loading: %s\n\n", exe_path);
 
     /* Initialize emulated memory */
     EmulatedMemory mem;
@@ -80,17 +111,17 @@ int main(int argc, char* argv[]) {
     PEInfo pe_info = {};
     uint32_t entry_point = PELoader::Load(exe_path, mem, pe_info);
     if (entry_point == 0) {
-        fprintf(stderr, "Failed to load PE file\n");
+        LOG_ERR("Failed to load PE file\n");
         return 1;
     }
 
     /* Verify it's ARM */
     if (pe_info.machine != 0x01C0 && pe_info.machine != 0x01C2) {
-        fprintf(stderr, "Not an ARM executable (machine=0x%04X)\n", pe_info.machine);
+        LOG_ERR("Not an ARM executable (machine=0x%04X)\n", pe_info.machine);
         return 1;
     }
 
-    printf("\n[EMU] ARM %s detected (machine=0x%04X)\n",
+    LOG(EMU, "\n[EMU] ARM %s detected (machine=0x%04X)\n",
            pe_info.machine == 0x01C2 ? "Thumb" : "32-bit",
            pe_info.machine);
 
@@ -157,7 +188,7 @@ int main(int argc, char* argv[]) {
     cpu.thunk_handler = [&thunks](uint32_t addr, uint32_t* regs, EmulatedMemory& mem_ref) -> bool {
         /* Check for sentinel return address (program exit) */
         if (addr == 0xDEADDEAD) {
-            printf("\n[EMU] Program returned from entry point with code %d\n", regs[0]);
+            LOG(EMU, "\n[EMU] Program returned from entry point with code %d\n", regs[0]);
             ExitProcess(regs[0]);
             return true;
         }
@@ -227,16 +258,17 @@ int main(int argc, char* argv[]) {
     /* Call DllMain for any loaded ARM DLLs (must happen after callback_executor is set up) */
     thunks.CallDllEntryPoints();
 
-    printf("\n[EMU] Starting execution at 0x%08X (%s mode)\n",
+    LOG(EMU, "\n[EMU] Starting execution at 0x%08X (%s mode)\n",
            cpu.r[REG_PC], cpu.IsThumb() ? "Thumb" : "ARM");
-    printf("[EMU] Stack at 0x%08X, hInstance=0x%08X\n\n", cpu.r[REG_SP], cpu.r[0]);
+    LOG(EMU, "[EMU] Stack at 0x%08X, hInstance=0x%08X\n\n", cpu.r[REG_SP], cpu.r[0]);
 
     /* Run the emulator */
     cpu.Run();
 
     /* If we get here, CPU halted */
-    printf("\n[EMU] CPU halted (code=%d) after %llu instructions\n", cpu.halt_code, cpu.insn_count);
+    LOG(EMU, "\n[EMU] CPU halted (code=%d) after %llu instructions\n", cpu.halt_code, cpu.insn_count);
     DumpRegisters(cpu);
 
+    Log::Close();
     return cpu.halt_code;
 }

@@ -2,6 +2,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 /* Common dialog thunks: GetOpenFileNameW, GetSaveFileNameW */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <commdlg.h>
 #include <vector>
@@ -37,7 +38,7 @@ void Win32Thunks::RegisterCommdlgHandlers() {
         if (init_dir_ptr) init_dir = ReadWStringFromEmu(mem, init_dir_ptr);
         if (title_ptr) title = ReadWStringFromEmu(mem, title_ptr);
         if (def_ext_ptr) def_ext = ReadWStringFromEmu(mem, def_ext_ptr);
-        printf("[THUNK] %s(filter='%ls', file='%ls', dir='%ls', flags=0x%X)\n",
+        LOG(THUNK, "[THUNK] %s(filter='%ls', file='%ls', dir='%ls', flags=0x%X)\n",
                isSave ? "GetSaveFileNameW" : "GetOpenFileNameW",
                filter.empty() ? L"" : filter.c_str(), file_buf.c_str(),
                init_dir.empty() ? L"" : init_dir.c_str(), flags);
@@ -69,9 +70,9 @@ void Win32Thunks::RegisterCommdlgHandlers() {
             mem.Write16(ofn_addr + 0x38, ofn.nFileOffset);
             mem.Write16(ofn_addr + 0x3A, ofn.nFileExtension);
             mem.Write32(ofn_addr + 0x18, ofn.nFilterIndex);
-            printf("[THUNK]   -> selected: '%ls'\n", native_file.data());
+            LOG(THUNK, "[THUNK]   -> selected: '%ls'\n", native_file.data());
         } else {
-            printf("[THUNK]   -> cancelled\n");
+            LOG(THUNK, "[THUNK]   -> cancelled\n");
         }
         regs[0] = result;
         return true;

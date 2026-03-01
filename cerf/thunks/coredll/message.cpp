@@ -1,5 +1,6 @@
 /* Message thunks: GetMessage, Peek, Post, Send, Dispatch, Translate */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <vector>
 

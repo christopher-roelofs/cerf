@@ -1,6 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 #include "win32_thunks.h"
+#include "../log.h"
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -156,11 +157,11 @@ void Win32Thunks::LoadRegistry() {
     if (last_sep != std::string::npos) cerf_dir = cerf_dir.substr(0, last_sep + 1);
     else cerf_dir = "";
     registry_path = cerf_dir + "cerf_registry.txt";
-    printf("[REG] Loading registry from %s\n", registry_path.c_str());
+    LOG(REG, "[REG] Loading registry from %s\n", registry_path.c_str());
 
     std::ifstream f(registry_path);
     if (!f.is_open()) {
-        printf("[REG] No registry file found, starting empty\n");
+        LOG(REG, "[REG] No registry file found, starting empty\n");
         return;
     }
 
@@ -206,7 +207,7 @@ void Win32Thunks::LoadRegistry() {
         }
         registry[current_key].values[name] = val;
     }
-    printf("[REG] Loaded %zu keys\n", registry.size());
+    LOG(REG, "[REG] Loaded %zu keys\n", registry.size());
 }
 
 void Win32Thunks::SaveRegistry() {
@@ -214,7 +215,7 @@ void Win32Thunks::SaveRegistry() {
 
     std::ofstream f(registry_path);
     if (!f.is_open()) {
-        printf("[REG] Failed to save registry to %s\n", registry_path.c_str());
+        LOG(REG, "[REG] Failed to save registry to %s\n", registry_path.c_str());
         return;
     }
 
@@ -245,7 +246,7 @@ void Win32Thunks::SaveRegistry() {
         }
         f << "\n";
     }
-    printf("[REG] Saved %zu keys to %s\n", registry.size(), registry_path.c_str());
+    LOG(REG, "[REG] Saved %zu keys to %s\n", registry.size(), registry_path.c_str());
 }
 
 std::wstring Win32Thunks::ResolveHKey(uint32_t hkey, const std::wstring& subkey) {
@@ -626,7 +627,7 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
             f = fopen(dll_path.c_str(), "rb");
         }
         if (!f) {
-            printf("[THUNK] ARM DLL not found: %s (will use thunk stubs)\n", imp.dll_name.c_str());
+            LOG(THUNK, "[THUNK] ARM DLL not found: %s (will use thunk stubs)\n", imp.dll_name.c_str());
             continue;
         }
         fclose(f);
@@ -634,11 +635,11 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
         PEInfo dll_info = {};
         uint32_t entry = PELoader::LoadDll(dll_path.c_str(), mem, dll_info);
         if (entry == 0 && dll_info.image_base == 0) {
-            printf("[THUNK] Failed to load ARM DLL: %s\n", dll_path.c_str());
+            LOG(THUNK, "[THUNK] Failed to load ARM DLL: %s\n", dll_path.c_str());
             continue;
         }
 
-        printf("[THUNK] Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
+        LOG(THUNK, "[THUNK] Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
                imp.dll_name.c_str(), dll_info.image_base, dll_info.export_rva, dll_info.export_size);
 
         /* Store in loaded_dlls */
@@ -657,7 +658,7 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
             uint32_t thunk_addr = AllocThunk(dll_imp.dll_name, dll_imp.func_name,
                                              dll_imp.ordinal, dll_imp.by_ordinal);
             mem.Write32(dll_imp.iat_addr, thunk_addr);
-            printf("[THUNK]   DLL import: %s!%s @%d -> thunk 0x%08X\n",
+            LOG(THUNK, "[THUNK]  DLL import: %s!%s @%d -> thunk 0x%08X\n",
                    dll_imp.dll_name.c_str(),
                    dll_imp.func_name.empty() ? "(ordinal)" : dll_imp.func_name.c_str(),
                    dll_imp.ordinal, thunk_addr);
@@ -665,7 +666,7 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
 
         /* Queue DLL entry point (DllMain) for deferred call after CPU init */
         if (entry != 0 && dll_info.entry_point_rva != 0) {
-            printf("[THUNK]   DLL has entry point at 0x%08X - queued for init\n", entry);
+            LOG(THUNK, "[THUNK]  DLL has entry point at 0x%08X - queued for init\n", entry);
             pending_dll_inits.push_back({entry, dll_info.image_base});
         }
     }
@@ -690,16 +691,16 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
                 /* Write the actual ARM code address into the IAT */
                 mem.Write32(imp.iat_addr, arm_addr);
                 if (imp.by_ordinal) {
-                    printf("[THUNK] Resolved %s!@%d -> ARM 0x%08X (IAT 0x%08X)\n",
+                    LOG(THUNK, "[THUNK] Resolved %s!@%d -> ARM 0x%08X (IAT 0x%08X)\n",
                            imp.dll_name.c_str(), imp.ordinal, arm_addr, imp.iat_addr);
                 } else {
-                    printf("[THUNK] Resolved %s!%s -> ARM 0x%08X (IAT 0x%08X)\n",
+                    LOG(THUNK, "[THUNK] Resolved %s!%s -> ARM 0x%08X (IAT 0x%08X)\n",
                            imp.dll_name.c_str(), imp.func_name.c_str(), arm_addr, imp.iat_addr);
                 }
                 continue;
             }
             /* Fall through to thunk if export not found */
-            printf("[THUNK] WARNING: Export not found in %s for %s@%d, using thunk stub\n",
+            LOG(THUNK, "[THUNK] WARNING: Export not found in %s for %s@%d, using thunk stub\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), imp.ordinal);
         }
 
@@ -708,10 +709,10 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
         mem.Write32(imp.iat_addr, thunk_addr);
 
         if (imp.by_ordinal) {
-            printf("[THUNK] Installed thunk for %s!@%d at 0x%08X -> IAT 0x%08X\n",
+            LOG(THUNK, "[THUNK] Installed thunk for %s!@%d at 0x%08X -> IAT 0x%08X\n",
                    imp.dll_name.c_str(), imp.ordinal, thunk_addr, imp.iat_addr);
         } else {
-            printf("[THUNK] Installed thunk for %s!%s at 0x%08X -> IAT 0x%08X\n",
+            LOG(THUNK, "[THUNK] Installed thunk for %s!%s at 0x%08X -> IAT 0x%08X\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), thunk_addr, imp.iat_addr);
         }
     }
@@ -721,7 +722,7 @@ void Win32Thunks::CallDllEntryPoints() {
     if (!callback_executor || pending_dll_inits.empty()) return;
 
     for (auto& init : pending_dll_inits) {
-        printf("[THUNK] Calling DllMain at 0x%08X (base=0x%08X, DLL_PROCESS_ATTACH)\n",
+        LOG(THUNK, "[THUNK] Calling DllMain at 0x%08X (base=0x%08X, DLL_PROCESS_ATTACH)\n",
                init.entry_point, init.base_addr);
         /* DllMain(hinstDLL, DLL_PROCESS_ATTACH, lpvReserved)
            R0 = hinstDLL (DLL base address)
@@ -729,7 +730,7 @@ void Win32Thunks::CallDllEntryPoints() {
            R2 = lpvReserved = 0 */
         uint32_t args[3] = { init.base_addr, 1, 0 };
         uint32_t result = callback_executor(init.entry_point, args, 3);
-        printf("[THUNK] DllMain returned %d\n", result);
+        LOG(THUNK, "[THUNK] DllMain returned %d\n", result);
     }
     pending_dll_inits.clear();
 }
@@ -847,9 +848,9 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
                 auto name_it = ordinal_map.find((uint16_t)api_index);
                 std::string func_name = (name_it != ordinal_map.end()) ? name_it->second : "";
                 if (!func_name.empty()) {
-                    printf("[THUNK] WinCE trap 0x%08X -> API %u (%s)\n", addr, api_index, func_name.c_str());
+                    LOG(THUNK, "[THUNK] WinCE trap 0x%08X -> API %u (%s)\n", addr, api_index, func_name.c_str());
                 } else {
-                    printf("[THUNK] WinCE trap 0x%08X -> API %u (unknown)\n", addr, api_index);
+                    LOG(THUNK, "[THUNK] WinCE trap 0x%08X -> API %u (unknown)\n", addr, api_index);
                 }
                 /* Create a temporary thunk entry and execute it */
                 ThunkEntry trap_entry;
@@ -868,7 +869,7 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
 
             /* Detect branches into thunk memory region at unregistered addresses */
             if (addr >= THUNK_BASE && addr < THUNK_BASE + 0x100000) {
-                printf("[EMU] ERROR: Branch to unregistered thunk address 0x%08X (LR=0x%08X)\n",
+                LOG(EMU, "[EMU] ERROR: Branch to unregistered thunk address 0x%08X (LR=0x%08X)\n",
                        addr, regs[14]);
                 regs[0] = 0;
                 uint32_t lr = regs[14];
@@ -899,7 +900,7 @@ bool Win32Thunks::ExecuteThunk(const ThunkEntry& entry, uint32_t* regs, Emulated
     if (func.empty() && entry.by_ordinal) {
         func = ResolveOrdinal(entry.ordinal);
         if (!func.empty()) {
-            printf("[THUNK] Resolved ordinal %d -> %s\n", entry.ordinal, func.c_str());
+            LOG(THUNK, "[THUNK] Resolved ordinal %d -> %s\n", entry.ordinal, func.c_str());
         }
     }
 
@@ -909,13 +910,13 @@ bool Win32Thunks::ExecuteThunk(const ThunkEntry& entry, uint32_t* regs, Emulated
 
     /* Unhandled function */
     if (!func.empty()) {
-        printf("[THUNK] UNHANDLED: %s!%s (ordinal=%d) - returning 0\n",
+        LOG(THUNK, "[THUNK] UNHANDLED: %s!%s (ordinal=%d) - returning 0\n",
                entry.dll_name.c_str(), func.c_str(), entry.ordinal);
     } else if (entry.by_ordinal) {
-        printf("[THUNK] UNHANDLED: %s!@%d (no name mapping) - returning 0\n",
+        LOG(THUNK, "[THUNK] UNHANDLED: %s!@%d (no name mapping) - returning 0\n",
                entry.dll_name.c_str(), entry.ordinal);
     } else {
-        printf("[THUNK] UNHANDLED: %s!%s - returning 0\n",
+        LOG(THUNK, "[THUNK] UNHANDLED: %s!%s - returning 0\n",
                entry.dll_name.c_str(), entry.func_name.c_str());
     }
     regs[0] = 0;

@@ -2,13 +2,14 @@
 #define _CRT_SECURE_NO_WARNINGS
 /* Process/thread thunks: CreateProcessW, CreateThread stubs, file mapping stubs */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <vector>
 
 void Win32Thunks::RegisterProcessHandlers() {
     auto stub0 = [](const char* name) -> ThunkHandler {
         return [name](uint32_t* regs, EmulatedMemory&) -> bool {
-            printf("[THUNK] [STUB] %s -> 0\n", name); regs[0] = 0; return true;
+            LOG(THUNK, "[THUNK] [STUB] %s -> 0\n", name); regs[0] = 0; return true;
         };
     };
     Thunk("CreateThread", 492, stub0("CreateThread"));
@@ -23,7 +24,7 @@ void Win32Thunks::RegisterProcessHandlers() {
         if (image_ptr) image = ReadWStringFromEmu(mem, image_ptr);
         if (cmdline_ptr) cmdline = ReadWStringFromEmu(mem, cmdline_ptr);
         if (curdir_ptr) curdir = ReadWStringFromEmu(mem, curdir_ptr);
-        printf("[THUNK] CreateProcessW(image='%ls', cmdline='%ls', curdir='%ls', flags=0x%X)\n",
+        LOG(THUNK, "[THUNK] CreateProcessW(image='%ls', cmdline='%ls', curdir='%ls', flags=0x%X)\n",
                image.c_str(), cmdline.c_str(), curdir.c_str(), fdwCreate);
         STARTUPINFOW si = {}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};
@@ -41,7 +42,7 @@ void Win32Thunks::RegisterProcessHandlers() {
             mem.Write32(procinfo_ptr + 0x08, pi.dwProcessId);
             mem.Write32(procinfo_ptr + 0x0C, pi.dwThreadId);
         }
-        printf("[THUNK]   -> %s (pid=%d)\n", ret ? "OK" : "FAILED", ret ? pi.dwProcessId : 0);
+        LOG(THUNK, "[THUNK]   -> %s (pid=%d)\n", ret ? "OK" : "FAILED", ret ? pi.dwProcessId : 0);
         regs[0] = ret;
         return true;
     });

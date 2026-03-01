@@ -1,6 +1,7 @@
 /* System thunks: GetSystemMetrics, time, sync, TLS, locale */
 #define NOMINMAX
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <algorithm>
 
@@ -12,7 +13,7 @@ void Win32Thunks::RegisterSystemHandlers() {
         SetLastError(regs[0]); return true;
     });
     Thunk("RaiseException", 543, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] RaiseException(0x%08X) - ignoring\n", regs[0]); return true;
+        LOG(THUNK, "[THUNK] RaiseException(0x%08X) - ignoring\n", regs[0]); return true;
     });
     Thunk("GetSystemMetrics", 885, [](uint32_t* regs, EmulatedMemory&) -> bool {
         int idx = (int)regs[0];

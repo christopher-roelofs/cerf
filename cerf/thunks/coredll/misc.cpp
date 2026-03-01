@@ -2,26 +2,27 @@
 #define _CRT_SECURE_NO_WARNINGS
 /* Misc small stubs: debug, clipboard, caret, sound, RAS, COM, IMM, gestures, C runtime */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <objbase.h>
 
 void Win32Thunks::RegisterMiscHandlers() {
     auto stub0 = [](const char* name) -> ThunkHandler {
         return [name](uint32_t* regs, EmulatedMemory&) -> bool {
-            printf("[THUNK] [STUB] %s -> 0\n", name); regs[0] = 0; return true;
+            LOG(THUNK, "[THUNK] [STUB] %s -> 0\n", name); regs[0] = 0; return true;
         };
     };
     auto stub1 = [](const char* name) -> ThunkHandler {
         return [name](uint32_t* regs, EmulatedMemory&) -> bool {
-            printf("[THUNK] [STUB] %s -> 1\n", name); regs[0] = 1; return true;
+            LOG(THUNK, "[THUNK] [STUB] %s -> 1\n", name); regs[0] = 1; return true;
         };
     };
     /* Debug */
     Thunk("OutputDebugStringW", 541, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[DEBUG] %ls\n", ReadWStringFromEmu(mem, regs[0]).c_str()); return true;
+        LOG(DBG, "[DEBUG] %ls\n", ReadWStringFromEmu(mem, regs[0]).c_str()); return true;
     });
     Thunk("NKDbgPrintfW", 545, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[NKDbg] %ls\n", ReadWStringFromEmu(mem, regs[0]).c_str()); return true;
+        LOG(DBG, "[NKDbg] %ls\n", ReadWStringFromEmu(mem, regs[0]).c_str()); return true;
     });
     /* Clipboard */
     Thunk("OpenClipboard", 668, stub1("OpenClipboard"));
@@ -44,10 +45,10 @@ void Win32Thunks::RegisterMiscHandlers() {
     thunk_handlers["RasHangUp"] = thunk_handlers["RasHangup"];
     /* C runtime misc */
     Thunk("_purecall", 1092, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] _purecall\n"); regs[0] = 0; return true;
+        LOG(THUNK, "[THUNK] _purecall\n"); regs[0] = 0; return true;
     });
     Thunk("terminate", 1556, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] terminate\n"); ExitProcess(3); return true;
+        LOG(THUNK, "[THUNK] terminate\n"); ExitProcess(3); return true;
     });
     Thunk("__security_gen_cookie", 1875, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0xBB40E64E; return true; });
     Thunk("__security_gen_cookie2", 2696, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0xBB40E64E; return true; });
@@ -78,12 +79,12 @@ void Win32Thunks::RegisterMiscHandlers() {
        to the same handler here since our dispatch is name-based (flat map). */
     Thunk("CoInitializeEx", [](uint32_t* regs, EmulatedMemory&) -> bool {
         HRESULT hr = CoInitializeEx(NULL, regs[1]);
-        printf("[THUNK] CoInitializeEx(0x%X) -> 0x%08X\n", regs[1], (uint32_t)hr);
+        LOG(THUNK, "[THUNK] CoInitializeEx(0x%X) -> 0x%08X\n", regs[1], (uint32_t)hr);
         regs[0] = (uint32_t)hr;
         return true;
     });
     Thunk("CoUninitialize", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] CoUninitialize()\n");
+        LOG(THUNK, "[THUNK] CoUninitialize()\n");
         CoUninitialize(); regs[0] = 0; return true;
     });
     /* IMM stubs */
@@ -96,24 +97,24 @@ void Win32Thunks::RegisterMiscHandlers() {
     /* Clipboard */
     Thunk("RegisterClipboardFormatW", 673, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring fmt = ReadWStringFromEmu(mem, regs[0]);
-        printf("[THUNK] RegisterClipboardFormatW('%ls')\n", fmt.c_str());
+        LOG(THUNK, "[THUNK] RegisterClipboardFormatW('%ls')\n", fmt.c_str());
         UINT id = RegisterClipboardFormatW(fmt.c_str());
         regs[0] = id;
         return true;
     });
     Thunk("GetClipboardOwner", 670, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] GetClipboardOwner() -> NULL (stub)\n");
+        LOG(THUNK, "[THUNK] GetClipboardOwner() -> NULL (stub)\n");
         regs[0] = 0;
         return true;
     });
     /* Monitor */
     Thunk("MonitorFromWindow", 1524, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] MonitorFromWindow(hwnd=0x%08X, flags=0x%X) -> stub\n", regs[0], regs[1]);
+        LOG(THUNK, "[THUNK] MonitorFromWindow(hwnd=0x%08X, flags=0x%X) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; /* fake monitor handle */
         return true;
     });
     Thunk("GetMonitorInfo", 1525, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        printf("[THUNK] GetMonitorInfo(hMonitor=0x%08X, lpmi=0x%08X) -> stub\n", regs[0], regs[1]);
+        LOG(THUNK, "[THUNK] GetMonitorInfo(hMonitor=0x%08X, lpmi=0x%08X) -> stub\n", regs[0], regs[1]);
         if (regs[1]) {
             /* Fill MONITORINFO with desktop work area */
             RECT wa;

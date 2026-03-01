@@ -1,6 +1,7 @@
 #define NOMINMAX
 /* GDI thunks: DC management, object selection, device caps */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <vector>
 #include <algorithm>

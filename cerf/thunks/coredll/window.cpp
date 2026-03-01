@@ -1,5 +1,6 @@
 /* Window thunks: RegisterClass, CreateWindowEx, Show/Move/Destroy */
 #include "../win32_thunks.h"
+#include "../../log.h"
 #include <cstdio>
 #include <commctrl.h>
 
@@ -16,7 +17,7 @@ void Win32Thunks::RegisterWindowHandlers() {
         std::wstring className = ReadWStringFromEmu(mem, mem.Read32(regs[0]+36));
         wc.lpszClassName = className.c_str();
         arm_wndprocs[className] = arm_wndproc;
-        printf("[THUNK] RegisterClassW: '%ls' (ARM WndProc=0x%08X)\n", className.c_str(), arm_wndproc);
+        LOG(THUNK, "[THUNK] RegisterClassW: '%ls' (ARM WndProc=0x%08X)\n", className.c_str(), arm_wndproc);
         regs[0] = (uint32_t)RegisterClassW(&wc); return true;
     });
     Thunk("CreateWindowExW", 246, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -40,7 +41,7 @@ void Win32Thunks::RegisterWindowHandlers() {
             if (x==(int)0x80000000) x=CW_USEDEFAULT; if (y==(int)0x80000000) y=CW_USEDEFAULT;
             if (w==(int)0x80000000||w==0) w=320; if (h==(int)0x80000000||h==0) h=240;
         }
-        printf("[THUNK] CreateWindowExW: class='%ls' title='%ls' style=0x%08X size=(%dx%d)\n", className.c_str(), windowName.c_str(), style, w, h);
+        LOG(THUNK, "[THUNK] CreateWindowExW: class='%ls' title='%ls' style=0x%08X size=(%dx%d)\n", className.c_str(), windowName.c_str(), style, w, h);
         HWND hwnd = CreateWindowExW(exStyle, className.c_str(), windowName.c_str(), style, x, y, w, h, parent, menu_h, GetModuleHandleW(NULL), NULL);
         if (hwnd) {
             auto it = arm_wndprocs.find(className);
