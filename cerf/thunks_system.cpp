@@ -305,8 +305,17 @@ bool Win32Thunks::ExecuteSystemThunk(const std::string& func, uint32_t* regs, Em
                     regs[0] = 0;
                 }
             } else {
-                printf("[THUNK] LoadBitmapW(0x%08X, %u) -> resource not found\n", hmod, name_id);
-                regs[0] = 0;
+                /* Resource not in emulated PE; try loading natively from the DLL file */
+                HMODULE native_mod = GetNativeModuleForResources(hmod);
+                if (native_mod) {
+                    HBITMAP hbm = LoadBitmapW(native_mod, MAKEINTRESOURCEW(name_id));
+                    regs[0] = (uint32_t)(uintptr_t)hbm;
+                    printf("[THUNK] LoadBitmapW(0x%08X, %u) -> HBITMAP=%p (native fallback)\n",
+                           hmod, name_id, hbm);
+                } else {
+                    printf("[THUNK] LoadBitmapW(0x%08X, %u) -> resource not found\n", hmod, name_id);
+                    regs[0] = 0;
+                }
             }
         } else {
             regs[0] = (uint32_t)(uintptr_t)LoadBitmapW((HINSTANCE)(intptr_t)(int32_t)hmod,

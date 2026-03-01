@@ -716,12 +716,116 @@ uint32_t Win32Thunks::AllocThunk(const std::string& dll, const std::string& func
     return addr;
 }
 
+/* Check if a DLL name refers to a system DLL that we thunk (not an ARM DLL) */
+static bool IsThunkedDll(const std::string& dll_name) {
+    std::string lower = dll_name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    return lower.find("coredll") != std::string::npos ||
+           lower.find("commctrl") != std::string::npos ||
+           lower.find("ceshell") != std::string::npos;
+}
+
 void Win32Thunks::InstallThunks(PEInfo& info) {
+    /* First pass: identify and load ARM DLLs that need export resolution.
+       Collect unique DLL names that are NOT system DLLs we thunk. */
+    std::map<std::string, LoadedDll*> arm_dll_map; /* lowercase dll name -> loaded info */
+
     for (auto& imp : info.imports) {
+        if (IsThunkedDll(imp.dll_name)) continue;
 
+        std::string lower = imp.dll_name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+        if (arm_dll_map.count(lower)) continue; /* Already loaded */
+
+        /* Try to load the ARM DLL */
+        std::string dll_path = exe_dir + imp.dll_name;
+        FILE* f = fopen(dll_path.c_str(), "rb");
+        if (!f) {
+            /* Try just the name */
+            dll_path = imp.dll_name;
+            f = fopen(dll_path.c_str(), "rb");
+        }
+        if (!f) {
+            printf("[THUNK] ARM DLL not found: %s (will use thunk stubs)\n", imp.dll_name.c_str());
+            continue;
+        }
+        fclose(f);
+
+        PEInfo dll_info = {};
+        uint32_t entry = PELoader::LoadDll(dll_path.c_str(), mem, dll_info);
+        if (entry == 0 && dll_info.image_base == 0) {
+            printf("[THUNK] Failed to load ARM DLL: %s\n", dll_path.c_str());
+            continue;
+        }
+
+        printf("[THUNK] Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
+               imp.dll_name.c_str(), dll_info.image_base, dll_info.export_rva, dll_info.export_size);
+
+        /* Store in loaded_dlls */
+        std::wstring wlower(lower.begin(), lower.end());
+        LoadedDll loaded;
+        loaded.path = dll_path;
+        loaded.base_addr = dll_info.image_base;
+        loaded.pe_info = dll_info;
+        loaded.native_rsrc_handle = NULL;
+        loaded_dlls[wlower] = loaded;
+
+        arm_dll_map[lower] = &loaded_dlls[wlower];
+
+        /* Install thunks for the DLL's own imports (e.g., its COREDLL imports) */
+        for (auto& dll_imp : dll_info.imports) {
+            uint32_t thunk_addr = AllocThunk(dll_imp.dll_name, dll_imp.func_name,
+                                             dll_imp.ordinal, dll_imp.by_ordinal);
+            mem.Write32(dll_imp.iat_addr, thunk_addr);
+            printf("[THUNK]   DLL import: %s!%s @%d -> thunk 0x%08X\n",
+                   dll_imp.dll_name.c_str(),
+                   dll_imp.func_name.empty() ? "(ordinal)" : dll_imp.func_name.c_str(),
+                   dll_imp.ordinal, thunk_addr);
+        }
+
+        /* Queue DLL entry point (DllMain) for deferred call after CPU init */
+        if (entry != 0 && dll_info.entry_point_rva != 0) {
+            printf("[THUNK]   DLL has entry point at 0x%08X - queued for init\n", entry);
+            pending_dll_inits.push_back({entry, dll_info.image_base});
+        }
+    }
+
+    /* Second pass: install thunks/resolve exports for all imports */
+    for (auto& imp : info.imports) {
+        std::string lower = imp.dll_name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+        /* Check if this import comes from a loaded ARM DLL */
+        auto arm_it = arm_dll_map.find(lower);
+        if (arm_it != arm_dll_map.end()) {
+            /* Resolve the export from the ARM DLL */
+            uint32_t arm_addr = 0;
+            if (imp.by_ordinal) {
+                arm_addr = PELoader::ResolveExportOrdinal(mem, arm_it->second->pe_info, imp.ordinal);
+            } else {
+                arm_addr = PELoader::ResolveExportName(mem, arm_it->second->pe_info, imp.func_name);
+            }
+
+            if (arm_addr != 0) {
+                /* Write the actual ARM code address into the IAT */
+                mem.Write32(imp.iat_addr, arm_addr);
+                if (imp.by_ordinal) {
+                    printf("[THUNK] Resolved %s!@%d -> ARM 0x%08X (IAT 0x%08X)\n",
+                           imp.dll_name.c_str(), imp.ordinal, arm_addr, imp.iat_addr);
+                } else {
+                    printf("[THUNK] Resolved %s!%s -> ARM 0x%08X (IAT 0x%08X)\n",
+                           imp.dll_name.c_str(), imp.func_name.c_str(), arm_addr, imp.iat_addr);
+                }
+                continue;
+            }
+            /* Fall through to thunk if export not found */
+            printf("[THUNK] WARNING: Export not found in %s for %s@%d, using thunk stub\n",
+                   imp.dll_name.c_str(), imp.func_name.c_str(), imp.ordinal);
+        }
+
+        /* System DLL or unresolved - create a thunk */
         uint32_t thunk_addr = AllocThunk(imp.dll_name, imp.func_name, imp.ordinal, imp.by_ordinal);
-
-        /* Write the thunk address into the IAT */
         mem.Write32(imp.iat_addr, thunk_addr);
 
         if (imp.by_ordinal) {
@@ -732,6 +836,23 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
                    imp.dll_name.c_str(), imp.func_name.c_str(), thunk_addr, imp.iat_addr);
         }
     }
+}
+
+void Win32Thunks::CallDllEntryPoints() {
+    if (!callback_executor || pending_dll_inits.empty()) return;
+
+    for (auto& init : pending_dll_inits) {
+        printf("[THUNK] Calling DllMain at 0x%08X (base=0x%08X, DLL_PROCESS_ATTACH)\n",
+               init.entry_point, init.base_addr);
+        /* DllMain(hinstDLL, DLL_PROCESS_ATTACH, lpvReserved)
+           R0 = hinstDLL (DLL base address)
+           R1 = fdwReason = 1 (DLL_PROCESS_ATTACH)
+           R2 = lpvReserved = 0 */
+        uint32_t args[3] = { init.base_addr, 1, 0 };
+        uint32_t result = callback_executor(init.entry_point, args, 3);
+        printf("[THUNK] DllMain returned %d\n", result);
+    }
+    pending_dll_inits.clear();
 }
 
 uint32_t Win32Thunks::ReadStackArg(uint32_t* regs, EmulatedMemory& mem, int index) {

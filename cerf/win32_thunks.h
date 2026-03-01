@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <cstdint>
 #include <string>
+#include <vector>
 #include <map>
 #include <functional>
 #include "mem.h"
@@ -40,6 +41,9 @@ public:
     /* Install thunks for all imports in a loaded PE.
        Replaces IAT entries with thunk addresses. */
     void InstallThunks(PEInfo& info);
+
+    /* Call DllMain for all loaded ARM DLLs. Must be called after callback_executor is set up. */
+    void CallDllEntryPoints();
 
     /* Handle a thunk call. Called when ARM CPU branches to a thunk address.
        Returns true if the address was a thunk and was handled.
@@ -103,6 +107,13 @@ private:
     uint32_t FindResourceInPE(uint32_t module_base, uint32_t rsrc_rva, uint32_t rsrc_size,
                               uint32_t type_id, uint32_t name_id,
                               uint32_t& out_data_rva, uint32_t& out_data_size);
+
+    /* Pending DLL entry points to call after callback_executor is set up */
+    struct PendingDllInit {
+        uint32_t entry_point;
+        uint32_t base_addr;
+    };
+    std::vector<PendingDllInit> pending_dll_inits;
 
     /* Ordinal to function name mapping */
     static std::map<uint16_t, std::string> ordinal_map;

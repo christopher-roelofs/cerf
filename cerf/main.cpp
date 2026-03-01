@@ -224,6 +224,9 @@ int main(int argc, char* argv[]) {
         return result;
     };
 
+    /* Call DllMain for any loaded ARM DLLs (must happen after callback_executor is set up) */
+    thunks.CallDllEntryPoints();
+
     printf("\n[EMU] Starting execution at 0x%08X (%s mode)\n",
            cpu.r[REG_PC], cpu.IsThumb() ? "Thumb" : "ARM");
     printf("[EMU] Stack at 0x%08X, hInstance=0x%08X\n\n", cpu.r[REG_SP], cpu.r[0]);

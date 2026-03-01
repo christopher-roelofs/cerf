@@ -34,6 +34,10 @@ struct PEInfo {
     /* Resource directory */
     uint32_t rsrc_rva;
     uint32_t rsrc_size;
+
+    /* Export directory */
+    uint32_t export_rva;
+    uint32_t export_size;
 };
 
 class PELoader {
@@ -44,6 +48,14 @@ public:
 
     /* Load a DLL dependency into emulated memory */
     static uint32_t LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info);
+
+    /* Resolve an export ordinal from a loaded PE's export directory.
+       Returns the virtual address (base + RVA) of the exported function, or 0 if not found. */
+    static uint32_t ResolveExportOrdinal(EmulatedMemory& mem, const PEInfo& info, uint16_t ordinal);
+
+    /* Resolve an export by name from a loaded PE's export directory.
+       Returns the virtual address (base + RVA) of the exported function, or 0 if not found. */
+    static uint32_t ResolveExportName(EmulatedMemory& mem, const PEInfo& info, const std::string& name);
 
 private:
     static bool ParseHeaders(const uint8_t* data, size_t size, PEInfo& info);
