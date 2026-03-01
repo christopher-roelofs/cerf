@@ -48,6 +48,10 @@ cerf.exe <path-to-wince-arm-exe>
 
 Primary test app: Solitaire (`tmp/arm_test_apps/solitare.exe`). The game should launch, display cards, handle clicks, and show the Options dialog.
 
+## References
+
+The `references/` directory (gitignored) holds local WinCE SDK materials. See `references/README.md` for setup.
+
 ## Conventions
 
 - C++17, MSVC (Visual Studio 2022, v143 toolset)
