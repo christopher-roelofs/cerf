@@ -75,7 +75,7 @@ Output: `build/Release/x64/cerf.exe` with `build/Release/x64/windows/` containin
 cerf.exe [options] <path-to-arm-wince-exe>
 ```
 
-Options: `--trace`, `--log=CATEGORIES`, `--no-log=CATEGORIES`, `--log-file=PATH`, `--wince-sys=DIR`, `--quiet`
+Options: `--trace`, `--log=CATEGORIES`, `--no-log=CATEGORIES`, `--log-file=PATH`, `--flush-outputs`, `--wince-sys=DIR`, `--quiet`
 
 Test apps in `tmp/arm_test_apps/`: solitare.exe, chearts.exe, Zuma-arm.exe
 
@@ -112,8 +112,14 @@ Never create a silent stub that just returns a value without logging. This is cr
 
 ## IMPORTANT: Capturing App Output
 
-To capture the emulator's log output for analysis, **always redirect to a file** and then read that file:
+**Always use `--flush-outputs`** when capturing logs. Without it, buffered output will be truncated when the process is killed.
 ```
-cerf.exe [options] <app.exe> > log.txt 2>&1
+cerf.exe --flush-outputs [options] <app.exe> > log.txt 2>&1
 ```
-Do NOT try to capture output via Bash tool timeout or other methods — the app runs a GUI message loop and won't exit on its own. Redirect to a file, let the user close the app, then read the log file.
+Apps run a GUI message loop and won't exit on their own. Launch in background, wait ~10s, then read the log file. Use `taskkill //f //im cerf.exe` when done investigating.
+
+To inspect the running app's windows (check if UI is showing, what dialogs are open):
+```
+python3 tools/inspect_cerf.py
+```
+This lists all windows owned by cerf.exe with class, title, visibility, and size.

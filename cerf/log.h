@@ -24,6 +24,7 @@ namespace Log {
     void EnableCategory(Category cat);
     void DisableCategory(Category cat);
     void SetFile(const char* path);
+    void SetFlush(bool enabled);
     void Close();
 
     void Print(Category cat, const char* fmt, ...);

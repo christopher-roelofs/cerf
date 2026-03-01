@@ -32,6 +32,7 @@ static void PrintUsage(const char* prog) {
     printf("  --no-log=CATEGORIES  Disable specific categories\n");
     printf("  --log-file=PATH      Write logs to file (in addition to console)\n");
     printf("  --wince-sys=DIR      WinCE system DLL directory (ARM .dll files)\n");
+    printf("  --flush-outputs      Flush after every log write (for complete captures)\n");
     printf("  --quiet              Disable all log output\n");
     printf("  --help               Show this help\n");
 }
@@ -63,6 +64,7 @@ int main(int argc, char* argv[]) {
     bool trace = false;
     bool explicit_log = false;
     const char* log_file = nullptr;
+    bool flush_outputs = false;
     uint32_t no_log_mask = 0;
 
     Log::Init();
@@ -78,6 +80,8 @@ int main(int argc, char* argv[]) {
             no_log_mask |= Log::ParseCategories(argv[i] + 9);
         } else if (strncmp(argv[i], "--log-file=", 11) == 0) {
             log_file = argv[i] + 11;
+        } else if (strcmp(argv[i], "--flush-outputs") == 0) {
+            flush_outputs = true;
         } else if (strncmp(argv[i], "--wince-sys=", 12) == 0) {
             wince_sys = argv[i] + 12;
         } else if (strcmp(argv[i], "--quiet") == 0) {
@@ -94,6 +98,10 @@ int main(int argc, char* argv[]) {
     /* Apply --no-log after everything else */
     if (no_log_mask) {
         Log::SetEnabled(Log::GetEnabled() & ~no_log_mask);
+    }
+
+    if (flush_outputs) {
+        Log::SetFlush(true);
     }
 
     if (log_file) {
