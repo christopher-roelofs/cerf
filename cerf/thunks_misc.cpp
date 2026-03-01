@@ -468,6 +468,23 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("ImageList_GetImageCount", 756, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = ImageList_GetImageCount((HIMAGELIST)(intptr_t)(int32_t)regs[0]); return true;
     });
+    Thunk("ImageList_LoadImage", 758, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* ImageList_LoadImage(hInstance, lpbmp, cx, cGrow, crMask, uType, uFlags) */
+        uint32_t hmod = regs[0], lpbmp = regs[1], cx = regs[2], cGrow = regs[3];
+        COLORREF crMask = ReadStackArg(regs, mem, 0);
+        UINT uType = ReadStackArg(regs, mem, 1);
+        UINT uFlags = ReadStackArg(regs, mem, 2);
+        printf("[THUNK] ImageList_LoadImage(0x%08X, %d, cx=%d, cGrow=%d, crMask=0x%X, type=%d, flags=0x%X)\n",
+               hmod, lpbmp, cx, cGrow, crMask, uType, uFlags);
+        HMODULE native_mod = NULL;
+        bool is_arm = (hmod == emu_hinstance);
+        for (auto& pair : loaded_dlls) { if (pair.second.base_addr == hmod) { is_arm = true; break; } }
+        if (is_arm) native_mod = GetNativeModuleForResources(hmod);
+        else native_mod = (HMODULE)(intptr_t)(int32_t)hmod;
+        HIMAGELIST h = native_mod ? ImageList_LoadImageW(native_mod, MAKEINTRESOURCEW(lpbmp), cx, cGrow, crMask, uType, uFlags) : NULL;
+        regs[0] = (uint32_t)(uintptr_t)h;
+        return true;
+    });
     Thunk("ImageList_GetIconSize", 755, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         int cx, cy; BOOL ret = ImageList_GetIconSize((HIMAGELIST)(intptr_t)(int32_t)regs[0], &cx, &cy);
         if (regs[1]) mem.Write32(regs[1], cx); if (regs[2]) mem.Write32(regs[2], cy);
