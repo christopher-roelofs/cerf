@@ -136,7 +136,6 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;shell32.lib;comctl32.lib;advapi32.lib;comdlg32.lib;imm32.lib;winmm.lib;msimg32.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>67108864</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
