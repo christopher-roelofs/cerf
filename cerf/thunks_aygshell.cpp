@@ -8,56 +8,59 @@
 
 void Win32Thunks::RegisterAygshellHandlers() {
     Thunk("SHHandleWMSettingChange", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Handles WM_SETTINGCHANGE for SIP awareness - not needed on desktop */
+        printf("[THUNK] SHHandleWMSettingChange(0x%08X, 0x%08X, 0x%08X) -> stub\n", regs[0], regs[1], regs[2]);
         regs[0] = 0; return true;
     });
     Thunk("SHHandleWMActivate", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Handles WM_ACTIVATE for SIP awareness - not needed on desktop */
+        printf("[THUNK] SHHandleWMActivate(0x%08X, 0x%08X, 0x%08X) -> stub\n", regs[0], regs[1], regs[2]);
         regs[0] = 0; return true;
     });
     Thunk("SHInitDialog", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Initializes WinCE dialog for fullscreen/SIP - not needed on desktop */
+        printf("[THUNK] SHInitDialog(0x%08X) -> stub\n", regs[0]);
         regs[0] = 1; return true;
     });
     Thunk("SHFullScreen", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Controls taskbar/SIP visibility on WinCE - not needed on desktop */
+        printf("[THUNK] SHFullScreen(hwnd=0x%08X, flags=0x%08X) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
     Thunk("SHCreateMenuBar", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Creates WinCE-style menu bar (softkeys) - stub as not applicable */
+        printf("[THUNK] SHCreateMenuBar(0x%08X) -> stub\n", regs[0]);
         regs[0] = 0; return true;
     });
     Thunk("SHSipPreference", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Show/hide Soft Input Panel - not needed on desktop */
+        printf("[THUNK] SHSipPreference(hwnd=0x%08X, st=%d) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
     Thunk("SHRecognizeGesture", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Gesture recognition (tap-and-hold etc.) - stub, return no gesture */
+        printf("[THUNK] SHRecognizeGesture(0x%08X) -> stub\n", regs[0]);
         regs[0] = 0; return true;
     });
     Thunk("SHSendBackToFocusWindow", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        printf("[THUNK] SHSendBackToFocusWindow(0x%08X, 0x%08X, 0x%08X) -> stub\n", regs[0], regs[1], regs[2]);
         regs[0] = 0; return true;
     });
     Thunk("SHSetAppKeyWndAssoc", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Associates hardware buttons with windows - not needed */
+        printf("[THUNK] SHSetAppKeyWndAssoc(key=%d, hwnd=0x%08X) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
     Thunk("SHDoneButton", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Show/hide Done button on WinCE caption bar */
+        printf("[THUNK] SHDoneButton(hwnd=0x%08X, state=%d) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
     Thunk("SHSipInfo", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Query/set SIP info - return failure so apps don't expect SIP data */
+        printf("[THUNK] SHSipInfo(action=%d, param=%d) -> stub\n", regs[0], regs[1]);
         regs[0] = 0; return true;
     });
     Thunk("SHNotificationAdd", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        printf("[THUNK] SHNotificationAdd -> stub\n");
+        printf("[THUNK] SHNotificationAdd(0x%08X) -> stub\n", regs[0]);
         regs[0] = 1; return true;
     });
     Thunk("SHNotificationRemove", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        printf("[THUNK] SHNotificationRemove(0x%08X, 0x%08X) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
     Thunk("SHNotificationUpdate", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        printf("[THUNK] SHNotificationUpdate(0x%08X, 0x%08X) -> stub\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
 }

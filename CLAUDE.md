@@ -59,3 +59,22 @@ The `references/` directory (gitignored) holds local WinCE SDK materials. See `r
 - `printf` for debug/trace output with `[THUNK]`, `[PE]`, `[EMU]` prefixes
 - Static linking (`/MT` runtime)
 - Thunk functions return `true` when handled, setting `regs[0]` as the return value
+
+## IMPORTANT: Thunk File Organization
+
+**Each DLL and each functional group within a DLL MUST have its own `thunks_*.cpp` file.** No single thunks file should exceed 100-200 lines. When a file grows beyond that, split it into smaller focused files.
+
+- For COREDLL groups: `thunks_memory.cpp`, `thunks_gdi_dc.cpp`, `thunks_gdi_draw.cpp`, `thunks_string.cpp`, etc.
+- For external DLLs: `thunks_aygshell.cpp`, `thunks_ole.cpp`, etc. If a DLL has multiple functional groups (e.g. aygshell has SIP functions, menu bar functions, notification functions), split those into separate files too as they grow.
+- Each file has its own `Register*Handlers()` method declared in `win32_thunks.h` and called from the constructor in `win32_thunks.cpp`.
+- New files must be added to `cerf.vcxproj` under `<ClCompile>`.
+
+**NEVER pile unrelated thunks into an existing file.** Create a new file proactively.
+
+## IMPORTANT: Stub Functions Must Log
+
+**Every stub function MUST print a console warning** so unimplemented calls are visible during testing. Use the format:
+```cpp
+printf("[THUNK] FunctionName(...) -> stub\n");
+```
+Never create a silent stub that just returns a value without logging. This is critical for debugging which functions apps actually call.
