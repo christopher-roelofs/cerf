@@ -29,7 +29,7 @@ bool Win32Thunks::ExecuteMemoryThunk(const std::string& func, uint32_t* regs, Em
         return true;
     }
 
-    if (func == "LocalAlloc") {
+    if (func == "LocalAlloc" || func == "LocalAllocTrace") {
         uint32_t flags = regs[0];
         uint32_t size = regs[1];
         static uint32_t next_local = 0x30000000;

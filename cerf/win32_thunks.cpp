@@ -246,6 +246,7 @@ void Win32Thunks::InitOrdinalMap() {
     ordinal_map[542] = "GetSystemInfo";
     ordinal_map[543] = "RaiseException";
     ordinal_map[544] = "TerminateProcess";
+    ordinal_map[545] = "NKDbgPrintfW";
     ordinal_map[548] = "CreateFileMappingW";
     ordinal_map[549] = "MapViewOfFile";
     ordinal_map[550] = "UnmapViewOfFile";
@@ -338,6 +339,7 @@ void Win32Thunks::InitOrdinalMap() {
     ordinal_map[874] = "LoadStringW";
     ordinal_map[875] = "SetTimer";
     ordinal_map[876] = "KillTimer";
+    ordinal_map[877] = "LocalAllocTrace";
     ordinal_map[878] = "GetClassInfoW";
     ordinal_map[884] = "UnregisterClassW";
     ordinal_map[885] = "GetSystemMetrics";

@@ -144,16 +144,13 @@ int main(int argc, char* argv[]) {
     cpu.r[2] = cmdline_addr;
     cpu.r[3] = 1; /* SW_SHOWNORMAL */
 
-    /* Determine initial mode (ARM or Thumb) */
-    if (pe_info.machine == 0x01C2) {
-        /* ARM Thumb executable */
+    /* Determine initial mode (ARM or Thumb) based on entry point bit 0.
+       Machine type 0x01C2 (IMAGE_FILE_MACHINE_THUMB) means the binary supports
+       Thumb instructions, but the entry point itself may be ARM or Thumb —
+       bit 0 of the address determines the mode (standard ARM interworking). */
+    if (entry_point & 1) {
         cpu.cpsr |= PSR_T;
-    } else {
-        /* Check if entry point has Thumb bit set */
-        if (entry_point & 1) {
-            cpu.cpsr |= PSR_T;
-            cpu.r[REG_PC] = entry_point & ~1u;
-        }
+        cpu.r[REG_PC] = entry_point & ~1u;
     }
 
     /* Set up thunk handler */
@@ -164,9 +161,10 @@ int main(int argc, char* argv[]) {
             ExitProcess(regs[0]);
             return true;
         }
-        /* Callback sentinel - handled in the callback executor loop */
+        /* Callback sentinel - set PC so the callback executor loop detects it */
         if (addr == 0xCAFEC000) {
-            return true; /* Let the callback executor detect this via PC check */
+            regs[15] = 0xCAFEC000;
+            return true;
         }
         return thunks.HandleThunk(addr, regs, mem_ref);
     };
