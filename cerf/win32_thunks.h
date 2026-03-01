@@ -193,6 +193,11 @@ private:
     void RegisterRegistryHandlers();
     void RegisterFileHandlers();
     void RegisterSystemHandlers();
+    void RegisterResourceHandlers();
+    void RegisterCommctrlHandlers();
+    void RegisterCommdlgHandlers();
+    void RegisterShellHandlers();
+    void RegisterProcessHandlers();
     void RegisterMiscHandlers();
     void RegisterModuleHandlers();
     void RegisterAygshellHandlers();

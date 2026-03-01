@@ -564,6 +564,11 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterRegistryHandlers();
     RegisterFileHandlers();
     RegisterSystemHandlers();
+    RegisterResourceHandlers();
+    RegisterCommctrlHandlers();
+    RegisterCommdlgHandlers();
+    RegisterShellHandlers();
+    RegisterProcessHandlers();
     RegisterMiscHandlers();
     RegisterModuleHandlers();
     RegisterAygshellHandlers();
