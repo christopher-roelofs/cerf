@@ -109,3 +109,11 @@ The `references/` directory (gitignored) holds local WinCE SDK materials includi
 LOG(THUNK, "[THUNK] FunctionName(...) -> stub\n");
 ```
 Never create a silent stub that just returns a value without logging. This is critical for debugging which functions apps actually call.
+
+## IMPORTANT: Capturing App Output
+
+To capture the emulator's log output for analysis, **always redirect to a file** and then read that file:
+```
+cerf.exe [options] <app.exe> > log.txt 2>&1
+```
+Do NOT try to capture output via Bash tool timeout or other methods — the app runs a GUI message loop and won't exit on its own. Redirect to a file, let the user close the app, then read the log file.
