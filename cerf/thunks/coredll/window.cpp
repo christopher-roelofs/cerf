@@ -1,5 +1,5 @@
 /* Window thunks: RegisterClass, CreateWindowEx, Show/Move/Destroy */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <commctrl.h>
 

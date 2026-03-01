@@ -1,8 +1,8 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 /* Module/process management thunks */
-#include "win32_thunks.h"
-#include "pe_loader.h"
+#include "../win32_thunks.h"
+#include "../../loader/pe_loader.h"
 #include <algorithm>
 #include <cstdio>
 

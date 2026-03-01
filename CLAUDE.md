@@ -8,19 +8,27 @@ CERF is an ARM CPU emulator + Win32 API compatibility layer that runs Windows CE
 
 ```
 cerf/
-  main.cpp              - Entry point, CLI parsing, emulation loop setup
-  arm_cpu.h             - ArmCpu class declaration (registers, flags, method signatures)
-  arm_cpu.cpp           - CPU core: condition checks, barrel shifter, Run/Step loop, trace buffer
-  arm_insn.cpp          - ARM mode instruction handlers (ExecuteArm + data processing, multiply, load/store, branch, etc.)
-  thumb_insn.cpp        - Thumb mode instruction handlers (ExecuteThumb + all Thumb opcodes)
-  mem.h                 - EmulatedMemory class (32-bit address space with page-based allocation)
-  pe_loader.h/.cpp      - WinCE PE loader (sections, imports, relocations)
-  win32_thunks.h        - Win32Thunks class declaration, ThunkEntry struct
-  win32_thunks.cpp      - Core thunk infrastructure: ordinal map, EmuWndProc/EmuDlgProc callbacks, thunk dispatch, module management
-  thunks_memory.cpp     - Memory allocation (VirtualAlloc, HeapAlloc, malloc, etc.) and string operations (wcslen, wcscpy, wsprintfW, MultiByteToWideChar, etc.)
-  thunks_gdi.cpp        - GDI: DC management, BitBlt, drawing, fonts, text, regions, DIB sections
-  thunks_windowing.cpp  - Windows: RegisterClass, CreateWindowEx, message loop, dialogs, menus, input, rect operations
-  thunks_system.cpp     - System: GetSystemMetrics, time, sync primitives, TLS, locale, registry stubs, resources, file I/O stubs
+  main.cpp                        - Entry point, CLI parsing, emulation loop setup
+  cpu/
+    mem.h                          - EmulatedMemory class (32-bit address space, page-based)
+    arm_cpu.h                      - ArmCpu class declaration (registers, flags, methods)
+    arm_cpu.cpp                    - CPU core: condition checks, barrel shifter, Run/Step loop
+    arm_insn.cpp                   - ARM mode instruction handlers
+    thumb_insn.cpp                 - Thumb mode instruction handlers
+  loader/
+    pe_loader.h/.cpp               - WinCE PE loader (sections, imports, relocations)
+  thunks/
+    win32_thunks.h                 - Win32Thunks class, ThunkEntry struct
+    win32_thunks.cpp               - Core thunk infrastructure, dispatch, callbacks
+    coredll/                       - COREDLL.DLL thunks (one file per functional group)
+      memory.cpp, string.cpp, crt.cpp, arm_runtime.cpp
+      gdi_dc.cpp, gdi_draw.cpp, gdi_text.cpp, gdi_region.cpp
+      window.cpp, window_props.cpp, dialog.cpp, message.cpp, menu.cpp, input.cpp
+      file.cpp, registry.cpp, system.cpp, resource.cpp, module.cpp, process.cpp
+      shell.cpp, misc.cpp
+    aygshell/                      - AYGSHELL.DLL thunks (WinCE shell helpers)
+    commctrl/                      - COMMCTRL.DLL thunks (common controls, ImageList)
+    commdlg/                       - COMMDLG.DLL thunks (file dialogs)
 ```
 
 ## Key Concepts

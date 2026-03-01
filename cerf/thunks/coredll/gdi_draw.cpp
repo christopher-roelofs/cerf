@@ -1,6 +1,6 @@
 /* GDI thunks: BitBlt, drawing primitives, DIB operations */
 #define NOMINMAX
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <cstring>
 #include <vector>

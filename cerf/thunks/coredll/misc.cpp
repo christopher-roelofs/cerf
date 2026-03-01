@@ -1,7 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 /* Misc small stubs: debug, clipboard, caret, sound, RAS, COM, IMM, gestures, C runtime */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <objbase.h>
 

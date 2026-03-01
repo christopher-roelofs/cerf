@@ -1,7 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 /* Shell thunks: ShellExecuteEx, Shell_NotifyIcon, SHGetSpecialFolderPath */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <shellapi.h>
 #include <vector>

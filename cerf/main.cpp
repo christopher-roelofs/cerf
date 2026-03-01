@@ -15,10 +15,10 @@
 #include <vector>
 #include <algorithm>
 
-#include "mem.h"
-#include "arm_cpu.h"
-#include "pe_loader.h"
-#include "win32_thunks.h"
+#include "cpu/mem.h"
+#include "cpu/arm_cpu.h"
+#include "loader/pe_loader.h"
+#include "thunks/win32_thunks.h"
 
 static void PrintUsage(const char* prog) {
     printf("CERF - Windows CE Runtime Foundation\n");

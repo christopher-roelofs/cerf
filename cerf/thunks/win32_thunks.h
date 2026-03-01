@@ -6,8 +6,8 @@
 #include <map>
 #include <set>
 #include <functional>
-#include "mem.h"
-#include "pe_loader.h"
+#include "../cpu/mem.h"
+#include "../loader/pe_loader.h"
 
 /* Magic address range for thunk entries.
    When ARM code branches to an address in this range, we intercept it.

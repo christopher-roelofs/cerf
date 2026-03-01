@@ -1,5 +1,5 @@
 /* Menu thunks: Create, Append, Enable, Check, Track, Load */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterMenuHandlers() {

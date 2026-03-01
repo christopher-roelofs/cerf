@@ -1,5 +1,5 @@
 /* GDI thunks: fonts, text metrics, DrawTextW, ExtTextOutW */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterGdiTextHandlers() {

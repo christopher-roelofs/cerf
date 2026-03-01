@@ -1,6 +1,6 @@
 /* Memory allocation thunks: VirtualAlloc, Heap*, Local*, malloc/free */
 #define NOMINMAX
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <cstring>
 #include <algorithm>

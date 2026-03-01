@@ -1,7 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 /* Process/thread thunks: CreateProcessW, CreateThread stubs, file mapping stubs */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <vector>
 

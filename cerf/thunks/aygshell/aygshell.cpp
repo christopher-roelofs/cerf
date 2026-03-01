@@ -3,7 +3,7 @@
 /* AYGSHELL.DLL thunks - WinCE Shell Helper Library.
    Most functions deal with WinCE-specific UI (SIP, fullscreen PDA, menu bars)
    and can be safely stubbed since we run on a desktop. */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterAygshellHandlers() {

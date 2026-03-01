@@ -1,5 +1,5 @@
 /* File I/O thunks: CreateFile, ReadFile, WriteFile, Find*, directory ops */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <vector>
 

@@ -1,5 +1,5 @@
 /* Registry thunks: RegOpenKeyEx, RegCreateKeyEx, RegCloseKey, etc. */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterRegistryHandlers() {

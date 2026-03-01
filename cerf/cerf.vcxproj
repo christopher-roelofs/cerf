@@ -139,43 +139,49 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="arm_cpu.h" />
-    <ClInclude Include="mem.h" />
-    <ClInclude Include="pe_loader.h" />
-    <ClInclude Include="win32_thunks.h" />
+    <ClInclude Include="cpu\arm_cpu.h" />
+    <ClInclude Include="cpu\mem.h" />
+    <ClInclude Include="loader\pe_loader.h" />
+    <ClInclude Include="thunks\win32_thunks.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="arm_cpu.cpp" />
-    <ClCompile Include="arm_insn.cpp" />
-    <ClCompile Include="thumb_insn.cpp" />
+    <!-- CPU emulation -->
+    <ClCompile Include="cpu\arm_cpu.cpp" />
+    <ClCompile Include="cpu\arm_insn.cpp" />
+    <ClCompile Include="cpu\thumb_insn.cpp" />
+    <!-- PE loader -->
+    <ClCompile Include="loader\pe_loader.cpp" />
+    <!-- Entry point -->
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="pe_loader.cpp" />
-    <ClCompile Include="win32_thunks.cpp" />
-    <ClCompile Include="thunks_arm_runtime.cpp" />
-    <ClCompile Include="thunks_memory.cpp" />
-    <ClCompile Include="thunks_crt.cpp" />
-    <ClCompile Include="thunks_string.cpp" />
-    <ClCompile Include="thunks_gdi_dc.cpp" />
-    <ClCompile Include="thunks_gdi_draw.cpp" />
-    <ClCompile Include="thunks_gdi_text.cpp" />
-    <ClCompile Include="thunks_gdi_region.cpp" />
-    <ClCompile Include="thunks_window.cpp" />
-    <ClCompile Include="thunks_window_props.cpp" />
-    <ClCompile Include="thunks_dialog.cpp" />
-    <ClCompile Include="thunks_message.cpp" />
-    <ClCompile Include="thunks_menu.cpp" />
-    <ClCompile Include="thunks_input.cpp" />
-    <ClCompile Include="thunks_registry.cpp" />
-    <ClCompile Include="thunks_file.cpp" />
-    <ClCompile Include="thunks_system.cpp" />
-    <ClCompile Include="thunks_resource.cpp" />
-    <ClCompile Include="thunks_commctrl.cpp" />
-    <ClCompile Include="thunks_commdlg.cpp" />
-    <ClCompile Include="thunks_shell.cpp" />
-    <ClCompile Include="thunks_process.cpp" />
-    <ClCompile Include="thunks_misc.cpp" />
-    <ClCompile Include="thunks_module.cpp" />
-    <ClCompile Include="thunks_aygshell.cpp" />
+    <!-- Thunk infrastructure -->
+    <ClCompile Include="thunks\win32_thunks.cpp" />
+    <!-- COREDLL thunks -->
+    <ClCompile Include="thunks\coredll\arm_runtime.cpp" />
+    <ClCompile Include="thunks\coredll\memory.cpp" />
+    <ClCompile Include="thunks\coredll\crt.cpp" />
+    <ClCompile Include="thunks\coredll\string.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_dc.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_draw.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_text.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_region.cpp" />
+    <ClCompile Include="thunks\coredll\window.cpp" />
+    <ClCompile Include="thunks\coredll\window_props.cpp" />
+    <ClCompile Include="thunks\coredll\dialog.cpp" />
+    <ClCompile Include="thunks\coredll\message.cpp" />
+    <ClCompile Include="thunks\coredll\menu.cpp" />
+    <ClCompile Include="thunks\coredll\input.cpp" />
+    <ClCompile Include="thunks\coredll\registry.cpp" />
+    <ClCompile Include="thunks\coredll\file.cpp" />
+    <ClCompile Include="thunks\coredll\system.cpp" />
+    <ClCompile Include="thunks\coredll\resource.cpp" />
+    <ClCompile Include="thunks\coredll\process.cpp" />
+    <ClCompile Include="thunks\coredll\misc.cpp" />
+    <ClCompile Include="thunks\coredll\module.cpp" />
+    <!-- External DLL thunks -->
+    <ClCompile Include="thunks\commctrl\commctrl.cpp" />
+    <ClCompile Include="thunks\commdlg\commdlg.cpp" />
+    <ClCompile Include="thunks\coredll\shell.cpp" />
+    <ClCompile Include="thunks\aygshell\aygshell.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

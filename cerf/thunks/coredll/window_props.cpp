@@ -1,5 +1,5 @@
 /* Window thunks: Get/SetWindowLong, text, rect ops */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterWindowPropsHandlers() {

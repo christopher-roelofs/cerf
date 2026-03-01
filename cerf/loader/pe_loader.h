@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
-#include "mem.h"
+#include "../cpu/mem.h"
 
 struct ImportEntry {
     std::string dll_name;

@@ -1,7 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 /* Common dialog thunks: GetOpenFileNameW, GetSaveFileNameW */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 #include <commdlg.h>
 #include <vector>

@@ -1,7 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 /* Resource loading thunks: LoadStringW, LoadBitmapW, LoadImageW, FindResource, LoadAcceleratorsW */
-#include "win32_thunks.h"
+#include "../win32_thunks.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterResourceHandlers() {
