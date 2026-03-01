@@ -17,11 +17,12 @@ void Win32Thunks::RegisterModuleHandlers() {
             printf("[THUNK] GetModuleHandleW('%ls')\n", name.c_str());
             std::wstring lower = name;
             std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
-            if (lower.find(L"coredll") != std::wstring::npos) {
-                regs[0] = 0xCE000000;
-            } else {
-                regs[0] = emu_hinstance;
-            }
+            if (lower.find(L"coredll") != std::wstring::npos) { regs[0] = 0xCE000000; }
+            else if (lower.find(L"commctrl") != std::wstring::npos) { regs[0] = 0xCE010000; }
+            else if (lower.find(L"ole32") != std::wstring::npos) { regs[0] = 0xCE020000; }
+            else if (lower.find(L"ceshell") != std::wstring::npos) { regs[0] = 0xCE030000; }
+            else if (lower.find(L"commdlg") != std::wstring::npos) { regs[0] = 0xCE040000; }
+            else { regs[0] = emu_hinstance; }
         }
         return true;
     });
@@ -40,6 +41,11 @@ void Win32Thunks::RegisterModuleHandlers() {
         std::wstring lower = name;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
         if (lower.find(L"coredll") != std::wstring::npos) { regs[0] = 0xCE000000; return true; }
+        /* Thunked system DLLs get fake handles — their functions are handled by our thunk dispatch */
+        if (lower.find(L"commctrl") != std::wstring::npos) { regs[0] = 0xCE010000; printf("[THUNK]   -> thunked (commctrl)\n"); return true; }
+        if (lower.find(L"ole32") != std::wstring::npos) { regs[0] = 0xCE020000; printf("[THUNK]   -> thunked (ole32)\n"); return true; }
+        if (lower.find(L"ceshell") != std::wstring::npos) { regs[0] = 0xCE030000; printf("[THUNK]   -> thunked (ceshell)\n"); return true; }
+        if (lower.find(L"commdlg") != std::wstring::npos) { regs[0] = 0xCE040000; printf("[THUNK]   -> thunked (commdlg)\n"); return true; }
         auto it = loaded_dlls.find(lower);
         if (it != loaded_dlls.end()) {
             regs[0] = it->second.base_addr;
