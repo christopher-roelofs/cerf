@@ -132,6 +132,20 @@ private:
     /* Get a native HMODULE for resource access from an emulated module handle */
     HMODULE GetNativeModuleForResources(uint32_t emu_handle);
 
+    /* Handle mapping for 64-bit HANDLE values that can't safely round-trip
+       through 32-bit ARM registers (sign-extension corrupts bit-31-set handles) */
+    std::map<uint32_t, HANDLE> handle_map;   /* fake 32-bit handle -> real 64-bit HANDLE */
+    uint32_t next_fake_handle = 0x00100000;
+    uint32_t WrapHandle(HANDLE h);
+    HANDLE UnwrapHandle(uint32_t fake);
+    void RemoveHandle(uint32_t fake);
+
+    /* WinCE path mapping: converts WinCE paths to host filesystem paths */
+    std::wstring MapWinCEPath(const std::wstring& wce_path);
+
+    /* Write WIN32_FIND_DATAW to emulated memory (WinCE layout) */
+    void WriteFindDataToEmu(EmulatedMemory& mem, uint32_t addr, const WIN32_FIND_DATAW& fd);
+
     /* Category dispatch methods (each in its own .cpp file) */
     bool ExecuteMemoryThunk(const std::string& func, uint32_t* regs, EmulatedMemory& mem);
     bool ExecuteStringThunk(const std::string& func, uint32_t* regs, EmulatedMemory& mem);

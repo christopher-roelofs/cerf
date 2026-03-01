@@ -42,6 +42,83 @@ std::string ReadStringFromEmu(EmulatedMemory& mem, uint32_t addr) {
     return result;
 }
 
+/* Wrap a native 64-bit HANDLE into a safe 32-bit value for ARM code.
+   Uses a mapping table so the handle can be recovered without sign-extension issues. */
+uint32_t Win32Thunks::WrapHandle(HANDLE h) {
+    if (h == INVALID_HANDLE_VALUE) return (uint32_t)INVALID_HANDLE_VALUE;
+    if (h == NULL) return 0;
+    uint32_t fake = next_fake_handle++;
+    handle_map[fake] = h;
+    return fake;
+}
+
+HANDLE Win32Thunks::UnwrapHandle(uint32_t fake) {
+    if (fake == (uint32_t)INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
+    if (fake == 0) return NULL;
+    auto it = handle_map.find(fake);
+    if (it != handle_map.end()) return it->second;
+    /* Not in our map — fall back to sign-extension (for handles from other APIs) */
+    return (HANDLE)(intptr_t)(int32_t)fake;
+}
+
+void Win32Thunks::RemoveHandle(uint32_t fake) {
+    handle_map.erase(fake);
+}
+
+/* Map WinCE paths to host filesystem paths.
+   WinCE uses paths like "\skins\file.txt" (root-relative) or "file.txt" (relative).
+   We map these relative to the exe directory on the host. */
+std::wstring Win32Thunks::MapWinCEPath(const std::wstring& wce_path) {
+    if (wce_path.empty()) return wce_path;
+
+    /* Convert exe_dir to wide string */
+    std::wstring wide_exe_dir;
+    for (char c : exe_dir) wide_exe_dir += (wchar_t)c;
+
+    /* Check if it's already a host absolute path (has drive letter like C:\) */
+    if (wce_path.size() >= 2 && wce_path[1] == L':') {
+        return wce_path;
+    }
+
+    /* WinCE absolute path starting with backslash - strip the leading backslash
+       and treat as relative to exe directory */
+    if (wce_path[0] == L'\\' || wce_path[0] == L'/') {
+        /* Special WinCE paths like \Windows\ - map to exe dir */
+        return wide_exe_dir + wce_path.substr(1);
+    }
+
+    /* Relative path - prepend exe directory */
+    return wide_exe_dir + wce_path;
+}
+
+/* Write WIN32_FIND_DATAW to emulated memory using WinCE struct layout.
+   WinCE layout (no dwReserved0/1, no cAlternateFileName):
+     +0   DWORD  dwFileAttributes
+     +4   FILETIME ftCreationTime
+     +12  FILETIME ftLastAccessTime
+     +20  FILETIME ftLastWriteTime
+     +28  DWORD  nFileSizeHigh
+     +32  DWORD  nFileSizeLow
+     +36  WCHAR  cFileName[MAX_PATH]  (260 wchars = 520 bytes) */
+void Win32Thunks::WriteFindDataToEmu(EmulatedMemory& mem, uint32_t addr, const WIN32_FIND_DATAW& fd) {
+    mem.Write32(addr + 0, fd.dwFileAttributes);
+    mem.Write32(addr + 4, fd.ftCreationTime.dwLowDateTime);
+    mem.Write32(addr + 8, fd.ftCreationTime.dwHighDateTime);
+    mem.Write32(addr + 12, fd.ftLastAccessTime.dwLowDateTime);
+    mem.Write32(addr + 16, fd.ftLastAccessTime.dwHighDateTime);
+    mem.Write32(addr + 20, fd.ftLastWriteTime.dwLowDateTime);
+    mem.Write32(addr + 24, fd.ftLastWriteTime.dwHighDateTime);
+    mem.Write32(addr + 28, fd.nFileSizeHigh);
+    mem.Write32(addr + 32, fd.nFileSizeLow);
+    /* Write filename at offset 36 */
+    for (int i = 0; i < MAX_PATH && fd.cFileName[i]; i++) {
+        mem.Write16(addr + 36 + i * 2, fd.cFileName[i]);
+    }
+    /* Null terminator */
+    int len = (int)wcslen(fd.cFileName);
+    if (len < MAX_PATH) mem.Write16(addr + 36 + len * 2, 0);
+}
+
 std::map<uint16_t, std::string> Win32Thunks::ordinal_map;
 
 void Win32Thunks::InitOrdinalMap() {

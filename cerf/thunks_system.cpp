@@ -98,7 +98,10 @@ bool Win32Thunks::ExecuteSystemThunk(const std::string& func, uint32_t* regs, Em
         return true;
     }
     if (func == "CloseHandle") {
-        regs[0] = CloseHandle((HANDLE)(intptr_t)(int32_t)regs[0]);
+        uint32_t fake = regs[0];
+        HANDLE h = UnwrapHandle(fake);
+        regs[0] = CloseHandle(h);
+        RemoveHandle(fake);
         return true;
     }
     if (func == "CreateMutexW") {
@@ -486,27 +489,162 @@ bool Win32Thunks::ExecuteSystemThunk(const std::string& func, uint32_t* regs, Em
         return true;
     }
 
-    /* File I/O stubs */
+    /* File I/O */
     if (func == "CreateFileW") {
-        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
-        printf("[THUNK] CreateFileW('%ls') - stub\n", path.c_str());
-        regs[0] = (uint32_t)INVALID_HANDLE_VALUE;
+        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
+        uint32_t access = regs[1];
+        uint32_t share = regs[2];
+        /* regs[3] = lpSecurityAttributes (ignored) */
+        uint32_t creation = ReadStackArg(regs, mem, 0);
+        uint32_t flags = ReadStackArg(regs, mem, 1);
+        /* stack arg 2 = hTemplate (ignored) */
+
+        std::wstring host_path = MapWinCEPath(wce_path);
+        HANDLE h = CreateFileW(host_path.c_str(), access, share, NULL, creation, flags, NULL);
+        regs[0] = WrapHandle(h);
+        printf("[THUNK] CreateFileW('%ls') -> mapped='%ls' handle=0x%08X\n",
+               wce_path.c_str(), host_path.c_str(), regs[0]);
+        return true;
+    }
+    if (func == "ReadFile") {
+        HANDLE h = UnwrapHandle(regs[0]);
+        uint32_t buf_addr = regs[1];
+        uint32_t bytes_to_read = regs[2];
+        uint32_t bytes_read_addr = regs[3];
+
+        /* Sanity check buffer size */
+        if (bytes_to_read > 64 * 1024 * 1024) {
+            printf("[THUNK] ReadFile: request too large (0x%X bytes), failing\n", bytes_to_read);
+            if (bytes_read_addr) mem.Write32(bytes_read_addr, 0);
+            SetLastError(ERROR_INVALID_PARAMETER);
+            regs[0] = 0;
+            return true;
+        }
+
+        std::vector<uint8_t> buf(bytes_to_read);
+        DWORD bytes_read = 0;
+        BOOL ret = ReadFile(h, buf.data(), bytes_to_read, &bytes_read, NULL);
+        if (ret && bytes_read > 0) {
+            /* Copy byte-by-byte to handle cross-region boundaries safely */
+            for (DWORD i = 0; i < bytes_read; i++)
+                mem.Write8(buf_addr + i, buf[i]);
+        }
+        if (bytes_read_addr) mem.Write32(bytes_read_addr, bytes_read);
+        regs[0] = ret;
+        return true;
+    }
+    if (func == "WriteFile") {
+        HANDLE h = UnwrapHandle(regs[0]);
+        uint32_t buf_addr = regs[1];
+        uint32_t bytes_to_write = regs[2];
+        uint32_t bytes_written_addr = regs[3];
+
+        if (bytes_to_write > 64 * 1024 * 1024) {
+            printf("[THUNK] WriteFile: request too large (0x%X bytes), failing\n", bytes_to_write);
+            if (bytes_written_addr) mem.Write32(bytes_written_addr, 0);
+            SetLastError(ERROR_INVALID_PARAMETER);
+            regs[0] = 0;
+            return true;
+        }
+
+        std::vector<uint8_t> buf(bytes_to_write);
+        for (uint32_t i = 0; i < bytes_to_write; i++)
+            buf[i] = mem.Read8(buf_addr + i);
+        DWORD bytes_written = 0;
+        BOOL ret = WriteFile(h, buf.data(), bytes_to_write, &bytes_written, NULL);
+        if (bytes_written_addr) mem.Write32(bytes_written_addr, bytes_written);
+        regs[0] = ret;
+        return true;
+    }
+    if (func == "GetFileSize") {
+        HANDLE h = UnwrapHandle(regs[0]);
+        uint32_t high_addr = regs[1];
+        DWORD high = 0;
+        DWORD size = GetFileSize(h, high_addr ? &high : NULL);
+        if (high_addr) mem.Write32(high_addr, high);
+        regs[0] = size;
+        return true;
+    }
+    if (func == "SetFilePointer") {
+        HANDLE h = UnwrapHandle(regs[0]);
+        LONG dist = (LONG)regs[1];
+        uint32_t high_addr = regs[2];
+        DWORD method = regs[3];
+        LONG high = 0;
+        if (high_addr) high = (LONG)mem.Read32(high_addr);
+        DWORD result = SetFilePointer(h, dist, high_addr ? &high : NULL, method);
+        if (high_addr) mem.Write32(high_addr, (uint32_t)high);
+        regs[0] = result;
+        return true;
+    }
+    if (func == "GetFileAttributesW") {
+        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring host_path = MapWinCEPath(wce_path);
+        regs[0] = GetFileAttributesW(host_path.c_str());
+        printf("[THUNK] GetFileAttributesW('%ls') -> 0x%08X\n", wce_path.c_str(), regs[0]);
+        return true;
+    }
+    if (func == "DeleteFileW") {
+        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring host_path = MapWinCEPath(wce_path);
+        regs[0] = DeleteFileW(host_path.c_str());
+        printf("[THUNK] DeleteFileW('%ls') -> %u\n", wce_path.c_str(), regs[0]);
+        return true;
+    }
+    if (func == "MoveFileW") {
+        std::wstring src = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring dst = ReadWStringFromEmu(mem, regs[1]);
+        std::wstring host_src = MapWinCEPath(src);
+        std::wstring host_dst = MapWinCEPath(dst);
+        regs[0] = MoveFileW(host_src.c_str(), host_dst.c_str());
+        return true;
+    }
+    if (func == "CreateDirectoryW") {
+        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring host_path = MapWinCEPath(wce_path);
+        regs[0] = CreateDirectoryW(host_path.c_str(), NULL);
+        printf("[THUNK] CreateDirectoryW('%ls') -> %u\n", wce_path.c_str(), regs[0]);
+        return true;
+    }
+    if (func == "RemoveDirectoryW") {
+        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring host_path = MapWinCEPath(wce_path);
+        regs[0] = RemoveDirectoryW(host_path.c_str());
         return true;
     }
     if (func == "FindFirstFileW") {
-        std::wstring pattern = ReadWStringFromEmu(mem, regs[0]);
-        printf("[THUNK] FindFirstFileW('%ls') -> INVALID_HANDLE_VALUE\n", pattern.c_str());
-        regs[0] = (uint32_t)INVALID_HANDLE_VALUE;
+        std::wstring wce_pattern = ReadWStringFromEmu(mem, regs[0]);
+        uint32_t find_data_addr = regs[1];
+        std::wstring host_pattern = MapWinCEPath(wce_pattern);
+
+        WIN32_FIND_DATAW fd = {};
+        HANDLE h = FindFirstFileW(host_pattern.c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            WriteFindDataToEmu(mem, find_data_addr, fd);
+        }
+        regs[0] = WrapHandle(h);
+        printf("[THUNK] FindFirstFileW('%ls') -> mapped='%ls' handle=0x%08X%s\n",
+               wce_pattern.c_str(), host_pattern.c_str(), regs[0],
+               h == INVALID_HANDLE_VALUE ? " (NOT FOUND)" : "");
         return true;
     }
     if (func == "FindNextFileW") {
-        printf("[STUB] FindNextFileW -> 0\n");
-        regs[0] = 0;
+        HANDLE h = UnwrapHandle(regs[0]);
+        uint32_t find_data_addr = regs[1];
+
+        WIN32_FIND_DATAW fd = {};
+        BOOL ret = FindNextFileW(h, &fd);
+        if (ret) {
+            WriteFindDataToEmu(mem, find_data_addr, fd);
+        }
+        regs[0] = ret;
         return true;
     }
     if (func == "FindClose") {
-        printf("[STUB] FindClose -> 1\n");
-        regs[0] = 1;
+        uint32_t fake = regs[0];
+        HANDLE h = UnwrapHandle(fake);
+        regs[0] = FindClose(h);
+        RemoveHandle(fake);
         return true;
     }
 
