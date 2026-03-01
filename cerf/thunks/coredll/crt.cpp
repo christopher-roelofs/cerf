@@ -69,4 +69,38 @@ void Win32Thunks::RegisterCrtHandlers() {
         regs[0] = (uint32_t)bits; regs[1] = (uint32_t)(bits >> 32);
         return true;
     });
+    Thunk("_wfopen", 1145, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring filename = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring mode = ReadWStringFromEmu(mem, regs[1]);
+        std::wstring host_path = MapWinCEPath(filename);
+        LOG(THUNK, "[THUNK] _wfopen('%ls' -> '%ls', '%ls')\n", filename.c_str(), host_path.c_str(), mode.c_str());
+        FILE* f = _wfopen(host_path.c_str(), mode.c_str());
+        regs[0] = f ? WrapHandle(f) : 0;
+        return true;
+    });
+    Thunk("fclose", 1118, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        if (!regs[0]) { regs[0] = (uint32_t)-1; return true; }
+        FILE* f = (FILE*)UnwrapHandle(regs[0]);
+        RemoveHandle(regs[0]);
+        regs[0] = f ? (uint32_t)fclose(f) : (uint32_t)-1;
+        return true;
+    });
+    Thunk("fgetws", 1143, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t buf_addr = regs[0];
+        int count = (int)regs[1];
+        FILE* f = (FILE*)UnwrapHandle(regs[2]);
+        if (!f || count <= 0) { regs[0] = 0; return true; }
+        std::vector<wchar_t> buf(count);
+        wchar_t* result = fgetws(buf.data(), count, f);
+        if (result) {
+            for (int i = 0; i < count; i++) {
+                mem.Write16(buf_addr + i * 2, buf[i]);
+                if (buf[i] == 0) break;
+            }
+            regs[0] = buf_addr;
+        } else {
+            regs[0] = 0;
+        }
+        return true;
+    });
 }

@@ -10,6 +10,7 @@
 #include <locale>
 #include <codecvt>
 #include <commctrl.h>
+#include <shlobj.h>
 
 /* On x64, Windows handles are 32-bit values sign-extended to 64-bit.
    When passing handles from ARM registers to native APIs, we must sign-extend
@@ -73,7 +74,9 @@ void Win32Thunks::RemoveHandle(uint32_t fake) {
 
 /* Map WinCE paths to host filesystem paths.
    WinCE uses paths like "\skins\file.txt" (root-relative) or "file.txt" (relative).
-   We map these relative to the exe directory on the host. */
+   We map these relative to the exe directory on the host.
+   Well-known WinCE directories (\My Documents, \Windows\Desktop) are mapped to
+   the real user folders on the host for a better experience. */
 std::wstring Win32Thunks::MapWinCEPath(const std::wstring& wce_path) {
     if (wce_path.empty()) return wce_path;
 
@@ -86,10 +89,40 @@ std::wstring Win32Thunks::MapWinCEPath(const std::wstring& wce_path) {
         return wce_path;
     }
 
-    /* WinCE absolute path starting with backslash - strip the leading backslash
-       and treat as relative to exe directory */
+    /* Map well-known WinCE special folders to real user directories */
     if (wce_path[0] == L'\\' || wce_path[0] == L'/') {
-        /* Special WinCE paths like \Windows\ - map to exe dir */
+        auto startsWith = [&](const wchar_t* prefix) -> bool {
+            size_t plen = wcslen(prefix);
+            if (wce_path.size() < plen) return false;
+            return _wcsnicmp(wce_path.c_str(), prefix, plen) == 0 &&
+                   (wce_path.size() == plen || wce_path[plen] == L'\\' || wce_path[plen] == L'/');
+        };
+        auto mapToUserFolder = [&](const wchar_t* prefix, int csidl) -> std::wstring {
+            wchar_t real[MAX_PATH] = {};
+            if (SUCCEEDED(SHGetFolderPathW(NULL, csidl, NULL, 0, real))) {
+                size_t plen = wcslen(prefix);
+                std::wstring rest = (wce_path.size() > plen) ? wce_path.substr(plen) : L"";
+                return std::wstring(real) + rest;
+            }
+            return wide_exe_dir + wce_path.substr(1);
+        };
+
+        if (startsWith(L"\\My Documents"))
+            return mapToUserFolder(L"\\My Documents", CSIDL_PERSONAL);
+        if (startsWith(L"\\Windows\\Desktop"))
+            return mapToUserFolder(L"\\Windows\\Desktop", CSIDL_DESKTOPDIRECTORY);
+
+        /* \Windows → WinCE system directory (bundled ARM DLLs) */
+        if (startsWith(L"\\Windows")) {
+            std::wstring wide_sys_dir;
+            for (char c : wince_sys_dir) wide_sys_dir += (wchar_t)c;
+            if (!wide_sys_dir.empty()) {
+                std::wstring rest = (wce_path.size() > 8) ? wce_path.substr(8) : L"";
+                return wide_sys_dir + rest;
+            }
+        }
+
+        /* Default: strip leading backslash, relative to exe dir */
         return wide_exe_dir + wce_path.substr(1);
     }
 
@@ -145,6 +178,100 @@ static std::wstring ToLowerW(const std::wstring& s) {
     return r;
 }
 
+/* Map REGEDIT4 root names to our abbreviated forms */
+static std::wstring MapRegRoot(const std::wstring& key) {
+    if (key.substr(0, 18) == L"HKEY_CLASSES_ROOT\\") return L"HKCR\\" + key.substr(18);
+    if (key == L"HKEY_CLASSES_ROOT") return L"HKCR";
+    if (key.substr(0, 18) == L"HKEY_CURRENT_USER\\") return L"HKCU\\" + key.substr(18);
+    if (key == L"HKEY_CURRENT_USER") return L"HKCU";
+    if (key.substr(0, 19) == L"HKEY_LOCAL_MACHINE\\") return L"HKLM\\" + key.substr(19);
+    if (key == L"HKEY_LOCAL_MACHINE") return L"HKLM";
+    if (key.substr(0, 11) == L"HKEY_USERS\\") return L"HKU\\" + key.substr(11);
+    if (key == L"HKEY_USERS") return L"HKU";
+    return key;
+}
+
+/* Parse a value from a .reg file value string (after the '=').
+   Handles: "string", dword:XXXX, hex:XX,XX,... */
+static bool ParseRegFileValue(const std::string& rest, Win32Thunks::RegValue& val) {
+    if (rest.empty()) return false;
+    if (rest[0] == '"') {
+        /* String value: "content" */
+        size_t end = rest.find('"', 1);
+        if (end == std::string::npos) return false;
+        val.type = REG_SZ;
+        std::string raw = rest.substr(1, end - 1);
+        /* Unescape \\  -> \ */
+        std::wstring ws;
+        for (size_t i = 0; i < raw.size(); i++) {
+            if (raw[i] == '\\' && i + 1 < raw.size() && raw[i+1] == '\\') { ws += L'\\'; i++; }
+            else ws += (wchar_t)(unsigned char)raw[i];
+        }
+        val.data.resize((ws.size() + 1) * 2);
+        memcpy(val.data.data(), ws.c_str(), val.data.size());
+        return true;
+    } else if (rest.substr(0, 6) == "dword:") {
+        val.type = REG_DWORD;
+        uint32_t dw = (uint32_t)strtoul(rest.substr(6).c_str(), nullptr, 16);
+        val.data.resize(4);
+        memcpy(val.data.data(), &dw, 4);
+        return true;
+    } else if (rest.substr(0, 4) == "hex:") {
+        val.type = REG_BINARY;
+        std::string hex = rest.substr(4);
+        for (size_t i = 0; i < hex.size(); ) {
+            while (i < hex.size() && (hex[i] == ',' || hex[i] == ' ' || hex[i] == '\\' || hex[i] == '\r' || hex[i] == '\n')) i++;
+            if (i + 1 < hex.size() && isxdigit(hex[i]) && isxdigit(hex[i+1])) {
+                val.data.push_back((uint8_t)strtoul(hex.substr(i, 2).c_str(), nullptr, 16));
+                i += 2;
+            } else break;
+        }
+        return true;
+    }
+    return false;
+}
+
+void Win32Thunks::ImportRegFile(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return;
+    std::wstring current_key;
+    std::string line;
+    size_t key_count = 0;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == ';') continue;
+        if (line == "REGEDIT4" || line == "Windows Registry Editor Version 5.00") continue;
+
+        /* Key: [HKEY_...] */
+        if (line[0] == '[' && line.back() == ']') {
+            current_key = MapRegRoot(NarrowToWide(line.substr(1, line.size() - 2)));
+            registry[current_key];
+            EnsureParentKeys(current_key);
+            key_count++;
+            continue;
+        }
+        if (current_key.empty()) continue;
+
+        /* Default value: @="..." or @=dword:... */
+        std::wstring val_name;
+        std::string val_str;
+        if (line.size() >= 2 && line[0] == '@' && line[1] == '=') {
+            val_name = L"";
+            val_str = line.substr(2);
+        } else if (line[0] == '"') {
+            size_t eq = line.find("\"=");
+            if (eq == std::string::npos || eq < 1) continue;
+            val_name = NarrowToWide(line.substr(1, eq - 1));
+            val_str = line.substr(eq + 2);
+        } else continue;
+
+        RegValue val = {};
+        if (ParseRegFileValue(val_str, val))
+            registry[current_key].values[val_name] = val;
+    }
+    LOG(REG, "[REG] Imported %zu keys from %s\n", key_count, path.c_str());
+}
+
 void Win32Thunks::LoadRegistry() {
     if (registry_loaded) return;
     registry_loaded = true;
@@ -161,53 +288,101 @@ void Win32Thunks::LoadRegistry() {
 
     std::ifstream f(registry_path);
     if (!f.is_open()) {
-        LOG(REG, "[REG] No registry file found, starting empty\n");
-        return;
+        LOG(REG, "[REG] No registry file found, looking for WinCE .reg import\n");
+        /* Import a WinCE registry export (.reg file) from the wince_sys dir
+           or from next to cerf.exe. This provides default COM CLSIDs etc. */
+        std::string import_path;
+        if (!wince_sys_dir.empty()) {
+            import_path = wince_sys_dir + "wince_registry.reg";
+            std::ifstream test(import_path);
+            if (!test.is_open()) import_path = "";
+        }
+        if (import_path.empty()) {
+            import_path = cerf_dir + "wince_registry.reg";
+            std::ifstream test(import_path);
+            if (!test.is_open()) import_path = "";
+        }
+        if (!import_path.empty()) {
+            ImportRegFile(import_path);
+            SaveRegistry(); /* persist imported data */
+        }
+        goto post_load;
     }
 
-    std::wstring current_key;
-    std::string line;
-    while (std::getline(f, line)) {
-        /* Trim trailing \r */
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty()) continue;
+    {
+        std::wstring current_key;
+        std::string line;
+        while (std::getline(f, line)) {
+            /* Trim trailing \r */
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
 
-        /* Key header: [HKCU\Software\...] */
-        if (line[0] == '[' && line.back() == ']') {
-            current_key = NarrowToWide(line.substr(1, line.size() - 2));
-            registry[current_key]; /* ensure key exists */
-            EnsureParentKeys(current_key);
-            continue;
+            /* Key header: [HKCU\Software\...] */
+            if (line[0] == '[' && line.back() == ']') {
+                current_key = NarrowToWide(line.substr(1, line.size() - 2));
+                registry[current_key]; /* ensure key exists */
+                EnsureParentKeys(current_key);
+                continue;
+            }
+
+            /* Value: "name"=type:data */
+            if (current_key.empty() || line[0] != '"') continue;
+            size_t eq = line.find("\"=");
+            if (eq == std::string::npos || eq < 1) continue;
+            std::wstring name = NarrowToWide(line.substr(1, eq - 1));
+            std::string rest = line.substr(eq + 2);
+
+            RegValue val = {};
+            if (rest.substr(0, 6) == "dword:") {
+                val.type = REG_DWORD;
+                uint32_t dw = (uint32_t)strtoul(rest.substr(6).c_str(), nullptr, 16);
+                val.data.resize(4);
+                memcpy(val.data.data(), &dw, 4);
+            } else if (rest.substr(0, 3) == "sz:") {
+                val.type = REG_SZ;
+                std::wstring ws = NarrowToWide(rest.substr(3));
+                val.data.resize((ws.size() + 1) * 2);
+                memcpy(val.data.data(), ws.c_str(), val.data.size());
+            } else if (rest.substr(0, 4) == "hex:") {
+                val.type = REG_BINARY;
+                std::string hex = rest.substr(4);
+                for (size_t i = 0; i < hex.size(); i += 3) {
+                    val.data.push_back((uint8_t)strtoul(hex.substr(i, 2).c_str(), nullptr, 16));
+                }
+            }
+            registry[current_key].values[name] = val;
         }
+        LOG(REG, "[REG] Loaded %zu keys\n", registry.size());
+    }
 
-        /* Value: "name"=type:data */
-        if (current_key.empty() || line[0] != '"') continue;
-        size_t eq = line.find("\"=");
-        if (eq == std::string::npos || eq < 1) continue;
-        std::wstring name = NarrowToWide(line.substr(1, eq - 1));
-        std::string rest = line.substr(eq + 2);
+post_load:
 
-        RegValue val = {};
-        if (rest.substr(0, 6) == "dword:") {
-            val.type = REG_DWORD;
-            uint32_t dw = (uint32_t)strtoul(rest.substr(6).c_str(), nullptr, 16);
-            val.data.resize(4);
-            memcpy(val.data.data(), &dw, 4);
-        } else if (rest.substr(0, 3) == "sz:") {
+    /* Pre-populate essential WinCE shell COM CLSIDs if not already present.
+       The WinCE shell (ceshell.dll) uses registry lookups to find COM object
+       implementations (IShellFolder, etc.). Without these entries, the shell
+       namespace code fails and file dialogs call EndDialog immediately. */
+    auto ensureShellClsid = [&](const wchar_t* clsid, const wchar_t* dll) {
+        std::wstring key = std::wstring(L"HKCR\\CLSID\\") + clsid;
+        std::wstring ips32 = key + L"\\InProcServer32";
+        if (registry.find(key) == registry.end()) {
+            registry[key];
+            EnsureParentKeys(key);
+            registry[ips32];
+            EnsureParentKeys(ips32);
+            /* Default value = DLL name */
+            RegValue val;
             val.type = REG_SZ;
-            std::wstring ws = NarrowToWide(rest.substr(3));
+            std::wstring ws(dll);
             val.data.resize((ws.size() + 1) * 2);
             memcpy(val.data.data(), ws.c_str(), val.data.size());
-        } else if (rest.substr(0, 4) == "hex:") {
-            val.type = REG_BINARY;
-            std::string hex = rest.substr(4);
-            for (size_t i = 0; i < hex.size(); i += 3) {
-                val.data.push_back((uint8_t)strtoul(hex.substr(i, 2).c_str(), nullptr, 16));
-            }
+            registry[ips32].values[L""] = val;
+            LOG(REG, "[REG] Pre-populated CLSID %ls -> %ls\n", clsid, dll);
         }
-        registry[current_key].values[name] = val;
-    }
-    LOG(REG, "[REG] Loaded %zu keys\n", registry.size());
+    };
+    /* IShellFolder — shell desktop/folder namespace */
+    ensureShellClsid(L"{000214A0-0000-0000-C000-000000000046}", L"ceshell.dll");
+    /* ShellDesktop — CLSID_ShellDesktop */
+    ensureShellClsid(L"{00021400-0000-0000-C000-000000000046}", L"ceshell.dll");
 }
 
 void Win32Thunks::SaveRegistry() {

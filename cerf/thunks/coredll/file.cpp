@@ -65,6 +65,7 @@ void Win32Thunks::RegisterFileHandlers() {
         std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
         std::wstring host_path = MapWinCEPath(wce_path);
         regs[0] = GetFileAttributesW(host_path.c_str());
+        LOG(THUNK, "[THUNK] GetFileAttributesW('%ls' -> '%ls') -> 0x%08X\n", wce_path.c_str(), host_path.c_str(), regs[0]);
         return true;
     });
     Thunk("DeleteFileW", 165, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -126,6 +127,15 @@ void Win32Thunks::RegisterFileHandlers() {
         std::wstring mapped = MapWinCEPath(path);
         LOG(THUNK, "[THUNK] SetFileAttributesW('%ls', 0x%X)\n", path.c_str(), regs[1]);
         regs[0] = SetFileAttributesW(mapped.c_str(), regs[1]);
+        return true;
+    });
+    Thunk("FindFirstChangeNotificationW", 1682, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring mapped = MapWinCEPath(path);
+        LOG(THUNK, "[THUNK] FindFirstChangeNotificationW('%ls', subtree=%d, filter=0x%X)\n",
+            path.c_str(), regs[1], regs[2]);
+        HANDLE h = FindFirstChangeNotificationW(mapped.c_str(), regs[1], regs[2]);
+        regs[0] = WrapHandle(h);
         return true;
     });
 }

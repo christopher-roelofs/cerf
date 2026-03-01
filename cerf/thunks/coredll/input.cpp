@@ -60,6 +60,9 @@ void Win32Thunks::RegisterInputHandlers() {
     Thunk("ReleaseCapture", 709, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = ReleaseCapture(); return true;
     });
+    Thunk("GetCapture", 707, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = (uint32_t)(uintptr_t)GetCapture(); return true;
+    });
     Thunk("SetCursor", 682, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)SetCursor((HCURSOR)(intptr_t)(int32_t)regs[0]); return true;
     });

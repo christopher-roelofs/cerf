@@ -188,11 +188,13 @@
   <ItemGroup>
     <WinceDll Include="$(ProjectDir)..\wince_sys\*.dll" />
     <WincePdb Include="$(ProjectDir)..\wince_sys\*.pdb" />
+    <WinceReg Include="$(ProjectDir)..\wince_sys\*.reg" />
   </ItemGroup>
   <Target Name="CopyWinceDlls" AfterTargets="Build">
     <MakeDir Directories="$(OutDir)windows" />
     <Copy SourceFiles="@(WinceDll)" DestinationFolder="$(OutDir)windows" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(WincePdb)" DestinationFolder="$(OutDir)windows" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WinceReg)" DestinationFolder="$(OutDir)windows" SkipUnchangedFiles="true" />
   </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

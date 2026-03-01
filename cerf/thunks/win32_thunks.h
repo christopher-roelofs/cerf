@@ -182,15 +182,17 @@ private:
     /* WinCE path mapping: converts WinCE paths to host filesystem paths */
     std::wstring MapWinCEPath(const std::wstring& wce_path);
 
+public:
     /* Emulated registry (file-backed, text format) */
     struct RegValue {
-        uint32_t type;              /* REG_DWORD, REG_SZ, REG_BINARY, etc. */
+        uint32_t type = 0;          /* REG_DWORD, REG_SZ, REG_BINARY, etc. */
         std::vector<uint8_t> data;
     };
     struct RegKey {
         std::map<std::wstring, RegValue> values;
         std::set<std::wstring> subkeys;
     };
+private:
     std::map<std::wstring, RegKey> registry;       /* full key path -> key */
     std::map<uint32_t, std::wstring> hkey_map;     /* fake HKEY -> full key path */
     uint32_t next_fake_hkey = 0xAE000000;
@@ -198,6 +200,7 @@ private:
     std::string registry_path;                     /* cerf_registry.txt path */
     void LoadRegistry();
     void SaveRegistry();
+    void ImportRegFile(const std::string& path);
     std::wstring ResolveHKey(uint32_t hkey, const std::wstring& subkey);
     void EnsureParentKeys(const std::wstring& path);
 

@@ -6,28 +6,67 @@
 #include <vector>
 
 void Win32Thunks::RegisterStringHandlers() {
-    Thunk("wsprintfW", 56, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t dst_addr = regs[0];
-        std::wstring fmt = ReadWStringFromEmu(mem, regs[1]);
-        uint32_t args[10];
-        args[0] = regs[2]; args[1] = regs[3];
-        for (int i = 2; i < 10; i++) args[i] = ReadStackArg(regs, mem, i - 2);
+    /* Shared wide printf formatter: parse format string with args from ARM registers/stack */
+    auto wprintf_format = [this](EmulatedMemory& mem, const std::wstring& fmt,
+                                  uint32_t* args, int nargs) -> std::wstring {
         std::wstring result;
         int arg_idx = 0;
         for (size_t i = 0; i < fmt.size(); i++) {
             if (fmt[i] == L'%' && i + 1 < fmt.size()) {
                 i++;
-                while (i < fmt.size() && (fmt[i] >= L'0' && fmt[i] <= L'9')) i++;
+                /* Collect flags */
+                bool left_align = false, zero_pad = false;
+                while (i < fmt.size() && (fmt[i] == L'-' || fmt[i] == L'+' || fmt[i] == L' ' || fmt[i] == L'0')) {
+                    if (fmt[i] == L'-') left_align = true;
+                    if (fmt[i] == L'0') zero_pad = true;
+                    i++;
+                }
+                /* Collect width */
+                int width = 0;
+                while (i < fmt.size() && fmt[i] >= L'0' && fmt[i] <= L'9') {
+                    width = width * 10 + (fmt[i] - L'0'); i++;
+                }
+                /* Skip precision */
+                if (i < fmt.size() && fmt[i] == L'.') {
+                    i++;
+                    while (i < fmt.size() && fmt[i] >= L'0' && fmt[i] <= L'9') i++;
+                }
+                /* Skip length modifier (l, h) */
+                if (i < fmt.size() && (fmt[i] == L'l' || fmt[i] == L'h')) i++;
                 if (i >= fmt.size()) break;
-                if (fmt[i] == L'd' || fmt[i] == L'i') result += std::to_wstring((int)args[arg_idx++]);
-                else if (fmt[i] == L'u') result += std::to_wstring(args[arg_idx++]);
-                else if (fmt[i] == L'x' || fmt[i] == L'X') {
-                    wchar_t buf[16]; wsprintfW(buf, L"%x", args[arg_idx++]); result += buf;
-                } else if (fmt[i] == L's') result += ReadWStringFromEmu(mem, args[arg_idx++]);
-                else if (fmt[i] == L'%') result += L'%';
-                else { result += L'?'; arg_idx++; }
+                if (arg_idx >= nargs) { result += L'?'; arg_idx++; continue; }
+                wchar_t spec = fmt[i];
+                if (spec == L'd' || spec == L'i') {
+                    wchar_t buf[32]; _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d", (int)args[arg_idx++]);
+                    result += buf;
+                } else if (spec == L'u') {
+                    wchar_t buf[32]; _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%u", args[arg_idx++]);
+                    result += buf;
+                } else if (spec == L'x') {
+                    wchar_t buf[32]; _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%x", args[arg_idx++]);
+                    result += buf;
+                } else if (spec == L'X') {
+                    wchar_t buf[32]; _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%X", args[arg_idx++]);
+                    result += buf;
+                } else if (spec == L'c') {
+                    result += (wchar_t)args[arg_idx++];
+                } else if (spec == L's') {
+                    if (args[arg_idx]) result += ReadWStringFromEmu(mem, args[arg_idx]);
+                    arg_idx++;
+                } else if (spec == L'%') {
+                    result += L'%';
+                } else { result += L'?'; arg_idx++; }
             } else result += fmt[i];
         }
+        return result;
+    };
+    Thunk("wsprintfW", 56, [this, wprintf_format](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst_addr = regs[0];
+        std::wstring fmt = ReadWStringFromEmu(mem, regs[1]);
+        uint32_t args[10];
+        args[0] = regs[2]; args[1] = regs[3];
+        for (int i = 2; i < 10; i++) args[i] = ReadStackArg(regs, mem, i - 2);
+        std::wstring result = wprintf_format(mem, fmt, args, 10);
         for (size_t i = 0; i < result.size(); i++) mem.Write16(dst_addr + (uint32_t)i * 2, result[i]);
         mem.Write16(dst_addr + (uint32_t)result.size() * 2, 0);
         regs[0] = (uint32_t)result.size();
@@ -132,7 +171,8 @@ void Win32Thunks::RegisterStringHandlers() {
         if (regs[0] && mem.Read16(regs[0]) != 0) regs[0] += 2; return true;
     });
     Thunk("lstrcmpW", 227, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = (uint32_t)lstrcmpW(ReadWStringFromEmu(mem,regs[0]).c_str(), ReadWStringFromEmu(mem,regs[1]).c_str()); return true;
+        regs[0] = (uint32_t)lstrcmpW(ReadWStringFromEmu(mem,regs[0]).c_str(), ReadWStringFromEmu(mem,regs[1]).c_str());
+        return true;
     });
     Thunk("lstrcmpiW", 228, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         regs[0] = (uint32_t)lstrcmpiW(ReadWStringFromEmu(mem,regs[0]).c_str(), ReadWStringFromEmu(mem,regs[1]).c_str()); return true;
@@ -165,11 +205,38 @@ void Win32Thunks::RegisterStringHandlers() {
     });
     Thunk("wcstok", 77, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
     thunk_handlers["wcspbrk"] = thunk_handlers["wcstok"];
-    Thunk("_snwprintf", 1096, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    Thunk("_snwprintf", 1096, [this, wprintf_format](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[0], count = regs[1];
+        std::wstring fmt = ReadWStringFromEmu(mem, regs[2]);
+        uint32_t args[10];
+        args[0] = regs[3];
+        for (int i = 1; i < 10; i++) args[i] = ReadStackArg(regs, mem, i - 1);
+        std::wstring result = wprintf_format(mem, fmt, args, 10);
+        uint32_t copy_len = std::min((uint32_t)result.size(), count > 0 ? count - 1 : 0u);
+        for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, result[i]);
+        if (count > 0) mem.Write16(dst + copy_len * 2, 0);
+        regs[0] = (uint32_t)result.size();
+        return true;
+    });
     thunk_handlers["swprintf"] = thunk_handlers["_snwprintf"];
-    thunk_handlers["swscanf"] = thunk_handlers["_snwprintf"];
+    thunk_handlers["swscanf"] = thunk_handlers["_snwprintf"]; /* stub — swscanf is rare */
     thunk_handlers["wvsprintfW"] = thunk_handlers["_snwprintf"];
     Thunk("sprintf", 1058, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    /* StringCchPrintfW(pszDest, cchDest, pszFormat, ...) — safe wide printf */
+    Thunk("StringCchPrintfW", 1699, [this, wprintf_format](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[0], cch = regs[1];
+        std::wstring fmt = ReadWStringFromEmu(mem, regs[2]);
+        uint32_t args[10];
+        args[0] = regs[3];
+        for (int i = 1; i < 10; i++) args[i] = ReadStackArg(regs, mem, i - 1);
+        std::wstring result = wprintf_format(mem, fmt, args, 10);
+        if (!dst || cch == 0) { regs[0] = 0x80070057; return true; } /* E_INVALIDARG */
+        uint32_t copy_len = std::min((uint32_t)result.size(), cch - 1);
+        for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, result[i]);
+        mem.Write16(dst + copy_len * 2, 0);
+        regs[0] = (result.size() >= cch) ? 0x8007007A : 0; /* STRSAFE_E_INSUFFICIENT_BUFFER or S_OK */
+        return true;
+    });
 
     Thunk("StringCchCopyW", 1689, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t dst = regs[0], cch = regs[1], src_ptr = regs[2];
@@ -179,6 +246,20 @@ void Win32Thunks::RegisterStringHandlers() {
         for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, src[i]);
         mem.Write16(dst + copy_len * 2, 0);
         regs[0] = (src.size() >= cch) ? 0x8007007A : 0; /* STRSAFE_E_INSUFFICIENT_BUFFER or S_OK */
+        return true;
+    });
+    /* StringCchCopyExW(dst, cchDest, src, ppszDestEnd, pcchRemaining, dwFlags) */
+    Thunk("StringCchCopyExW", 1691, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[0], cch = regs[1], src_ptr = regs[2], ppEnd = regs[3];
+        uint32_t pcchRemaining = ReadStackArg(regs, mem, 0);
+        if (!dst || cch == 0) { regs[0] = 0x80070057; return true; }
+        std::wstring src = ReadWStringFromEmu(mem, src_ptr);
+        uint32_t copy_len = std::min((uint32_t)src.size(), cch - 1);
+        for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, src[i]);
+        mem.Write16(dst + copy_len * 2, 0);
+        if (ppEnd) mem.Write32(ppEnd, dst + copy_len * 2);
+        if (pcchRemaining) mem.Write32(pcchRemaining, cch - copy_len);
+        regs[0] = (src.size() >= cch) ? 0x8007007A : 0;
         return true;
     });
     Thunk("StringCchCatW", 1693, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

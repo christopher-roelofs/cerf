@@ -101,4 +101,29 @@ void Win32Thunks::RegisterImageListHandlers() {
         regs[0] = ImageList_SetBkColor((HIMAGELIST)(intptr_t)(int32_t)regs[0], (COLORREF)regs[1]);
         return true;
     });
+    Thunk("ImageList_Remove", 760, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_Remove((HIMAGELIST)(intptr_t)(int32_t)regs[0], (int)regs[1]);
+        return true;
+    });
+    Thunk("ImageList_ReplaceIcon", 762, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_ReplaceIcon((HIMAGELIST)(intptr_t)(int32_t)regs[0],
+            (int)regs[1], (HICON)(intptr_t)(int32_t)regs[2]);
+        return true;
+    });
+    Thunk("ImageList_GetIcon", 754, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = (uint32_t)(uintptr_t)ImageList_GetIcon(
+            (HIMAGELIST)(intptr_t)(int32_t)regs[0], (int)regs[1], regs[2]);
+        return true;
+    });
+    Thunk("ImageList_DrawIndirect", 750, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* IMAGELISTDRAWPARAMS is complex — forward to ARM commctrl if available, else stub */
+        LOG(THUNK, "[THUNK] ImageList_DrawIndirect(0x%08X) -> stub returning FALSE\n", regs[0]);
+        regs[0] = FALSE;
+        return true;
+    });
+    Thunk("ImageList_SetOverlayImage", 766, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_SetOverlayImage((HIMAGELIST)(intptr_t)(int32_t)regs[0],
+            (int)regs[1], (int)regs[2]);
+        return true;
+    });
 }

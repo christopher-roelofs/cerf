@@ -52,11 +52,21 @@ void Win32Thunks::RegisterRegistryHandlers() {
         uint32_t pData = ReadStackArg(regs, mem, 0);
         uint32_t pcbData = ReadStackArg(regs, mem, 1);
         auto kit = hkey_map.find(hkey);
-        if (kit == hkey_map.end()) { regs[0] = ERROR_INVALID_HANDLE; return true; }
+        if (kit == hkey_map.end()) {
+            LOG(REG, "[REG] RegQueryValueExW(0x%08X, '%ls') -> INVALID_HANDLE\n", hkey, value_name.c_str());
+            regs[0] = ERROR_INVALID_HANDLE; return true;
+        }
         auto rit = registry.find(kit->second);
-        if (rit == registry.end()) { regs[0] = ERROR_FILE_NOT_FOUND; return true; }
+        if (rit == registry.end()) {
+            LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> KEY NOT FOUND\n", kit->second.c_str(), value_name.c_str());
+            regs[0] = ERROR_FILE_NOT_FOUND; return true;
+        }
         auto vit = rit->second.values.find(value_name);
-        if (vit == rit->second.values.end()) { regs[0] = ERROR_FILE_NOT_FOUND; return true; }
+        if (vit == rit->second.values.end()) {
+            LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> VALUE NOT FOUND\n", kit->second.c_str(), value_name.c_str());
+            regs[0] = ERROR_FILE_NOT_FOUND; return true;
+        }
+        LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> type=%d size=%zu\n", kit->second.c_str(), value_name.c_str(), vit->second.type, vit->second.data.size());
         const RegValue& val = vit->second;
         if (pType) mem.Write32(pType, val.type);
         uint32_t data_size = (uint32_t)val.data.size();

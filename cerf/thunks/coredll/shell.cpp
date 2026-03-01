@@ -36,23 +36,56 @@ void Win32Thunks::RegisterShellHandlers() {
             return true;
         };
     };
-    /* SHGetSpecialFolderPath(hwnd, lpszPath, csidl, fCreate) — coredll kernel API, not in ceshell */
+    /* SHGetSpecialFolderPath(hwnd, lpszPath, csidl, fCreate) — coredll kernel API, not in ceshell.
+       Returns WinCE-style paths (e.g. \My Documents) since the ARM ceshell code expects
+       WinCE path conventions. MapWinCEPath maps these back to real host directories. */
     Thunk("SHGetSpecialFolderPath", 295, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t path_ptr = regs[1];
         int csidl = (int)regs[2];
-        LOG(THUNK, "[THUNK] SHGetSpecialFolderPath(hwnd=0x%08X, csidl=%d, fCreate=%d)\n", regs[0], csidl, regs[3]);
-        wchar_t path[MAX_PATH] = {};
-        HRESULT hr = SHGetFolderPathW(NULL, csidl, NULL, 0, path);
-        if (SUCCEEDED(hr) && path_ptr) {
-            for (int i = 0; i < MAX_PATH; i++) {
-                mem.Write16(path_ptr + i * 2, path[i]);
-                if (path[i] == 0) break;
+        bool fCreate = regs[3] != 0;
+        LOG(THUNK, "[THUNK] SHGetSpecialFolderPath(hwnd=0x%08X, csidl=%d, fCreate=%d)\n", regs[0], csidl, fCreate);
+        /* Map CSIDL to WinCE-style paths */
+        const wchar_t* wce_path = nullptr;
+        switch (csidl & 0xFF) { /* mask off CSIDL_FLAG_CREATE etc. */
+            case 0x05: wce_path = L"\\My Documents"; break;  /* CSIDL_PERSONAL */
+            case 0x10: wce_path = L"\\Windows\\Desktop"; break; /* CSIDL_DESKTOPDIRECTORY */
+            case 0x02: wce_path = L"\\Windows\\Programs"; break; /* CSIDL_PROGRAMS */
+            case 0x07: wce_path = L"\\Windows\\StartUp"; break;  /* CSIDL_STARTUP */
+            case 0x06: wce_path = L"\\Windows\\Favorites"; break; /* CSIDL_FAVORITES */
+            case 0x14: wce_path = L"\\Windows\\Fonts"; break;     /* CSIDL_FONTS */
+            case 0x24: wce_path = L"\\Windows"; break;             /* CSIDL_WINDOWS */
+            case 0x1A: wce_path = L"\\Application Data"; break;   /* CSIDL_APPDATA */
+            case 0x1C: wce_path = L"\\Application Data"; break;   /* CSIDL_LOCAL_APPDATA */
+            case 0x27: wce_path = L"\\My Documents"; break;       /* CSIDL_MYPICTURES */
+            default: break;
+        }
+        if (wce_path && path_ptr) {
+            size_t len = wcslen(wce_path);
+            for (size_t i = 0; i <= len; i++)
+                mem.Write16(path_ptr + (uint32_t)i * 2, wce_path[i]);
+            if (fCreate) {
+                std::wstring host_path = MapWinCEPath(wce_path);
+                CreateDirectoryW(host_path.c_str(), NULL); /* ensure it exists */
             }
-            LOG(THUNK, "[THUNK]   -> '%ls'\n", path);
+            LOG(THUNK, "[THUNK]   -> '%ls'\n", wce_path);
             regs[0] = 1;
+        } else if (path_ptr) {
+            /* Unknown CSIDL — try native */
+            wchar_t path[MAX_PATH] = {};
+            HRESULT hr = SHGetFolderPathW(NULL, csidl, NULL, 0, path);
+            if (SUCCEEDED(hr)) {
+                for (int i = 0; i < MAX_PATH; i++) {
+                    mem.Write16(path_ptr + i * 2, path[i]);
+                    if (path[i] == 0) break;
+                }
+                LOG(THUNK, "[THUNK]   -> '%ls' (native fallback)\n", path);
+                regs[0] = 1;
+            } else {
+                LOG(THUNK, "[THUNK]   -> FAILED (csidl=%d)\n", csidl);
+                mem.Write16(path_ptr, 0);
+                regs[0] = 0;
+            }
         } else {
-            LOG(THUNK, "[THUNK]   -> FAILED (hr=0x%08X)\n", hr);
-            if (path_ptr) mem.Write16(path_ptr, 0);
             regs[0] = 0;
         }
         return true;
