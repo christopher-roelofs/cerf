@@ -39,42 +39,31 @@ void Win32Thunks::RegisterModuleHandlers() {
         std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
         auto* info = FindThunkedDllW(lower);
         if (info) { regs[0] = info->fake_handle; LOG(THUNK, "[THUNK]   -> thunked (%s)\n", info->name); return true; }
-        auto it = loaded_dlls.find(lower);
-        if (it != loaded_dlls.end()) {
-            regs[0] = it->second.base_addr;
-            LOG(THUNK, "[THUNK]   Already loaded at 0x%08X\n", regs[0]);
-            return true;
-        }
+        /* Use LoadArmDll which handles search paths, caching, and recursive import resolution */
         std::string narrow_name;
         for (auto c : name) narrow_name += (char)c;
-        std::string dll_path = exe_dir + narrow_name;
-        FILE* f = fopen(dll_path.c_str(), "rb");
-        if (!f) { dll_path = narrow_name; f = fopen(dll_path.c_str(), "rb"); }
-        if (!f) { LOG(THUNK, "[THUNK]   DLL not found: %s\n", narrow_name.c_str()); regs[0] = 0; return true; }
-        fclose(f);
-        PEInfo dll_info = {};
-        uint32_t entry = PELoader::LoadDll(dll_path.c_str(), mem, dll_info);
-        if (entry == 0 && dll_info.image_base == 0) {
-            LOG(THUNK, "[THUNK]   Failed to load ARM DLL: %s\n", dll_path.c_str());
+        LoadedDll* dll = LoadArmDll(narrow_name);
+        if (!dll) {
+            LOG(THUNK, "[THUNK]   DLL not found: %s\n", narrow_name.c_str());
             regs[0] = 0; return true;
         }
-        LoadedDll loaded;
-        loaded.path = dll_path;
-        loaded.base_addr = dll_info.image_base;
-        loaded.pe_info = dll_info;
-        loaded.native_rsrc_handle = NULL;
-        loaded_dlls[lower] = loaded;
-        LOG(THUNK, "[THUNK]   Loaded ARM DLL at 0x%08X\n", dll_info.image_base);
-        /* Install thunks for the DLL's imports (resolve system API calls) */
-        InstallThunks(dll_info);
-        /* Call DllMain(DLL_PROCESS_ATTACH) if the DLL has an entry point */
-        if (entry != 0 && dll_info.entry_point_rva != 0 && callback_executor) {
-            LOG(THUNK, "[THUNK]   Calling DllMain at 0x%08X\n", entry);
-            uint32_t args[3] = { dll_info.image_base, 1 /* DLL_PROCESS_ATTACH */, 0 };
-            uint32_t result = callback_executor(entry, args, 3);
-            LOG(THUNK, "[THUNK]   DllMain returned %d\n", result);
+        /* Call DllMain(DLL_PROCESS_ATTACH) if loaded fresh and callback_executor available */
+        /* Note: LoadArmDll queues entry points, but for runtime loads we call immediately */
+        if (callback_executor) {
+            /* Check if there are pending inits for this DLL and call them now */
+            for (auto it2 = pending_dll_inits.begin(); it2 != pending_dll_inits.end(); ) {
+                if (it2->base_addr == dll->base_addr) {
+                    LOG(THUNK, "[THUNK]   Calling DllMain at 0x%08X\n", it2->entry_point);
+                    uint32_t args[3] = { it2->base_addr, 1 /* DLL_PROCESS_ATTACH */, 0 };
+                    uint32_t result = callback_executor(it2->entry_point, args, 3);
+                    LOG(THUNK, "[THUNK]   DllMain returned %d\n", result);
+                    it2 = pending_dll_inits.erase(it2);
+                } else {
+                    ++it2;
+                }
+            }
         }
-        regs[0] = dll_info.image_base;
+        regs[0] = dll->base_addr;
         return true;
     });
     /* Shared logic for GetProcAddress variants. is_wide=true for GetProcAddressW

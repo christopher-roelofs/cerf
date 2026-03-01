@@ -1,13 +1,15 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
-/* Common controls thunks: InitCommonControls*, ImageList_* */
+/* ImageList and common controls init — coredll re-exports from commctrl.
+   When an app links against coredll (which re-exports these),
+   we handle them natively. When an app loads the real ARM commctrl.dll,
+   that DLL runs as ARM code and calls coredll itself. */
 #include "../win32_thunks.h"
 #include "../../log.h"
-#include <cstdio>
 #include <commctrl.h>
 
-void Win32Thunks::RegisterCommctrlHandlers() {
-    Thunk("InitCommonControlsEx", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+void Win32Thunks::RegisterImageListHandlers() {
+    Thunk("InitCommonControlsEx", [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t icc_addr = regs[0];
         INITCOMMONCONTROLSEX icc = {};
         icc.dwSize = sizeof(icc);
@@ -68,32 +70,5 @@ void Win32Thunks::RegisterCommctrlHandlers() {
         int cx, cy; BOOL ret = ImageList_GetIconSize((HIMAGELIST)(intptr_t)(int32_t)regs[0], &cx, &cy);
         if (regs[1]) mem.Write32(regs[1], cx); if (regs[2]) mem.Write32(regs[2], cy);
         regs[0] = ret; return true;
-    });
-    /* WinCE CommandBar/CommandBands — CE-specific controls.
-       Ordinals are routed to commctrl-specific map via current_dll_context. */
-    Thunk("CommandBands_Create", 36, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] CommandBands_Create(hInst=0x%08X, hwndParent=0x%08X, wID=%d, dwStyles=0x%X) -> NULL (stub)\n",
-               regs[0], regs[1], regs[2], regs[3]);
-        regs[0] = 0; return true;
-    });
-    Thunk("CommandBar_GetMenu", 9, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] CommandBar_GetMenu(hwndCB=0x%08X, iButton=%d) -> NULL (stub)\n", regs[0], regs[1]);
-        regs[0] = 0; return true;
-    });
-    Thunk("CommandBands_AddBands", 37, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] CommandBands_AddBands(...) -> FALSE (stub)\n");
-        regs[0] = 0; return true;
-    });
-    Thunk("CommandBands_GetCommandBar", 38, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] CommandBands_GetCommandBar(hwndCmdBands=0x%08X, uBand=%d) -> NULL (stub)\n", regs[0], regs[1]);
-        regs[0] = 0; return true;
-    });
-    Thunk("CommandBands_AddAdornments", 39, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] CommandBands_AddAdornments(...) -> FALSE (stub)\n");
-        regs[0] = 0; return true;
-    });
-    Thunk("CommandBands_GetRestoreInformation", 41, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(THUNK, "[THUNK] CommandBands_GetRestoreInformation(...) -> FALSE (stub)\n");
-        regs[0] = 0; return true;
     });
 }

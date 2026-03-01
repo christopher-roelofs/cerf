@@ -31,6 +31,7 @@ static void PrintUsage(const char* prog) {
     printf("                       Categories: THUNK,PE,EMU,TRACE,CPU,REG,DBG,ALL,NONE\n");
     printf("  --no-log=CATEGORIES  Disable specific categories\n");
     printf("  --log-file=PATH      Write logs to file (in addition to console)\n");
+    printf("  --wince-sys=DIR      WinCE system DLL directory (ARM .dll files)\n");
     printf("  --quiet              Disable all log output\n");
     printf("  --help               Show this help\n");
 }
@@ -58,6 +59,7 @@ static void DumpRegisters(ArmCpu& cpu) {
 
 int main(int argc, char* argv[]) {
     const char* exe_path = nullptr;
+    const char* wince_sys = nullptr;
     bool trace = false;
     bool explicit_log = false;
     const char* log_file = nullptr;
@@ -76,6 +78,8 @@ int main(int argc, char* argv[]) {
             no_log_mask |= Log::ParseCategories(argv[i] + 9);
         } else if (strncmp(argv[i], "--log-file=", 11) == 0) {
             log_file = argv[i] + 11;
+        } else if (strncmp(argv[i], "--wince-sys=", 12) == 0) {
+            wince_sys = argv[i] + 12;
         } else if (strcmp(argv[i], "--quiet") == 0) {
             Log::SetEnabled(Log::NONE);
             explicit_log = true;
@@ -143,6 +147,32 @@ int main(int argc, char* argv[]) {
             exe_dir = path_str.substr(0, last_sep + 1);
     }
     thunks.SetExeDir(exe_dir);
+
+    /* Set WinCE system DLL search path.
+       If --wince-sys is specified, use that. Otherwise try a "windows/" folder
+       next to cerf.exe, then fall back to nothing (ARM system DLLs won't load). */
+    if (wince_sys) {
+        std::string sys_dir(wince_sys);
+        if (!sys_dir.empty() && sys_dir.back() != '/' && sys_dir.back() != '\\')
+            sys_dir += '/';
+        thunks.SetWinceSysDir(sys_dir);
+        LOG(EMU, "[EMU] WinCE system DLL dir: %s\n", sys_dir.c_str());
+    } else {
+        /* Auto-detect: look for windows/ next to cerf.exe */
+        char cerf_path[MAX_PATH];
+        ::GetModuleFileNameA(NULL, cerf_path, MAX_PATH);
+        std::string cerf_dir(cerf_path);
+        size_t last_sep = cerf_dir.find_last_of("\\/");
+        if (last_sep != std::string::npos) cerf_dir = cerf_dir.substr(0, last_sep + 1);
+        else cerf_dir = "";
+        std::string auto_sys = cerf_dir + "windows/";
+        FILE* probe = fopen((auto_sys + "commctrl.dll").c_str(), "rb");
+        if (probe) {
+            fclose(probe);
+            thunks.SetWinceSysDir(auto_sys);
+            LOG(EMU, "[EMU] WinCE system DLL dir (auto): %s\n", auto_sys.c_str());
+        }
+    }
 
     /* Install import thunks */
     thunks.InstallThunks(pe_info);

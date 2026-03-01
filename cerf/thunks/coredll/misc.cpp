@@ -1,11 +1,11 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
-/* Misc small stubs: debug, clipboard, caret, sound, RAS, COM, IMM, gestures, C runtime */
+/* Misc small stubs: debug, clipboard, caret, sound, RAS, COM, IMM, gestures,
+   C runtime */
 #include "../win32_thunks.h"
 #include "../../log.h"
 #include <cstdio>
 #include <objbase.h>
-
 void Win32Thunks::RegisterMiscHandlers() {
     auto stub0 = [](const char* name) -> ThunkHandler {
         return [name](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -163,4 +163,91 @@ void Win32Thunks::RegisterMiscHandlers() {
     /* Ordinal-only entries */
     ThunkOrdinal("GetOwnerProcess", 606);
     ThunkOrdinal("Random", 80);
+    /* COM — WinCE coredll re-exports some COM functions */
+    Thunk("CoInitialize", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] CoInitialize(pvReserved=0x%08X) -> S_OK\n", regs[0]);
+        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+        regs[0] = (uint32_t)hr;
+        return true;
+    });
+    Thunk("OleInitialize", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] OleInitialize(pvReserved=0x%08X) -> S_OK (stub)\n", regs[0]);
+        regs[0] = 0; /* S_OK */
+        return true;
+    });
+    Thunk("OleUninitialize", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] OleUninitialize() -> stub\n");
+        return true;
+    });
+    Thunk("CoCreateInstance", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] CoCreateInstance(rclsid=0x%08X, ...) -> E_NOTIMPL (stub)\n", regs[0]);
+        regs[0] = 0x80004001; /* E_NOTIMPL */
+        return true;
+    });
+    Thunk("CoTaskMemAlloc", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t size = regs[0];
+        LOG(THUNK, "[THUNK] CoTaskMemAlloc(cb=%u)\n", size);
+        uint32_t ptr = 0;
+        if (size > 0) {
+            static uint32_t cotask_heap = 0x60000000;
+            ptr = cotask_heap;
+            cotask_heap += (size + 0xFFF) & ~0xFFF;
+            mem.Alloc(ptr, (size + 0xFFF) & ~0xFFF);
+        }
+        regs[0] = ptr;
+        return true;
+    });
+    Thunk("CoTaskMemFree", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] CoTaskMemFree(pv=0x%08X) -> stub\n", regs[0]);
+        return true;
+    });
+    Thunk("StringFromGUID2", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t guid_addr = regs[0], buf_addr = regs[1], cchMax = regs[2];
+        LOG(THUNK, "[THUNK] StringFromGUID2(rguid=0x%08X, lpsz=0x%08X, cchMax=%d)\n",
+               guid_addr, buf_addr, cchMax);
+        if (guid_addr && buf_addr && cchMax >= 39) {
+            uint32_t d1 = mem.Read32(guid_addr);
+            uint16_t d2 = mem.Read16(guid_addr + 4);
+            uint16_t d3 = mem.Read16(guid_addr + 6);
+            wchar_t buf[40];
+            swprintf(buf, 40, L"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+                     d1, d2, d3,
+                     mem.Read8(guid_addr + 8), mem.Read8(guid_addr + 9),
+                     mem.Read8(guid_addr + 10), mem.Read8(guid_addr + 11),
+                     mem.Read8(guid_addr + 12), mem.Read8(guid_addr + 13),
+                     mem.Read8(guid_addr + 14), mem.Read8(guid_addr + 15));
+            for (int i = 0; buf[i] && i < (int)cchMax; i++)
+                mem.Write16(buf_addr + i * 2, buf[i]);
+            mem.Write16(buf_addr + 38 * 2, 0);
+            regs[0] = 39;
+        } else {
+            regs[0] = 0;
+        }
+        return true;
+    });
+    Thunk("CoCreateGuid", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(THUNK, "[THUNK] CoCreateGuid(pguid=0x%08X)\n", regs[0]);
+        if (regs[0]) {
+            for (int i = 0; i < 16; i++)
+                mem.Write8(regs[0] + i, (uint8_t)(rand() & 0xFF));
+        }
+        regs[0] = 0; /* S_OK */
+        return true;
+    });
+    Thunk("CoFileTimeNow", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        if (regs[0]) {
+            FILETIME ft;
+            GetSystemTimeAsFileTime(&ft);
+            mem.Write32(regs[0], ft.dwLowDateTime);
+            mem.Write32(regs[0] + 4, ft.dwHighDateTime);
+        }
+        regs[0] = 0;
+        return true;
+    });
+    Thunk("CoFreeUnusedLibraries", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        return true;
+    });
+    Thunk("ReleaseStgMedium", [](uint32_t* regs, EmulatedMemory&) -> bool {
+        return true;
+    });
 }

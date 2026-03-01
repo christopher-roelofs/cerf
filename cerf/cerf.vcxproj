@@ -179,15 +179,18 @@
     <ClCompile Include="thunks\coredll\resource.cpp" />
     <ClCompile Include="thunks\coredll\process.cpp" />
     <ClCompile Include="thunks\coredll\misc.cpp" />
+    <ClCompile Include="thunks\coredll\imagelist.cpp" />
     <ClCompile Include="thunks\coredll\module.cpp" />
-    <!-- External DLL thunks -->
-    <ClCompile Include="thunks\commctrl\commctrl.cpp" />
-    <ClCompile Include="thunks\commdlg\commdlg.cpp" />
     <ClCompile Include="thunks\coredll\shell.cpp" />
-    <ClCompile Include="thunks\aygshell\aygshell.cpp" />
-    <ClCompile Include="thunks\ceshell\ceshell.cpp" />
-    <ClCompile Include="thunks\ole32\ole32.cpp" />
   </ItemGroup>
+  <!-- WinCE ARM system DLLs — copied to windows/ next to cerf.exe -->
+  <ItemGroup>
+    <WinceDll Include="$(ProjectDir)..\wince_sys\*.dll" />
+  </ItemGroup>
+  <Target Name="CopyWinceDlls" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)windows" />
+    <Copy SourceFiles="@(WinceDll)" DestinationFolder="$(OutDir)windows" SkipUnchangedFiles="true" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

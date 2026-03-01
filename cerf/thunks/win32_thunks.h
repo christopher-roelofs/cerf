@@ -20,11 +20,6 @@ struct ThunkedDllInfo {
 
 inline const ThunkedDllInfo thunked_dlls[] = {
     { "coredll",   0xCE000000 },
-    { "commctrl",  0xCE010000 },
-    { "ole32",     0xCE020000 },
-    { "ceshell",   0xCE030000 },
-    { "commdlg",   0xCE040000 },
-    { "aygshell",  0xCE050000 },
 };
 
 /* Look up a thunked DLL by name (narrow, case-insensitive, substring match) */
@@ -93,6 +88,7 @@ public:
     void SetHInstance(uint32_t hinst) { emu_hinstance = hinst; }
     void SetExePath(const std::wstring& path) { exe_path = path; }
     void SetExeDir(const std::string& dir) { exe_dir = dir; }
+    void SetWinceSysDir(const std::string& dir) { wince_sys_dir = dir; }
 
     /* Execute a callback from native code back into ARM emulator.
        Args: (arm_addr, args_array, num_args) -> return value */
@@ -123,6 +119,7 @@ private:
     uint32_t emu_hinstance;
     std::wstring exe_path;
     std::string exe_dir;  /* Directory containing the exe */
+    std::string wince_sys_dir;  /* WinCE system DLL directory (for ARM DLLs like commctrl.dll) */
 
     /* Loaded ARM DLLs */
     struct LoadedDll {
@@ -132,6 +129,7 @@ private:
         HMODULE native_rsrc_handle; /* Native load for resource access */
     };
     std::map<std::wstring, LoadedDll> loaded_dlls; /* lowercase name -> info */
+    LoadedDll* LoadArmDll(const std::string& dll_name); /* Find/load ARM DLL */
 
     /* Resource handle mapping (fake emu handle -> resource data location) */
     struct EmuRsrc {
@@ -234,13 +232,9 @@ private:
     void RegisterFileHandlers();
     void RegisterSystemHandlers();
     void RegisterResourceHandlers();
-    void RegisterCommctrlHandlers();
-    void RegisterCommdlgHandlers();
     void RegisterShellHandlers();
     void RegisterProcessHandlers();
     void RegisterMiscHandlers();
+    void RegisterImageListHandlers();
     void RegisterModuleHandlers();
-    void RegisterAygshellHandlers();
-    void RegisterCeshellHandlers();
-    void RegisterOle32Handlers();
 };
