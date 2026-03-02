@@ -78,3 +78,28 @@ Only coredll is thunked. All other WinCE DLLs run as real ARM code.
 0xF0000000 - 0xF0010000   WinCE trap call range
 0xFE000000 - 0xFEFFFFFF   Thunk stubs (allocated sequentially)
 ```
+
+## Virtual Filesystem (VFS)
+
+The VFS translates WinCE paths to host filesystem paths with a two-layer design:
+
+```
+WinCE Path                    Host Path
+──────────────────────────    ──────────────────────────────────────
+\Windows\foo                  <cerf_dir>/devices/<device>/fs/Windows/foo
+\My Documents\file.txt        <cerf_dir>/devices/<device>/fs/My Documents/file.txt
+\Program Files\app            <cerf_dir>/devices/<device>/fs/Program Files/app
+\anything                     <cerf_dir>/devices/<device>/fs/anything
+
+\c\foo\bar                    C:\foo\bar    ← real host drive
+\d\                           D:\           ← real host drive
+C:\foo\bar                    C:\foo\bar    ← drive letter syntax, same result
+```
+
+**Key rules:**
+- **Single-letter root directories** (`\c\`, `\d\`, etc.) are drive letter pass-throughs to real host drives. `\c\foo` maps to `C:\foo` on the host.
+- **Multi-letter root directories** (`\Windows\`, `\My Documents\`, etc.) resolve under the device's virtual filesystem at `devices/<device>/fs/`.
+- **Drive letter syntax** (`C:\foo`) is equivalent to `\c\foo` — both pass through to the real host drive.
+- **Reverse mapping**: Host drive paths (`C:\foo`) become `\c\foo` in WinCE space. Paths under the device fs root become `\relative`.
+
+This allows WinCE apps to access both the sandboxed device filesystem and real host drives. The device filesystem is configured via `cerf.ini` (`device=wince5`).

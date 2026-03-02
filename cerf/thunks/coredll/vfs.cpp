@@ -1,6 +1,8 @@
 /* Virtual Filesystem: maps WinCE paths <-> host filesystem paths.
-   All WinCE paths resolve under devices/<device>/fs/ next to cerf.exe.
-   Drive letters (C:\) are mapped to \c\ in WinCE space. */
+   Two-layer mapping:
+   - Single-letter root dirs (\c\..., \d\...) pass through to real host drives (C:\..., D:\...)
+   - Everything else (\Windows\..., \My Documents\...) resolves under devices/<device>/fs/
+   Drive letter syntax (C:\foo) is equivalent to \c\foo — both map to the real host C:\foo. */
 #define _CRT_SECURE_NO_WARNINGS
 #include "../win32_thunks.h"
 #include "../../log.h"
@@ -54,12 +56,18 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
     wince_sys_dir = device_fs_root + "Windows\\";
 }
 
+/* Helper: check if a character is a drive letter */
+static bool IsDriveLetter(wchar_t c) {
+    return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
+}
+
 /* Map a WinCE path to a host filesystem path.
    Rules:
-   - \Windows\foo       -> <device_fs_root>\Windows\foo
+   - \c\foo\bar         -> C:\foo\bar           (single-letter root = host drive pass-through)
+   - \d\                -> D:\                   (any drive letter)
+   - C:\foo\bar         -> C:\foo\bar           (drive letter syntax = same pass-through)
+   - \Windows\foo       -> <device_fs_root>\Windows\foo    (multi-letter = device fs)
    - \My Documents\x    -> <device_fs_root>\My Documents\x
-   - \anything          -> <device_fs_root>\anything
-   - C:\foo\bar         -> <device_fs_root>\c\foo\bar
    - relative           -> <device_fs_root>\relative
    Empty path returns empty. */
 std::wstring Win32Thunks::MapWinCEPath(const std::wstring& wce_path) {
@@ -69,25 +77,37 @@ std::wstring Win32Thunks::MapWinCEPath(const std::wstring& wce_path) {
     std::wstring wide_fs_root;
     for (char c : device_fs_root) wide_fs_root += (wchar_t)c;
 
-    /* Drive letter path (e.g. C:\foo\bar) -> <fs_root>\c\foo\bar */
-    if (wce_path.size() >= 2 && wce_path[1] == L':') {
-        wchar_t drive = wce_path[0];
-        if (drive >= L'A' && drive <= L'Z') drive += 32; /* lowercase */
-        std::wstring rest;
-        if (wce_path.size() > 2) {
-            rest = wce_path.substr(2); /* includes leading backslash */
-            /* Convert leading \\ to \ */
-            if (!rest.empty() && (rest[0] == L'\\' || rest[0] == L'/'))
-                rest = rest.substr(1);
-        }
-        std::wstring result = wide_fs_root + drive + L"\\" + rest;
-        LOG(THUNK, "[VFS] Map '%ls' -> '%ls'\n", wce_path.c_str(), result.c_str());
-        return result;
+    /* Drive letter path (e.g. C:\foo\bar) -> real host C:\foo\bar */
+    if (wce_path.size() >= 2 && wce_path[1] == L':' && IsDriveLetter(wce_path[0])) {
+        LOG(THUNK, "[VFS] Map '%ls' -> '%ls' (drive pass-through)\n", wce_path.c_str(), wce_path.c_str());
+        return wce_path;
     }
 
     /* Root-relative path (starts with \ or /) */
     if (wce_path[0] == L'\\' || wce_path[0] == L'/') {
-        std::wstring result = wide_fs_root + wce_path.substr(1);
+        std::wstring after_root = wce_path.substr(1); /* strip leading separator */
+
+        /* Check for single-letter root directory = drive letter pass-through.
+           \c\foo -> C:\foo, \d -> D:\, \c -> C:\ */
+        if (!after_root.empty() && IsDriveLetter(after_root[0])) {
+            bool is_drive = false;
+            if (after_root.size() == 1)  /* just "\c" */
+                is_drive = true;
+            else if (after_root[1] == L'\\' || after_root[1] == L'/')  /* "\c\..." */
+                is_drive = true;
+
+            if (is_drive) {
+                wchar_t drive = after_root[0];
+                if (drive >= L'a' && drive <= L'z') drive -= 32; /* uppercase for host */
+                std::wstring rest = (after_root.size() > 1) ? after_root.substr(1) : L"\\";
+                std::wstring result = std::wstring(1, drive) + L":" + rest;
+                LOG(THUNK, "[VFS] Map '%ls' -> '%ls' (drive pass-through)\n", wce_path.c_str(), result.c_str());
+                return result;
+            }
+        }
+
+        /* Multi-letter root directory -> device fs */
+        std::wstring result = wide_fs_root + after_root;
         LOG(THUNK, "[VFS] Map '%ls' -> '%ls'\n", wce_path.c_str(), result.c_str());
         return result;
     }
@@ -99,22 +119,30 @@ std::wstring Win32Thunks::MapWinCEPath(const std::wstring& wce_path) {
 }
 
 /* Reverse mapping: convert a host filesystem path back to a WinCE-style path.
-   If the path is under device_fs_root, strip the prefix and add leading \.
-   Otherwise return the original path unchanged. */
+   - Host drive paths (C:\foo) -> \c\foo  (lowercase drive letter dir)
+   - Paths under device_fs_root -> \relative
+   - Otherwise return original path unchanged. */
 std::wstring Win32Thunks::MapHostToWinCE(const std::wstring& host_path) {
     if (host_path.empty()) return host_path;
+
+    /* Host drive path (e.g. C:\foo\bar) -> \c\foo\bar */
+    if (host_path.size() >= 2 && host_path[1] == L':' && IsDriveLetter(host_path[0])) {
+        wchar_t drive = host_path[0];
+        if (drive >= L'A' && drive <= L'Z') drive += 32; /* lowercase */
+        std::wstring rest = (host_path.size() > 2) ? host_path.substr(2) : L"";
+        return L"\\" + std::wstring(1, drive) + rest;
+    }
 
     std::wstring wide_fs_root;
     for (char c : device_fs_root) wide_fs_root += (wchar_t)c;
 
-    /* Case-insensitive prefix match */
+    /* Case-insensitive prefix match against device fs root */
     if (host_path.size() >= wide_fs_root.size()) {
         bool match = true;
         for (size_t i = 0; i < wide_fs_root.size(); i++) {
             wchar_t a = host_path[i], b = wide_fs_root[i];
             if (a >= L'A' && a <= L'Z') a += 32;
             if (b >= L'A' && b <= L'Z') b += 32;
-            /* Normalize path separators */
             if (a == L'/') a = L'\\';
             if (b == L'/') b = L'\\';
             if (a != b) { match = false; break; }

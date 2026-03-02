@@ -62,7 +62,7 @@ bundled/                           - Files bundled with the build output
 
 - **Thunking**: ARM code calls COREDLL functions via the IAT. These point to magic addresses (0xFE000000+, `THUNK_BASE`) that the CPU intercepts, executing native Win32 equivalents.
 - **Only coredll is thunked**: coredll.dll is the WinCE kernel/system bridge — the only DLL that talks to the OS. All other WinCE DLLs (commctrl, commdlg, ole32, ceshell, aygshell) are user-mode libraries that just use coredll APIs internally. They are loaded and executed as real ARM code in the emulator.
-- **Virtual filesystem**: All WinCE paths are sandboxed under `devices/<device>/fs/`. The VFS layer (`vfs.cpp`) translates WinCE paths like `\Windows\foo` to host paths like `<cerf_dir>/devices/wince5/fs/Windows/foo`, and drive letters like `C:\foo` to `\c\foo` in WinCE space. `cerf.ini` selects the active device profile.
+- **Virtual filesystem**: Two-layer path mapping. Multi-letter root dirs (`\Windows\foo`) resolve under `devices/<device>/fs/`. Single-letter root dirs (`\c\foo`) pass through to real host drives (`C:\foo`). Drive letter syntax (`C:\foo`) is equivalent to `\c\foo`. The VFS layer is in `vfs.cpp`; `cerf.ini` selects the active device profile.
 - **Bundled device files**: The `bundled/` directory contains device profiles. At build time its contents are copied next to cerf.exe. Each device has a `fs/` directory (virtual filesystem root), a `registry_to_import.reg` (default registry), and a `registry.txt` (persisted registry state).
 - **ARM DLL loading**: `LoadArmDll()` searches the exe directory then `devices/<device>/fs/Windows/` for ARM DLLs, loads them via `PELoader::LoadDll()`, and recursively resolves their imports (which may load more ARM DLLs).
 - **coredll re-exports**: coredll.def re-exports functions from other DLLs (e.g. ImageList_* from commctrl, GetOpenFileNameW from commdlg, SH* from ceshell/aygshell). These are thunked as native implementations in coredll so apps that import them by ordinal from coredll still work.
@@ -109,13 +109,15 @@ The `references/` directory (gitignored) holds local WinCE SDK materials includi
 **All file API thunks MUST use `MapWinCEPath()` for input paths and `MapHostToWinCE()` for output paths.** Never let WinCE programs see or use real host filesystem paths.
 
 Path translation rules (implemented in `thunks/coredll/vfs.cpp`):
-- `\Windows\foo` → `<cerf_dir>/devices/<device>/fs/Windows/foo`
+- `\c\foo\bar` → `C:\foo\bar` (single-letter root = host drive pass-through)
+- `\d\` → `D:\` (any single letter = real host drive)
+- `C:\foo\bar` → `C:\foo\bar` (drive letter syntax = same pass-through)
+- `\Windows\foo` → `<cerf_dir>/devices/<device>/fs/Windows/foo` (multi-letter root = device fs)
 - `\My Documents\file.txt` → `<cerf_dir>/devices/<device>/fs/My Documents/file.txt`
 - `\anything` → `<cerf_dir>/devices/<device>/fs/anything`
-- `C:\foo\bar` → `<cerf_dir>/devices/<device>/fs/c/foo/bar` (drive letters become lowercase dirs)
 - `relative.txt` → `<cerf_dir>/devices/<device>/fs/relative.txt`
 
-Reverse mapping (`MapHostToWinCE`): strips the device fs root prefix and adds leading `\`.
+Reverse mapping (`MapHostToWinCE`): host drive paths (`C:\foo`) become `\c\foo`; paths under device fs root get prefix stripped and leading `\` added.
 
 ## IMPORTANT: Thunk File Organization
 

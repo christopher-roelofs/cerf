@@ -4,6 +4,33 @@
 #include <cstdio>
 #include <vector>
 
+/* State for root directory enumeration: after real host entries are exhausted,
+   we inject synthetic entries for available drive letters (a-z). */
+struct RootFindState {
+    bool host_done = false;   /* true once real FindNextFileW returns FALSE */
+    int next_drive = 0;       /* 0-25 = 'a'-'z', 26 = done */
+    DWORD drive_mask = 0;     /* bitmask from GetLogicalDrives() */
+};
+static std::map<uint32_t, RootFindState> root_find_states; /* fake handle -> state */
+
+/* Check if a WinCE search pattern targets the root directory (e.g. \* or \*.* ) */
+static bool IsRootPattern(const std::wstring& wce_pattern) {
+    if (wce_pattern.size() < 2) return false;
+    if (wce_pattern[0] != L'\\' && wce_pattern[0] != L'/') return false;
+    /* \* or \*.* */
+    std::wstring after = wce_pattern.substr(1);
+    return (after == L"*" || after == L"*.*");
+}
+
+/* Build a synthetic WIN32_FIND_DATAW for a drive letter directory */
+static WIN32_FIND_DATAW MakeDriveEntry(char drive_letter) {
+    WIN32_FIND_DATAW fd = {};
+    fd.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    fd.cFileName[0] = (wchar_t)drive_letter;
+    fd.cFileName[1] = 0;
+    return fd;
+}
+
 void Win32Thunks::RegisterFileHandlers() {
     Thunk("CreateFileW", 168, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
@@ -92,25 +119,62 @@ void Win32Thunks::RegisterFileHandlers() {
     Thunk("FindFirstFileW", 167, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring wce_pattern = ReadWStringFromEmu(mem, regs[0]);
         uint32_t find_data_addr = regs[1];
+        bool is_root = IsRootPattern(wce_pattern);
         std::wstring host_pattern = MapWinCEPath(wce_pattern);
         WIN32_FIND_DATAW fd = {};
         HANDLE h = FindFirstFileW(host_pattern.c_str(), &fd);
         if (h != INVALID_HANDLE_VALUE) WriteFindDataToEmu(mem, find_data_addr, fd);
-        regs[0] = WrapHandle(h);
+        uint32_t fake = WrapHandle(h);
+        /* Track root-level enumerations so we can inject drive letters later */
+        if (is_root) {
+            RootFindState state;
+            state.drive_mask = GetLogicalDrives();
+            root_find_states[fake] = state;
+        }
+        regs[0] = fake;
         return true;
     });
     Thunk("FindNextFileW", 181, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HANDLE h = UnwrapHandle(regs[0]);
-        WIN32_FIND_DATAW fd = {};
-        BOOL ret = FindNextFileW(h, &fd);
-        if (ret) WriteFindDataToEmu(mem, regs[1], fd);
-        regs[0] = ret; return true;
+        uint32_t fake = regs[0];
+        HANDLE h = UnwrapHandle(fake);
+        auto it = root_find_states.find(fake);
+        /* Non-root enumeration: simple pass-through */
+        if (it == root_find_states.end()) {
+            WIN32_FIND_DATAW fd = {};
+            BOOL ret = FindNextFileW(h, &fd);
+            if (ret) WriteFindDataToEmu(mem, regs[1], fd);
+            regs[0] = ret; return true;
+        }
+        /* Root enumeration: first exhaust real host entries, then inject drives */
+        RootFindState& state = it->second;
+        if (!state.host_done) {
+            WIN32_FIND_DATAW fd = {};
+            BOOL ret = FindNextFileW(h, &fd);
+            if (ret) {
+                WriteFindDataToEmu(mem, regs[1], fd);
+                regs[0] = TRUE; return true;
+            }
+            state.host_done = true;
+        }
+        /* Inject drive letter directories */
+        while (state.next_drive < 26) {
+            int d = state.next_drive++;
+            if (state.drive_mask & (1 << d)) {
+                WIN32_FIND_DATAW fd = MakeDriveEntry('a' + d);
+                WriteFindDataToEmu(mem, regs[1], fd);
+                regs[0] = TRUE; return true;
+            }
+        }
+        /* All done */
+        SetLastError(ERROR_NO_MORE_FILES);
+        regs[0] = FALSE; return true;
     });
     Thunk("FindClose", 180, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t fake = regs[0];
         HANDLE h = UnwrapHandle(fake);
         regs[0] = FindClose(h);
         RemoveHandle(fake);
+        root_find_states.erase(fake);
         return true;
     });
     Thunk("GetFileTime", 176, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
