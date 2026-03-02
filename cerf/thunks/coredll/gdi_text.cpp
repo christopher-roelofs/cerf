@@ -12,7 +12,8 @@ void Win32Thunks::RegisterGdiTextHandlers() {
         regs[0] = (uint32_t)(uintptr_t)CreateFontIndirectW(&lf); return true;
     });
     Thunk("GetTextMetricsW", 898, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        TEXTMETRICW tm; BOOL ret = GetTextMetricsW((HDC)(intptr_t)(int32_t)regs[0], &tm);
+        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        TEXTMETRICW tm; BOOL ret = GetTextMetricsW(hdc, &tm);
         if (ret && regs[1]) {
             mem.Write32(regs[1]+0, tm.tmHeight); mem.Write32(regs[1]+4, tm.tmAscent);
             mem.Write32(regs[1]+8, tm.tmDescent); mem.Write32(regs[1]+12, tm.tmInternalLeading);
@@ -76,8 +77,9 @@ void Win32Thunks::RegisterGdiTextHandlers() {
                 dx[i] = (INT)mem.Read32(lpDx_addr + i * 4);
             pdx = dx.data();
         }
-        regs[0] = ExtTextOutW(hdc, x, y, options, prc,
+        BOOL ret = ExtTextOutW(hdc, x, y, options, prc,
                                text.empty() ? NULL : text.c_str(), count, pdx);
+        regs[0] = ret;
         return true;
     });
     /* GetTextExtentExPointW(hdc, lpszStr, cchString, nMaxExtent,

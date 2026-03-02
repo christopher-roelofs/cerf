@@ -33,7 +33,8 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
     Thunk("CreateRectRgnIndirect", 969, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
     Thunk("EqualRgn", 91, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
     Thunk("BeginPaint", 260, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        PAINTSTRUCT ps; HDC hdc = BeginPaint((HWND)(intptr_t)(int32_t)regs[0], &ps);
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        PAINTSTRUCT ps; HDC hdc = BeginPaint(hw, &ps);
         uint32_t ps_addr = regs[1];
         mem.Write32(ps_addr+0, (uint32_t)(uintptr_t)hdc); mem.Write32(ps_addr+4, ps.fErase);
         mem.Write32(ps_addr+8, ps.rcPaint.left); mem.Write32(ps_addr+12, ps.rcPaint.top);

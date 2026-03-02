@@ -47,6 +47,11 @@ void Win32Thunks::RegisterWindowHandlers() {
         HMENU menu_h = (HMENU)(intptr_t)(int32_t)ReadStackArg(regs,mem,5);
         uint32_t arm_lpParam = ReadStackArg(regs,mem,7);
         exStyle &= 0x0FFFFFFF;
+        /* WinCE COMBOBOX defaults to CBS_DROPDOWN when no CBS type bits are set.
+           Desktop Windows treats type=0 as CBS_SIMPLE (list always visible).
+           Force CBS_DROPDOWN so combo boxes collapse to edit-only height. */
+        if (_wcsicmp(className.c_str(), L"COMBOBOX") == 0 && (style & 0x3) == 0)
+            style |= CBS_DROPDOWN;
         /* WinCE allows WS_CHILD windows with NULL parent (e.g. "Menu" class).
            Desktop Windows doesn't — strip WS_CHILD when parent is NULL. */
         if (parent == NULL && (style & WS_CHILD)) {

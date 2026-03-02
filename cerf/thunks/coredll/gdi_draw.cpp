@@ -22,7 +22,9 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("SetBkColor", 922, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetBkColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
-    Thunk("SetBkMode", 923, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetBkMode((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
+    Thunk("SetBkMode", 923, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = SetBkMode((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true;
+    });
     Thunk("SetTextColor", 924, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetTextColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
     Thunk("SetBrushOrgEx", 943, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         POINT pt;

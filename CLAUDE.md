@@ -149,3 +149,5 @@ To inspect the running app's windows (check if UI is showing, what dialogs are o
 python3 tools/inspect_cerf.py
 ```
 This lists all windows owned by cerf.exe with class, title, visibility, and size.
+
+You can also **take screenshots** to visually verify app rendering, and **click on screen** if needed to interact with the running app (e.g., navigate directories, press buttons). Always kill cerf.exe when done investigating (`taskkill //f //im cerf.exe`).
