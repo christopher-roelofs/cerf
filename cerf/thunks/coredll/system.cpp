@@ -27,10 +27,11 @@ void Win32Thunks::RegisterSystemHandlers() {
         return true;
     });
     Thunk("GetSysColor", 889, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetSysColor(regs[0]); return true;
+        /* WinCE passes color indices with 0x40000000 flag — strip it */
+        regs[0] = GetSysColor(regs[0] & 0x3FFFFFFF); return true;
     });
     Thunk("GetSysColorBrush", 937, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)GetSysColorBrush(regs[0]); return true;
+        regs[0] = (uint32_t)(uintptr_t)GetSysColorBrush(regs[0] & 0x3FFFFFFF); return true;
     });
     Thunk("GetTickCount", 535, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetTickCount(); return true;
