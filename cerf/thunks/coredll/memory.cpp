@@ -38,10 +38,11 @@ void Win32Thunks::RegisterMemoryHandlers() {
     Thunk("LocalReAlloc", 34, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t old_ptr = regs[0], new_size = regs[1], flags = regs[2];
         static uint32_t next_lrealloc = 0x31000000;
-        uint8_t* old_host = mem.Translate(old_ptr);
         uint8_t* new_host = mem.Alloc(next_lrealloc, new_size);
-        if (old_host && new_host) memcpy(new_host, old_host, std::min(new_size, (uint32_t)0x1000));
+        /* LMEM_ZEROINIT: zero new buffer BEFORE copying old data on top */
         if ((flags & 0x40) && new_host) memset(new_host, 0, new_size);
+        uint8_t* old_host = mem.Translate(old_ptr);
+        if (old_host && new_host) memcpy(new_host, old_host, std::min(new_size, (uint32_t)0x1000));
         regs[0] = next_lrealloc;
         next_lrealloc += (new_size + 0xFFF) & ~0xFFF;
         return true;
@@ -114,11 +115,14 @@ void Win32Thunks::RegisterMemoryHandlers() {
     });
     Thunk("new", 1095, thunk_handlers["malloc"]);
     Thunk("realloc", 1054, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t size = regs[1];
+        uint32_t old_ptr = regs[0], size = regs[1];
         static uint32_t next_malloc = 0x42000000;
-        mem.Alloc(next_malloc, size > 0 ? size : 0x10);
+        uint32_t alloc_size = size > 0 ? size : 0x10;
+        uint8_t* new_host = mem.Alloc(next_malloc, alloc_size);
+        uint8_t* old_host = old_ptr ? mem.Translate(old_ptr) : nullptr;
+        if (old_host && new_host) memcpy(new_host, old_host, std::min(size, (uint32_t)0x1000));
         regs[0] = next_malloc;
-        next_malloc += ((size > 0 ? size : 0x10) + 0xFFF) & ~0xFFF;
+        next_malloc += (alloc_size + 0xFFF) & ~0xFFF;
         return true;
     });
     Thunk("free", 1018, [](uint32_t* regs, EmulatedMemory&) -> bool {

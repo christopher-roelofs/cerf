@@ -3,7 +3,12 @@
 /* ImageList and common controls init — coredll re-exports from commctrl.
    When an app links against coredll (which re-exports these),
    we handle them natively. When an app loads the real ARM commctrl.dll,
-   that DLL runs as ARM code and calls coredll itself. */
+   that DLL runs as ARM code and calls coredll itself.
+
+   HIMAGELIST is a user-mode pointer (struct _IMAGELIST*), NOT a kernel
+   handle like HWND/HMENU. It cannot survive 32-bit truncation + sign-extension.
+   We use WrapHandle/UnwrapHandle to map native 64-bit pointers to safe
+   32-bit tokens that ARM code can store and pass back. */
 #include "../win32_thunks.h"
 #include "../../log.h"
 #include <commctrl.h>
@@ -45,31 +50,38 @@ void Win32Thunks::RegisterImageListHandlers() {
         InitCommonControls(); regs[0] = 0; return true;
     });
     Thunk("ImageList_Create", 742, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)ImageList_Create(regs[0], regs[1], regs[2], regs[3], ReadStackArg(regs, mem, 0));
+        HIMAGELIST h = ImageList_Create(regs[0], regs[1], regs[2], regs[3], ReadStackArg(regs, mem, 0));
+        uint32_t wrapped = h ? WrapHandle((HANDLE)h) : 0;
+        LOG(THUNK, "[THUNK] ImageList_Create(cx=%d, cy=%d, flags=0x%X, init=%d, grow=%d) -> 0x%08X\n",
+            regs[0], regs[1], regs[2], regs[3], ReadStackArg(regs, mem, 0), wrapped);
+        regs[0] = wrapped;
         return true;
     });
-    Thunk("ImageList_Destroy", 743, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_Destroy((HIMAGELIST)(intptr_t)(int32_t)regs[0]); return true;
+    Thunk("ImageList_Destroy", 743, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        HIMAGELIST h = (HIMAGELIST)UnwrapHandle(regs[0]);
+        regs[0] = ImageList_Destroy(h);
+        if (regs[0]) RemoveHandle(regs[0]);
+        return true;
     });
-    Thunk("ImageList_Add", 738, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_Add((HIMAGELIST)(intptr_t)(int32_t)regs[0],
+    Thunk("ImageList_Add", 738, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_Add((HIMAGELIST)UnwrapHandle(regs[0]),
             (HBITMAP)(intptr_t)(int32_t)regs[1], (HBITMAP)(intptr_t)(int32_t)regs[2]);
         return true;
     });
     Thunk("ImageList_Draw", 748, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = ImageList_Draw((HIMAGELIST)(intptr_t)(int32_t)regs[0], regs[1],
+        regs[0] = ImageList_Draw((HIMAGELIST)UnwrapHandle(regs[0]), regs[1],
             (HDC)(intptr_t)(int32_t)regs[2], regs[3], ReadStackArg(regs, mem, 0), ReadStackArg(regs, mem, 1));
         return true;
     });
     Thunk("ImageList_DrawEx", 749, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = ImageList_DrawEx((HIMAGELIST)(intptr_t)(int32_t)regs[0], regs[1],
+        regs[0] = ImageList_DrawEx((HIMAGELIST)UnwrapHandle(regs[0]), regs[1],
             (HDC)(intptr_t)(int32_t)regs[2], regs[3],
             ReadStackArg(regs, mem, 0), ReadStackArg(regs, mem, 1), ReadStackArg(regs, mem, 2),
             ReadStackArg(regs, mem, 3), ReadStackArg(regs, mem, 4), ReadStackArg(regs, mem, 5));
         return true;
     });
-    Thunk("ImageList_GetImageCount", 756, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_GetImageCount((HIMAGELIST)(intptr_t)(int32_t)regs[0]); return true;
+    Thunk("ImageList_GetImageCount", 756, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_GetImageCount((HIMAGELIST)UnwrapHandle(regs[0])); return true;
     });
     Thunk("ImageList_LoadImage", 758, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t hmod = regs[0], lpbmp = regs[1], cx = regs[2], cGrow = regs[3];
@@ -84,45 +96,72 @@ void Win32Thunks::RegisterImageListHandlers() {
         if (is_arm) native_mod = GetNativeModuleForResources(hmod);
         else native_mod = (HMODULE)(intptr_t)(int32_t)hmod;
         HIMAGELIST h = native_mod ? ImageList_LoadImageW(native_mod, MAKEINTRESOURCEW(lpbmp), cx, cGrow, crMask, uType, uFlags) : NULL;
-        regs[0] = (uint32_t)(uintptr_t)h;
+        regs[0] = h ? WrapHandle((HANDLE)h) : 0;
         return true;
     });
     Thunk("ImageList_GetIconSize", 755, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        int cx, cy; BOOL ret = ImageList_GetIconSize((HIMAGELIST)(intptr_t)(int32_t)regs[0], &cx, &cy);
+        int cx, cy; BOOL ret = ImageList_GetIconSize((HIMAGELIST)UnwrapHandle(regs[0]), &cx, &cy);
         if (regs[1]) mem.Write32(regs[1], cx); if (regs[2]) mem.Write32(regs[2], cy);
         regs[0] = ret; return true;
     });
-    Thunk("ImageList_AddMasked", 739, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_AddMasked((HIMAGELIST)(intptr_t)(int32_t)regs[0],
-            (HBITMAP)(intptr_t)(int32_t)regs[1], (COLORREF)regs[2]);
+    Thunk("ImageList_AddMasked", 739, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        HIMAGELIST himl = (HIMAGELIST)UnwrapHandle(regs[0]);
+        HBITMAP hbm = (HBITMAP)(intptr_t)(int32_t)regs[1];
+        COLORREF crMask = (COLORREF)regs[2];
+        int ret = ImageList_AddMasked(himl, hbm, crMask);
+        LOG(THUNK, "[THUNK] ImageList_AddMasked(himl=%p, hbm=%p, crMask=0x%08X) -> %d\n",
+            himl, hbm, crMask, ret);
+        regs[0] = ret;
         return true;
     });
-    Thunk("ImageList_SetBkColor", 763, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_SetBkColor((HIMAGELIST)(intptr_t)(int32_t)regs[0], (COLORREF)regs[1]);
+    Thunk("ImageList_SetBkColor", 763, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_SetBkColor((HIMAGELIST)UnwrapHandle(regs[0]), (COLORREF)regs[1]);
         return true;
     });
-    Thunk("ImageList_Remove", 760, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_Remove((HIMAGELIST)(intptr_t)(int32_t)regs[0], (int)regs[1]);
+    Thunk("ImageList_Remove", 760, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_Remove((HIMAGELIST)UnwrapHandle(regs[0]), (int)regs[1]);
         return true;
     });
-    Thunk("ImageList_ReplaceIcon", 762, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_ReplaceIcon((HIMAGELIST)(intptr_t)(int32_t)regs[0],
+    Thunk("ImageList_ReplaceIcon", 762, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_ReplaceIcon((HIMAGELIST)UnwrapHandle(regs[0]),
             (int)regs[1], (HICON)(intptr_t)(int32_t)regs[2]);
         return true;
     });
-    Thunk("ImageList_GetIcon", 754, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("ImageList_GetIcon", 754, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)ImageList_GetIcon(
-            (HIMAGELIST)(intptr_t)(int32_t)regs[0], (int)regs[1], regs[2]);
+            (HIMAGELIST)UnwrapHandle(regs[0]), (int)regs[1], regs[2]);
         return true;
     });
     Thunk("ImageList_DrawIndirect", 750, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        /* IMAGELISTDRAWPARAMS is complex — forward to ARM commctrl if available, else stub */
-        LOG(THUNK, "[THUNK] ImageList_DrawIndirect(0x%08X) -> stub returning FALSE\n", regs[0]);
-        regs[0] = FALSE;
+        /* WinCE IMAGELISTDRAWPARAMS is 56 bytes with 32-bit handles:
+           +0 cbSize, +4 himl(32), +8 i, +12 hdcDst(32),
+           +16 x, +20 y, +24 cx, +28 cy, +32 xBitmap, +36 yBitmap,
+           +40 rgbBk, +44 rgbFg, +48 fStyle, +52 dwRop */
+        uint32_t p = regs[0];
+        if (!p) { regs[0] = FALSE; return true; }
+        IMAGELISTDRAWPARAMS ildp = {};
+        ildp.cbSize  = sizeof(IMAGELISTDRAWPARAMS);
+        ildp.himl    = (HIMAGELIST)UnwrapHandle(mem.Read32(p + 4));
+        ildp.i       = (int)mem.Read32(p + 8);
+        ildp.hdcDst  = (HDC)(intptr_t)(int32_t)mem.Read32(p + 12);
+        ildp.x       = (int)mem.Read32(p + 16);
+        ildp.y       = (int)mem.Read32(p + 20);
+        ildp.cx      = (int)mem.Read32(p + 24);
+        ildp.cy      = (int)mem.Read32(p + 28);
+        ildp.xBitmap = (int)mem.Read32(p + 32);
+        ildp.yBitmap = (int)mem.Read32(p + 36);
+        ildp.rgbBk   = (COLORREF)mem.Read32(p + 40);
+        ildp.rgbFg   = (COLORREF)mem.Read32(p + 44);
+        ildp.fStyle  = mem.Read32(p + 48);
+        ildp.dwRop   = mem.Read32(p + 52);
+        BOOL ret = ImageList_DrawIndirect(&ildp);
+        LOG(THUNK, "[THUNK] ImageList_DrawIndirect(himl=%p, i=%d, hdc=%p, x=%d, y=%d, style=0x%X) -> %d\n",
+            ildp.himl, ildp.i, ildp.hdcDst, ildp.x, ildp.y, ildp.fStyle, ret);
+        regs[0] = ret;
         return true;
     });
-    Thunk("ImageList_SetOverlayImage", 766, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_SetOverlayImage((HIMAGELIST)(intptr_t)(int32_t)regs[0],
+    Thunk("ImageList_SetOverlayImage", 766, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ImageList_SetOverlayImage((HIMAGELIST)UnwrapHandle(regs[0]),
             (int)regs[1], (int)regs[2]);
         return true;
     });

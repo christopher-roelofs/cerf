@@ -42,7 +42,8 @@ void Win32Thunks::RegisterGdiDcHandlers() {
             regs[0] = (index == HORZRES) ? (uint32_t)(wa.right - wa.left) : (uint32_t)(wa.bottom - wa.top);
             return true;
         }
-        regs[0] = GetDeviceCaps((HDC)(intptr_t)(int32_t)regs[0], index); return true;
+        regs[0] = GetDeviceCaps((HDC)(intptr_t)(int32_t)regs[0], index);
+        return true;
     });
     Thunk("SaveDC", 908, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = SaveDC((HDC)(intptr_t)(int32_t)regs[0]); return true;

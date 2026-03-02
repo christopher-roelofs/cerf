@@ -19,15 +19,19 @@ void Win32Thunks::RegisterWindowHandlers() {
         wc.hIcon = NULL;
         wc.hCursor = emu_cursor ? LoadCursorW(NULL, IDC_ARROW) : NULL;
         /* Small brush values (1-20) are COLOR_xxx+1 constants — pass through.
-           Larger values are WinCE GDI handles — use NULL and let WndProc paint. */
-        if (emu_brush > 0 && emu_brush <= 30)
-            wc.hbrBackground = (HBRUSH)(uintptr_t)emu_brush;
+           WinCE system color brushes have flag 0x40000000 (from GetSysColorBrush);
+           strip it to get the COLOR_xxx+1 constant.
+           Other values are WinCE GDI handles — use NULL and let WndProc paint. */
+        uint32_t brush_val = emu_brush & 0x3FFFFFFF; /* strip WinCE sys brush flag */
+        if (brush_val > 0 && brush_val <= 30)
+            wc.hbrBackground = (HBRUSH)(uintptr_t)brush_val;
         else
             wc.hbrBackground = NULL;
         std::wstring className = ReadWStringFromEmu(mem, mem.Read32(regs[0]+36));
         wc.lpszClassName = className.c_str();
         arm_wndprocs[className] = arm_wndproc;
-        LOG(THUNK, "[THUNK] RegisterClassW: '%ls' (ARM WndProc=0x%08X)\n", className.c_str(), arm_wndproc);
+        LOG(THUNK, "[THUNK] RegisterClassW: '%ls' (ARM WndProc=0x%08X, brush=0x%08X->0x%08X)\n",
+            className.c_str(), arm_wndproc, emu_brush, (uint32_t)(uintptr_t)wc.hbrBackground);
         ATOM atom = RegisterClassW(&wc);
         if (!atom) LOG(THUNK, "[THUNK]   RegisterClassW FAILED (error=%d)\n", GetLastError());
         regs[0] = (uint32_t)atom; return true;
@@ -41,6 +45,7 @@ void Win32Thunks::RegisterWindowHandlers() {
         int w=(int)ReadStackArg(regs,mem,2), h=(int)ReadStackArg(regs,mem,3);
         HWND parent = (HWND)(intptr_t)(int32_t)ReadStackArg(regs,mem,4);
         HMENU menu_h = (HMENU)(intptr_t)(int32_t)ReadStackArg(regs,mem,5);
+        uint32_t arm_lpParam = ReadStackArg(regs,mem,7);
         exStyle &= 0x0FFFFFFF;
         /* WinCE allows WS_CHILD windows with NULL parent (e.g. "Menu" class).
            Desktop Windows doesn't — strip WS_CHILD when parent is NULL. */
@@ -56,11 +61,20 @@ void Win32Thunks::RegisterWindowHandlers() {
             w = (wa.right-wa.left)+bw*2; h = (wa.bottom-wa.top)+bh*2;
             exStyle |= WS_EX_APPWINDOW;
         } else {
-            if (x==(int)0x80000000) x=CW_USEDEFAULT; if (y==(int)0x80000000) y=CW_USEDEFAULT;
-            if (w==(int)0x80000000||w==0) w=320; if (h==(int)0x80000000||h==0) h=240;
+            if (x==(int)0x80000000) x=0; if (y==(int)0x80000000) y=0;
+            if (w==(int)0x80000000) w=320;
+            if (h==(int)0x80000000) h=240;
+            /* WinCE allows w=0/h=0 for child controls (sized later by parent).
+               Desktop Windows doesn't always auto-size, so use defaults — except
+               for classes that explicitly need w=0 (e.g. Menu class in CommandBar). */
+            bool allow_zero_size = (className == L"Menu");
+            if (!allow_zero_size) {
+                if (w == 0) w = 320;
+                if (h == 0) h = 240;
+            }
         }
-        LOG(THUNK, "[THUNK] CreateWindowExW: class='%ls' title='%ls' style=0x%08X exStyle=0x%08X parent=0x%p size=(%dx%d)\n", className.c_str(), windowName.c_str(), style, exStyle, parent, w, h);
-        HWND hwnd = CreateWindowExW(exStyle, className.c_str(), windowName.c_str(), style, x, y, w, h, parent, menu_h, GetModuleHandleW(NULL), NULL);
+        LOG(THUNK, "[THUNK] CreateWindowExW: class='%ls' title='%ls' style=0x%08X exStyle=0x%08X parent=0x%p size=(%dx%d) lpParam=0x%08X\n", className.c_str(), windowName.c_str(), style, exStyle, parent, w, h, arm_lpParam);
+        HWND hwnd = CreateWindowExW(exStyle, className.c_str(), windowName.c_str(), style, x, y, w, h, parent, menu_h, GetModuleHandleW(NULL), (LPVOID)(uintptr_t)arm_lpParam);
         if (!hwnd) {
             DWORD err = GetLastError();
             WNDCLASSEXW probe = {}; probe.cbSize = sizeof(probe);
@@ -106,17 +120,78 @@ void Win32Thunks::RegisterWindowHandlers() {
     });
     Thunk("DestroyWindow", 265, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = DestroyWindow((HWND)(intptr_t)(int32_t)regs[0]); return true; });
     Thunk("SetWindowPos", 247, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = SetWindowPos((HWND)(intptr_t)(int32_t)regs[0], (HWND)(intptr_t)(int32_t)regs[1], regs[2], regs[3],
-            ReadStackArg(regs,mem,0), ReadStackArg(regs,mem,1), ReadStackArg(regs,mem,2)); return true;
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        int swp_x = (int)regs[2], swp_y = (int)regs[3];
+        int swp_cx = (int)ReadStackArg(regs,mem,0), swp_cy = (int)ReadStackArg(regs,mem,1);
+        UINT swp_flags = ReadStackArg(regs,mem,2);
+        regs[0] = SetWindowPos(hw, (HWND)(intptr_t)(int32_t)regs[1], swp_x, swp_y, swp_cx, swp_cy, swp_flags);
+        return true;
     });
     Thunk("MoveWindow", 272, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = MoveWindow((HWND)(intptr_t)(int32_t)regs[0], regs[1], regs[2], regs[3], ReadStackArg(regs,mem,0), ReadStackArg(regs,mem,1)); return true;
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        int mw_x = (int)regs[1], mw_y = (int)regs[2], mw_w = (int)regs[3];
+        int mw_h = (int)ReadStackArg(regs,mem,0); BOOL mw_rep = ReadStackArg(regs,mem,1);
+        regs[0] = MoveWindow(hw, mw_x, mw_y, mw_w, mw_h, mw_rep);
+        return true;
     });
     Thunk("BringWindowToTop", 275, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = BringWindowToTop((HWND)(intptr_t)(int32_t)regs[0]); return true; });
     Thunk("GetWindow", 251, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)(uintptr_t)GetWindow((HWND)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
     Thunk("SetParent", 268, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)(uintptr_t)SetParent((HWND)(intptr_t)(int32_t)regs[0], (HWND)(intptr_t)(int32_t)regs[1]); return true; });
-    Thunk("MapWindowPoints", 284, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
-    Thunk("GetClassInfoW", 878, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    Thunk("MapWindowPoints", 284, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HWND hwndFrom = (HWND)(intptr_t)(int32_t)regs[0];
+        HWND hwndTo   = (HWND)(intptr_t)(int32_t)regs[1];
+        uint32_t lpPts = regs[2];
+        UINT cPoints  = regs[3];
+        if (!lpPts || cPoints == 0) { regs[0] = 0; return true; }
+        if (cPoints > 1024) cPoints = 1024;
+        std::vector<POINT> pts(cPoints);
+        for (UINT i = 0; i < cPoints; i++) {
+            pts[i].x = (LONG)mem.Read32(lpPts + i * 8);
+            pts[i].y = (LONG)mem.Read32(lpPts + i * 8 + 4);
+        }
+        int ret = MapWindowPoints(hwndFrom, hwndTo, pts.data(), cPoints);
+        for (UINT i = 0; i < cPoints; i++) {
+            mem.Write32(lpPts + i * 8,     (uint32_t)pts[i].x);
+            mem.Write32(lpPts + i * 8 + 4, (uint32_t)pts[i].y);
+        }
+        regs[0] = (uint32_t)ret;
+        return true;
+    });
+    /* GetClassInfoW — return basic info for ARM-registered classes, or native lookup */
+    Thunk("GetClassInfoW", 878, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring className = ReadWStringFromEmu(mem, regs[1]);
+        uint32_t pWC = regs[2];
+        LOG(THUNK, "[THUNK] GetClassInfoW(0x%08X, '%ls', 0x%08X)\n", regs[0], className.c_str(), pWC);
+        /* Check ARM-registered classes first (case-insensitive) */
+        for (auto& [cls, proc] : arm_wndprocs) {
+            if (_wcsicmp(cls.c_str(), className.c_str()) == 0) {
+                WNDCLASSEXW wcx = {}; wcx.cbSize = sizeof(wcx);
+                GetClassInfoExW(GetModuleHandleW(NULL), className.c_str(), &wcx);
+                if (pWC) {
+                    mem.Write32(pWC + 0,  wcx.style);
+                    mem.Write32(pWC + 4,  proc);
+                    mem.Write32(pWC + 8,  wcx.cbClsExtra);
+                    mem.Write32(pWC + 12, wcx.cbWndExtra);
+                    mem.Write32(pWC + 16, emu_hinstance);
+                    mem.Write32(pWC + 20, 0);
+                    mem.Write32(pWC + 24, 0);
+                    mem.Write32(pWC + 28, (uint32_t)(uintptr_t)wcx.hbrBackground);
+                    mem.Write32(pWC + 32, 0);
+                    mem.Write32(pWC + 36, regs[1]);
+                }
+                LOG(THUNK, "[THUNK]   -> found in ARM map (proc=0x%08X)\n", proc);
+                regs[0] = 1;
+                return true;
+            }
+        }
+        /* Do NOT fall back to native class lookup — native classes like
+           ToolbarWindow32 exist in our process (from comctl32.lib) but have native
+           WndProcs. Returning success would make ARM code skip RegisterClassW,
+           creating native windows instead of ARM-controlled ones. */
+        LOG(THUNK, "[THUNK]   -> not found\n");
+        regs[0] = 0;
+        return true;
+    });
     Thunk("GetClassNameW", 283, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         wchar_t buf[256] = {};
         int len = GetClassNameW((HWND)(intptr_t)(int32_t)regs[0], buf, 256);

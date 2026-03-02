@@ -23,7 +23,8 @@ void Win32Thunks::RegisterSystemHandlers() {
                 ? (uint32_t)(wa.right - wa.left) : (uint32_t)(wa.bottom - wa.top);
             return true;
         }
-        regs[0] = GetSystemMetrics(idx); return true;
+        regs[0] = GetSystemMetrics(idx);
+        return true;
     });
     Thunk("GetSysColor", 889, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetSysColor(regs[0]); return true;

@@ -68,9 +68,15 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
         regs[0]=ret; return true;
     });
     Thunk("GetClientRect", 249, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT rc; BOOL ret=GetClientRect((HWND)(intptr_t)(int32_t)regs[0],&rc);
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        RECT rc; BOOL ret=GetClientRect(hw,&rc);
         mem.Write32(regs[1],rc.left); mem.Write32(regs[1]+4,rc.top);
         mem.Write32(regs[1]+8,rc.right); mem.Write32(regs[1]+12,rc.bottom);
+        { wchar_t cls[64]={}; GetClassNameW(hw, cls, 64);
+          if (wcscmp(cls, L"Menu") == 0)
+            LOG(THUNK, "[THUNK] GetClientRect(Menu 0x%p) -> %d,%d,%d,%d\n",
+                hw, rc.left, rc.top, rc.right, rc.bottom);
+        }
         regs[0]=ret; return true;
     });
     Thunk("InvalidateRect", 250, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

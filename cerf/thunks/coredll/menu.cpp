@@ -35,8 +35,25 @@ void Win32Thunks::RegisterMenuHandlers() {
     Thunk("DrawMenuBar", 856, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = DrawMenuBar((HWND)(intptr_t)(int32_t)regs[0]); return true;
     });
-    Thunk("LoadMenuW", 846, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)LoadMenuW((HINSTANCE)(intptr_t)(int32_t)regs[0], MAKEINTRESOURCEW(regs[1]));
+    Thunk("LoadMenuW", 846, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t hmod = regs[0];
+        bool is_arm = (hmod == emu_hinstance || hmod == 0);
+        if (!is_arm) {
+            for (auto& pair : loaded_dlls) {
+                if (pair.second.base_addr == hmod) { is_arm = true; break; }
+            }
+        }
+        HMODULE native_mod = NULL;
+        if (is_arm) {
+            uint32_t h = (hmod == 0) ? emu_hinstance : hmod;
+            native_mod = GetNativeModuleForResources(h);
+        } else {
+            native_mod = (HMODULE)(intptr_t)(int32_t)hmod;
+        }
+        HMENU hMenu = native_mod ? LoadMenuW(native_mod, MAKEINTRESOURCEW(regs[1])) : NULL;
+        LOG(THUNK, "[THUNK] LoadMenuW(0x%08X, %d) -> 0x%p%s\n",
+            hmod, regs[1], hMenu, is_arm ? " (ARM)" : "");
+        regs[0] = (uint32_t)(uintptr_t)hMenu;
         return true;
     });
     Thunk("TrackPopupMenuEx", 845, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -92,6 +109,53 @@ void Win32Thunks::RegisterMenuHandlers() {
         BOOL ret = SetMenuItemInfoW(hMenu, uItem, fByPosition, &mii);
         LOG(THUNK, "[THUNK] SetMenuItemInfoW(0x%08X, %u, %d) -> %d\n",
             (uint32_t)(uintptr_t)hMenu, uItem, fByPosition, ret);
+        regs[0] = ret;
+        return true;
+    });
+    /* GetMenuItemInfoW — reverse of SetMenuItemInfoW.
+       WinCE MENUITEMINFOW is 44 bytes (same layout as above). */
+    Thunk("GetMenuItemInfoW", 854, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HMENU hMenu = (HMENU)(intptr_t)(int32_t)regs[0];
+        UINT uItem = regs[1];
+        BOOL fByPosition = regs[2];
+        uint32_t pMii = regs[3];
+        uint32_t fMask = mem.Read32(pMii + 4);
+        uint32_t typeDataPtr = mem.Read32(pMii + 36);
+        uint32_t cch = mem.Read32(pMii + 40);
+        MENUITEMINFOW mii = {};
+        mii.cbSize = sizeof(MENUITEMINFOW);
+        mii.fMask = fMask;
+        wchar_t textBuf[512] = {};
+        bool want_string = (fMask & (MIIM_STRING | MIIM_TYPE)) != 0;
+        if (want_string && typeDataPtr && cch > 0) {
+            mii.dwTypeData = textBuf;
+            mii.cch = min((uint32_t)511, cch);
+        }
+        BOOL ret = GetMenuItemInfoW(hMenu, uItem, fByPosition, &mii);
+        LOG(THUNK, "[THUNK] GetMenuItemInfoW(0x%08X, %u, %d, mask=0x%X) -> %d\n",
+            (uint32_t)(uintptr_t)hMenu, uItem, fByPosition, fMask, ret);
+        if (ret) {
+            if (fMask & MIIM_TYPE)       mem.Write32(pMii + 8,  mii.fType);
+            if (fMask & MIIM_STATE)      mem.Write32(pMii + 12, mii.fState);
+            if (fMask & MIIM_ID)         mem.Write32(pMii + 16, mii.wID);
+            if (fMask & MIIM_SUBMENU)    mem.Write32(pMii + 20, (uint32_t)(uintptr_t)mii.hSubMenu);
+            if (fMask & MIIM_CHECKMARKS) {
+                mem.Write32(pMii + 24, (uint32_t)(uintptr_t)mii.hbmpChecked);
+                mem.Write32(pMii + 28, (uint32_t)(uintptr_t)mii.hbmpUnchecked);
+            }
+            if (fMask & MIIM_DATA)       mem.Write32(pMii + 32, (uint32_t)mii.dwItemData);
+            if (fMask & MIIM_STRING)     mem.Write32(pMii + 8,  mii.fType);
+            if (want_string && typeDataPtr && cch > 0 && mii.dwTypeData) {
+                uint32_t len = (uint32_t)wcslen(textBuf);
+                uint32_t copyLen = min(len, cch - 1);
+                for (uint32_t i = 0; i < copyLen; i++)
+                    mem.Write16(typeDataPtr + i * 2, textBuf[i]);
+                mem.Write16(typeDataPtr + copyLen * 2, 0);
+                mem.Write32(pMii + 40, len);
+            } else if (want_string) {
+                mem.Write32(pMii + 40, mii.cch);
+            }
+        }
         regs[0] = ret;
         return true;
     });

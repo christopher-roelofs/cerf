@@ -84,14 +84,21 @@ void Win32Thunks::RegisterResourceHandlers() {
                         ? (bmi->bmiHeader.biClrUsed ? bmi->bmiHeader.biClrUsed : (1 << bmi->bmiHeader.biBitCount)) : 0;
                     uint8_t* bits = bmp_data + sizeof(BITMAPINFOHEADER) + colors * sizeof(RGBQUAD);
                     HBITMAP hbm = CreateDIBitmap(hdc, &bmi->bmiHeader, CBM_INIT, bits, bmi, DIB_RGB_COLORS);
+                    LOG(THUNK, "[THUNK] LoadBitmapW(0x%08X, %d) -> ARM rsrc: %dx%d %dbpp %dcolors hbm=%p (data_size=%d)\n",
+                        hmod, name_id, bmi->bmiHeader.biWidth, bmi->bmiHeader.biHeight,
+                        bmi->bmiHeader.biBitCount, colors, hbm, data_size);
                     ReleaseDC(NULL, hdc); regs[0] = (uint32_t)(uintptr_t)hbm;
                 } else regs[0] = 0;
             } else {
                 HMODULE native_mod = GetNativeModuleForResources(hmod);
                 regs[0] = native_mod ? (uint32_t)(uintptr_t)LoadBitmapW(native_mod, MAKEINTRESOURCEW(name_id)) : 0;
+                LOG(THUNK, "[THUNK] LoadBitmapW(0x%08X, %d) -> native fallback: %p\n",
+                    hmod, name_id, (void*)(uintptr_t)regs[0]);
             }
         } else {
             regs[0] = (uint32_t)(uintptr_t)LoadBitmapW((HINSTANCE)(intptr_t)(int32_t)hmod, MAKEINTRESOURCEW(name_id));
+            LOG(THUNK, "[THUNK] LoadBitmapW(0x%08X, %d) -> non-ARM: %p\n",
+                hmod, name_id, (void*)(uintptr_t)regs[0]);
         }
         return true;
     });
