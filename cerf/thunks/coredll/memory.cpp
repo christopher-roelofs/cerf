@@ -6,10 +6,14 @@
 #include <cstring>
 #include <algorithm>
 
+/* All allocator bases MUST be below 0x02000000 (32MB slot boundary).
+   WinCE ARM code applies slot masking (AND addr, #0x01FFFFFF) to pointers.
+   Any address >= 0x02000000 gets corrupted to a different address. */
+
 void Win32Thunks::RegisterMemoryHandlers() {
     Thunk("VirtualAlloc", 524, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t addr_arg = regs[0], size = regs[1];
-        static uint32_t next_valloc = 0x20000000;
+        static uint32_t next_valloc = 0x00200000;
         uint32_t base = (addr_arg != 0) ? addr_arg : next_valloc;
         uint8_t* ptr = mem.Alloc(base, size, regs[3]);
         if (ptr) {
@@ -25,7 +29,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     });
     Thunk("LocalAlloc", 33, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t flags = regs[0], size = regs[1];
-        static uint32_t next_local = 0x30000000;
+        static uint32_t next_local = 0x00800000;
         uint8_t* ptr = mem.Alloc(next_local, size);
         if (ptr) {
             if (flags & 0x40) memset(ptr, 0, size);
@@ -37,7 +41,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     thunk_handlers["LocalAllocTrace"] = thunk_handlers["LocalAlloc"];
     Thunk("LocalReAlloc", 34, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t old_ptr = regs[0], new_size = regs[1], flags = regs[2];
-        static uint32_t next_lrealloc = 0x31000000;
+        static uint32_t next_lrealloc = 0x00900000;
         uint8_t* new_host = mem.Alloc(next_lrealloc, new_size);
         /* LMEM_ZEROINIT: zero new buffer BEFORE copying old data on top */
         if ((flags & 0x40) && new_host) memset(new_host, 0, new_size);
@@ -59,7 +63,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     });
     auto heapAllocImpl = [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size_arg = regs[2];
-        static uint32_t next_heap = 0x40000000;
+        static uint32_t next_heap = 0x01000000;
         mem.Alloc(next_heap, size_arg);
         regs[0] = next_heap;
         next_heap += (size_arg + 0xFFF) & ~0xFFF;
@@ -69,7 +73,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     Thunk("HeapAllocTrace", 20, heapAllocImpl);
     Thunk("HeapCreate", 44, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size_arg = regs[1];
-        static uint32_t next_heap = 0x40000000;
+        static uint32_t next_heap = 0x01000000;
         mem.Alloc(next_heap, size_arg);
         regs[0] = next_heap;
         next_heap += (size_arg + 0xFFF) & ~0xFFF;
@@ -81,7 +85,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     thunk_handlers["HeapDestroy"] = thunk_handlers["HeapFree"];
     Thunk("HeapReAlloc", 47, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t old_ptr = regs[2], new_size = regs[3];
-        static uint32_t next_hrealloc = 0x41000000;
+        static uint32_t next_hrealloc = 0x01100000;
         uint8_t* old_host = mem.Translate(old_ptr);
         uint8_t* new_host = mem.Alloc(next_hrealloc, new_size);
         if (old_host && new_host) memcpy(new_host, old_host, new_size);
@@ -97,7 +101,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     });
     Thunk("malloc", 1041, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size = regs[0];
-        static uint32_t next_malloc = 0x42000000;
+        static uint32_t next_malloc = 0x01200000;
         mem.Alloc(next_malloc, size > 0 ? size : 0x10);
         regs[0] = next_malloc;
         next_malloc += ((size > 0 ? size : 0x10) + 0xFFF) & ~0xFFF;
@@ -105,7 +109,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     });
     Thunk("calloc", 1346, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size = regs[0] * regs[1];
-        static uint32_t next_malloc = 0x42000000;
+        static uint32_t next_malloc = 0x01200000;
         mem.Alloc(next_malloc, size > 0 ? size : 0x10);
         uint8_t* p = mem.Translate(next_malloc);
         if (p) memset(p, 0, size);
@@ -116,7 +120,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     Thunk("new", 1095, thunk_handlers["malloc"]);
     Thunk("realloc", 1054, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t old_ptr = regs[0], size = regs[1];
-        static uint32_t next_malloc = 0x42000000;
+        static uint32_t next_malloc = 0x01200000;
         uint32_t alloc_size = size > 0 ? size : 0x10;
         uint8_t* new_host = mem.Alloc(next_malloc, alloc_size);
         uint8_t* old_host = old_ptr ? mem.Translate(old_ptr) : nullptr;

@@ -14,6 +14,13 @@ static std::wstring NarrowToWide(const std::string& s) {
     return w;
 }
 
+/* Windows registry keys are case-insensitive — normalize to lowercase */
+static std::wstring ToLowerW(const std::wstring& s) {
+    std::wstring r = s;
+    for (auto& c : r) if (c >= L'A' && c <= L'Z') c += 32;
+    return r;
+}
+
 static std::string WideToNarrow(const std::wstring& w) {
     std::string s;
     for (wchar_t c : w) s += (c < 128) ? (char)c : '?';
@@ -56,7 +63,7 @@ void Win32Thunks::LoadRegistry() {
 
             /* Key header: [HKCU\Software\...] */
             if (line[0] == '[' && line.back() == ']') {
-                current_key = NarrowToWide(line.substr(1, line.size() - 2));
+                current_key = ToLowerW(NarrowToWide(line.substr(1, line.size() - 2)));
                 registry[current_key]; /* ensure key exists */
                 EnsureParentKeys(current_key);
                 continue;
@@ -176,18 +183,19 @@ std::wstring Win32Thunks::ResolveHKey(uint32_t hkey, const std::wstring& subkey)
         else root = L"HKCU"; /* fallback */
     }
 
-    if (subkey.empty()) return root;
+    if (subkey.empty()) return ToLowerW(root);
 
     /* Strip leading backslash from subkey */
     std::wstring sk = subkey;
     while (!sk.empty() && (sk[0] == L'\\' || sk[0] == L'/')) sk.erase(sk.begin());
-    if (sk.empty()) return root;
+    if (sk.empty()) return ToLowerW(root);
 
     /* Normalize separators */
     std::wstring full = root + L"\\" + sk;
     /* Remove trailing backslash */
     while (!full.empty() && full.back() == L'\\') full.pop_back();
-    return full;
+    /* Case-insensitive: normalize to lowercase (Windows registry is case-insensitive) */
+    return ToLowerW(full);
 }
 
 void Win32Thunks::EnsureParentKeys(const std::wstring& path) {

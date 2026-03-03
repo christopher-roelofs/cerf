@@ -85,7 +85,7 @@ void Win32Thunks::ImportRegFile(const std::string& path) {
 
         /* Key: [HKEY_...] */
         if (line[0] == '[' && line.back() == ']') {
-            current_key = MapRegRoot(NarrowToWide(line.substr(1, line.size() - 2)));
+            current_key = ToLowerW(MapRegRoot(NarrowToWide(line.substr(1, line.size() - 2))));
             registry[current_key];
             EnsureParentKeys(current_key);
             key_count++;
