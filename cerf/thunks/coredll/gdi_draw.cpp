@@ -22,10 +22,12 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("SetBkColor", 922, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetBkColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
+    Thunk("GetBkColor", 913, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetBkColor((HDC)(intptr_t)(int32_t)regs[0]); return true; });
     Thunk("SetBkMode", 923, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = SetBkMode((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true;
     });
     Thunk("SetTextColor", 924, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetTextColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
+    Thunk("GetTextColor", 914, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetTextColor((HDC)(intptr_t)(int32_t)regs[0]); return true; });
     Thunk("SetBrushOrgEx", 943, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         POINT pt;
         BOOL ret = SetBrushOrgEx((HDC)(intptr_t)(int32_t)regs[0], (int)regs[1], (int)regs[2], regs[3] ? &pt : NULL);
@@ -138,7 +140,23 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         rc.right=mem.Read32(regs[1]+8); rc.bottom=mem.Read32(regs[1]+12);
         regs[0]=InvertRect((HDC)(intptr_t)(int32_t)regs[0],&rc); return true;
     });
-    Thunk("GradientFill", 1763, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=1; return true; });
+    Thunk("GradientFill", 1763, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        uint32_t vertex_addr = regs[1];
+        ULONG nVertex = regs[2];
+        uint32_t mesh_addr = regs[3];
+        ULONG nMesh = ReadStackArg(regs, mem, 0);
+        ULONG ulMode = ReadStackArg(regs, mem, 1);
+        /* TRIVERTEX = {LONG x, LONG y, COLOR16 R,G,B,A} = 16 bytes, no pointers.
+           GRADIENT_RECT = {ULONG Upper, Lower} = 8 bytes.
+           GRADIENT_TRIANGLE = {ULONG V1,V2,V3} = 12 bytes.
+           All same layout on 32/64-bit — pass ARM memory directly. */
+        uint8_t* pVertex = mem.Translate(vertex_addr);
+        uint8_t* pMesh = mem.Translate(mesh_addr);
+        if (!pVertex || !pMesh) { regs[0] = 0; return true; }
+        regs[0] = GradientFill(hdc, (TRIVERTEX*)pVertex, nVertex, pMesh, nMesh, ulMode);
+        return true;
+    });
     Thunk("Polygon", 939, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=1; return true; });
     Thunk("Polyline", 940, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=1; return true; });
     Thunk("CreatePen", 926, [](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -174,6 +192,11 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         rc.left = mem.Read32(regs[1]); rc.top = mem.Read32(regs[1]+4);
         rc.right = mem.Read32(regs[1]+8); rc.bottom = mem.Read32(regs[1]+12);
         regs[0] = DrawEdge((HDC)(intptr_t)(int32_t)regs[0], &rc, regs[2], regs[3]);
+        /* Write back modified rect — DrawEdge adjusts it when BF_ADJUST (0x2000) is set */
+        if (regs[3] & 0x2000) {
+            mem.Write32(regs[1], rc.left); mem.Write32(regs[1]+4, rc.top);
+            mem.Write32(regs[1]+8, rc.right); mem.Write32(regs[1]+12, rc.bottom);
+        }
         return true;
     });
     Thunk("DrawFrameControl", 987, [](uint32_t* regs, EmulatedMemory& mem) -> bool {

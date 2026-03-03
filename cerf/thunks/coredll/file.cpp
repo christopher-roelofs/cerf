@@ -241,7 +241,23 @@ void Win32Thunks::RegisterFileHandlers() {
     ThunkOrdinal("FlushFileBuffers", 175);
     ThunkOrdinal("SetFileTime", 177);
     ThunkOrdinal("DeleteAndRenameFile", 183);
-    ThunkOrdinal("GetDiskFreeSpaceExW", 184);
+    Thunk("GetDiskFreeSpaceExW", 184, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring mapped = MapWinCEPath(path);
+        ULARGE_INTEGER freeCaller = {}, totalBytes = {}, totalFree = {};
+        BOOL ret = GetDiskFreeSpaceExW(mapped.c_str(),
+            regs[1] ? &freeCaller : NULL,
+            regs[2] ? &totalBytes : NULL,
+            regs[3] ? &totalFree : NULL);
+        if (ret) {
+            if (regs[1]) { mem.Write32(regs[1], freeCaller.LowPart); mem.Write32(regs[1]+4, freeCaller.HighPart); }
+            if (regs[2]) { mem.Write32(regs[2], totalBytes.LowPart); mem.Write32(regs[2]+4, totalBytes.HighPart); }
+            if (regs[3]) { mem.Write32(regs[3], totalFree.LowPart); mem.Write32(regs[3]+4, totalFree.HighPart); }
+        }
+        LOG(THUNK, "[THUNK] GetDiskFreeSpaceExW('%ls') -> %d\n", path.c_str(), ret);
+        regs[0] = ret;
+        return true;
+    });
     Thunk("SetFileAttributesW", 169, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring path = ReadWStringFromEmu(mem, regs[0]);
         std::wstring mapped = MapWinCEPath(path);

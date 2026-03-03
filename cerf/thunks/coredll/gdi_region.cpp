@@ -28,10 +28,25 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         mem.Write32(regs[1]+8, rc.right); mem.Write32(regs[1]+12, rc.bottom);
         regs[0] = ret; return true;
     });
+    Thunk("GetClipRgn", 972, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = GetClipRgn((HDC)(intptr_t)(int32_t)regs[0], (HRGN)(intptr_t)(int32_t)regs[1]);
+        return true;
+    });
     Thunk("SetLayout", 1890, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetLayout((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
     Thunk("GetLayout", 1891, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetLayout((HDC)(intptr_t)(int32_t)regs[0]); return true; });
-    Thunk("CreateRectRgnIndirect", 969, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
-    Thunk("EqualRgn", 91, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    Thunk("CreateRectRgnIndirect", 969, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        RECT rc;
+        rc.left = (LONG)mem.Read32(regs[0]);
+        rc.top = (LONG)mem.Read32(regs[0] + 4);
+        rc.right = (LONG)mem.Read32(regs[0] + 8);
+        rc.bottom = (LONG)mem.Read32(regs[0] + 12);
+        regs[0] = (uint32_t)(uintptr_t)CreateRectRgnIndirect(&rc);
+        return true;
+    });
+    Thunk("EqualRgn", 91, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = EqualRgn((HRGN)(intptr_t)(int32_t)regs[0], (HRGN)(intptr_t)(int32_t)regs[1]);
+        return true;
+    });
     Thunk("BeginPaint", 260, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hw, &ps);

@@ -4,6 +4,7 @@
 #include "../win32_thunks.h"
 #include "../../log.h"
 #include <cstdio>
+#include <shellapi.h>
 
 void Win32Thunks::RegisterResourceHandlers() {
     Thunk("LoadStringW", 874, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -106,6 +107,8 @@ void Win32Thunks::RegisterResourceHandlers() {
         uint32_t hmod = regs[0], name_id = regs[1], type = regs[2];
         int cx = (int)regs[3], cy = (int)ReadStackArg(regs, mem, 0);
         uint32_t fuLoad = ReadStackArg(regs, mem, 1);
+        LOG(THUNK, "[THUNK] LoadImageW(hmod=0x%08X, id=%d, type=%d, cx=%d, cy=%d, flags=0x%X)\n",
+            hmod, name_id, type, cx, cy, fuLoad);
         bool is_arm_module = (hmod == emu_hinstance);
         for (auto& pair : loaded_dlls) { if (pair.second.base_addr == hmod) { is_arm_module = true; break; } }
         if (is_arm_module && type == IMAGE_BITMAP) {
@@ -143,6 +146,38 @@ void Win32Thunks::RegisterResourceHandlers() {
             HMODULE native_mod = GetNativeModuleForResources(hmod);
             regs[0] = native_mod
                 ? (uint32_t)(uintptr_t)LoadImageW(native_mod, MAKEINTRESOURCEW(name_id), type, cx, cy, fuLoad) : 0;
+        }
+        /* Fallback for ceshell.dll system icons (5376-5381).
+           The bundled ceshell.dll lacks icon resources, so CIconCache::RebuildSystemImageList
+           fails. HINST_CESHELL may be NULL (hmod=0) if DllMain didn't set it.
+           Provide native Windows shell icons using ExtractIconExW from shell32.
+           Icon mapping: 5376=file, 5377=exe, 5378=folder, 5379=open folder,
+           5380=drive, 5381=shortcut */
+        if (regs[0] == 0 && type == IMAGE_ICON && name_id >= 5376 && name_id <= 5381) {
+            /* shell32.dll icon indices: 0=unknown file, 2=exe, 3=closed folder,
+               4=open folder, 8=drive, 29=shortcut overlay (use 0 as shortcut fallback) */
+            int shell32_idx = 0;
+            switch (name_id) {
+            case 5376: shell32_idx = 0; break;   /* generic file */
+            case 5377: shell32_idx = 2; break;   /* executable */
+            case 5378: shell32_idx = 3; break;   /* closed folder */
+            case 5379: shell32_idx = 4; break;   /* open folder */
+            case 5380: shell32_idx = 8; break;   /* drive */
+            case 5381: shell32_idx = 0; break;   /* shortcut (use file icon) */
+            }
+            HICON hSmall = NULL, hLarge = NULL;
+            ExtractIconExW(L"shell32.dll", shell32_idx,
+                cx > 16 ? &hLarge : NULL,
+                cx <= 16 ? &hSmall : NULL, 1);
+            HICON hIcon = (cx <= 16) ? hSmall : hLarge;
+            if (hIcon) {
+                regs[0] = (uint32_t)(uintptr_t)hIcon;
+                LOG(THUNK, "[THUNK] LoadImageW: ceshell icon %d (%dx%d) -> shell32 idx %d = 0x%08X\n",
+                    name_id, cx, cy, shell32_idx, regs[0]);
+                /* Destroy the other icon we didn't use */
+                if (hSmall && hSmall != hIcon) DestroyIcon(hSmall);
+                if (hLarge && hLarge != hIcon) DestroyIcon(hLarge);
+            }
         }
         return true;
     });

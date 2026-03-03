@@ -168,7 +168,10 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         mis->itemHeight = emem.Read32(wmi_emu_addr + 16);
     }
 
-    return (LRESULT)result;
+    /* Sign-extend the 32-bit result to 64-bit LRESULT.  This is critical for
+       WM_CTLCOLOR* messages which return HBRUSH handles — zero-extension would
+       produce an invalid handle if the top bit of the 32-bit value is set. */
+    return (LRESULT)(intptr_t)(int32_t)result;
 }
 
 /* ---------- WS_EX_CAPTIONOKBTN title bar button via window subclassing ---------- */

@@ -18,13 +18,22 @@ void Win32Thunks::RegisterWindowHandlers() {
         uint32_t emu_brush = mem.Read32(regs[0]+28);
         wc.hIcon = NULL;
         wc.hCursor = emu_cursor ? LoadCursorW(NULL, IDC_ARROW) : NULL;
-        /* Small brush values (1-20) are COLOR_xxx+1 constants — pass through.
-           WinCE system color brushes have flag 0x40000000 (from GetSysColorBrush);
-           strip it to get the COLOR_xxx+1 constant.
-           Other values are WinCE GDI handles — use NULL and let WndProc paint. */
-        uint32_t brush_val = emu_brush & 0x3FFFFFFF; /* strip WinCE sys brush flag */
-        if (brush_val > 0 && brush_val <= 30)
+        /* Brush values 1-31 are COLOR_xxx+1 constants — pass through directly.
+           WinCE GetSysColor uses a 0x40000000 flag on color indices; strip it.
+           Non-zero values above 31 are native GDI brush handles (truncated to
+           32-bit by our GetSysColorBrush/CreateSolidBrush thunks) — sign-extend
+           them back to 64-bit so DefWindowProc can use them for WM_ERASEBKGND. */
+        uint32_t brush_val = emu_brush & 0x3FFFFFFF; /* strip WinCE sys color flag */
+        if (brush_val > 0 && brush_val <= 31) {
+            /* Brush values 1-31 encode COLOR_xxx+1.  WinCE added COLOR_STATIC=25
+               and COLOR_STATICTEXT=26 which don't exist on desktop Windows.
+               Map them to appropriate desktop equivalents. */
+            if (brush_val == 26)      brush_val = COLOR_3DFACE + 1;     /* COLOR_STATIC+1 */
+            else if (brush_val == 27) brush_val = COLOR_WINDOWTEXT + 1; /* COLOR_STATICTEXT+1 */
             wc.hbrBackground = (HBRUSH)(uintptr_t)brush_val;
+        }
+        else if (emu_brush != 0)
+            wc.hbrBackground = (HBRUSH)(intptr_t)(int32_t)emu_brush;
         else
             wc.hbrBackground = NULL;
         std::wstring className = ReadWStringFromEmu(mem, mem.Read32(regs[0]+36));

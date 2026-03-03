@@ -70,8 +70,18 @@ void Win32Thunks::RegisterInputHandlers() {
         regs[0] = (uint32_t)(uintptr_t)LoadCursorW((HINSTANCE)(intptr_t)(int32_t)regs[0], MAKEINTRESOURCEW(regs[1]));
         return true;
     });
-    Thunk("DrawIconEx", 726, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0; return true;
+    Thunk("DrawIconEx", 726, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        int xLeft = (int)regs[1], yTop = (int)regs[2];
+        HICON hIcon = (HICON)(intptr_t)(int32_t)regs[3];
+        int cxWidth = (int)ReadStackArg(regs, mem, 0);
+        int cyWidth = (int)ReadStackArg(regs, mem, 1);
+        UINT istepIfAniCur = ReadStackArg(regs, mem, 2);
+        HBRUSH hbrFlicker = (HBRUSH)(intptr_t)(int32_t)ReadStackArg(regs, mem, 3);
+        UINT diFlags = ReadStackArg(regs, mem, 4);
+        regs[0] = DrawIconEx(hdc, xLeft, yTop, hIcon, cxWidth, cyWidth,
+                              istepIfAniCur, hbrFlicker, diFlags);
+        return true;
     });
     Thunk("LoadIconW", 728, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)LoadIconW((HINSTANCE)(intptr_t)(int32_t)regs[0], MAKEINTRESOURCEW(regs[1]));

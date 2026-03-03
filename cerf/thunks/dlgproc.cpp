@@ -20,10 +20,16 @@ INT_PTR CALLBACK Win32Thunks::EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     case WM_SETTEXT:
     case WM_GETTEXT:
     case WM_SETICON:
-    case WM_NOTIFY:
     case WM_NCHITTEST:
     case WM_NCPAINT:
         return FALSE; /* Not handled - let default dialog proc deal with it */
+    case WM_NOTIFY:
+        /* WM_NOTIFY from ARM commctrl: lParam is a pointer to NMHDR in ARM memory.
+           Forward to ARM DlgProc if it's an ARM pointer (fits in 32 bits).
+           Native WM_NOTIFY (64-bit pointer) can't be forwarded safely. */
+        if (lParam > 0 && (lParam >> 32) == 0)
+            break; /* Forward to ARM DlgProc */
+        return FALSE;
     }
 
     auto it = hwnd_dlgproc_map.find(hwnd);
@@ -90,5 +96,8 @@ INT_PTR CALLBACK Win32Thunks::EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         mis->itemHeight = emem.Read32(odi_emu_addr + 16);
     }
 
-    return (INT_PTR)result;
+    /* WM_CTLCOLOR* messages return HBRUSH handles — sign-extend to 64-bit
+       so the native window manager gets a valid handle.  Other messages are
+       either TRUE/FALSE or small values where sign vs zero extension is moot. */
+    return (INT_PTR)(intptr_t)(int32_t)result;
 }

@@ -35,6 +35,10 @@ void Win32Thunks::RegisterMenuHandlers() {
     Thunk("DrawMenuBar", 856, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = DrawMenuBar((HWND)(intptr_t)(int32_t)regs[0]); return true;
     });
+    Thunk("SetAssociatedMenu", 299, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] SetAssociatedMenu(hwnd=0x%08X, hmenu=0x%08X) -> stub\n", regs[0], regs[1]);
+        regs[0] = 0; return true;
+    });
     Thunk("LoadMenuW", 846, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t hmod = regs[0];
         bool is_arm = (hmod == emu_hinstance || hmod == 0);

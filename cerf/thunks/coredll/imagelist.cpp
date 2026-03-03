@@ -59,6 +59,7 @@ void Win32Thunks::RegisterImageListHandlers() {
     });
     Thunk("ImageList_Destroy", 743, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         HIMAGELIST h = (HIMAGELIST)UnwrapHandle(regs[0]);
+        LOG(THUNK, "[THUNK] ImageList_Destroy(0x%08X -> %p)\n", regs[0], h);
         regs[0] = ImageList_Destroy(h);
         if (regs[0]) RemoveHandle(regs[0]);
         return true;
@@ -70,18 +71,22 @@ void Win32Thunks::RegisterImageListHandlers() {
     });
     Thunk("ImageList_Draw", 748, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         regs[0] = ImageList_Draw((HIMAGELIST)UnwrapHandle(regs[0]), regs[1],
-            (HDC)(intptr_t)(int32_t)regs[2], regs[3], ReadStackArg(regs, mem, 0), ReadStackArg(regs, mem, 1));
+            (HDC)(uintptr_t)regs[2], regs[3], ReadStackArg(regs, mem, 0), ReadStackArg(regs, mem, 1));
         return true;
     });
     Thunk("ImageList_DrawEx", 749, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         regs[0] = ImageList_DrawEx((HIMAGELIST)UnwrapHandle(regs[0]), regs[1],
-            (HDC)(intptr_t)(int32_t)regs[2], regs[3],
+            (HDC)(uintptr_t)regs[2], regs[3],
             ReadStackArg(regs, mem, 0), ReadStackArg(regs, mem, 1), ReadStackArg(regs, mem, 2),
             ReadStackArg(regs, mem, 3), ReadStackArg(regs, mem, 4), ReadStackArg(regs, mem, 5));
         return true;
     });
     Thunk("ImageList_GetImageCount", 756, [this](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_GetImageCount((HIMAGELIST)UnwrapHandle(regs[0])); return true;
+        HIMAGELIST h = (HIMAGELIST)UnwrapHandle(regs[0]);
+        int count = ImageList_GetImageCount(h);
+        LOG(THUNK, "[THUNK] ImageList_GetImageCount(0x%08X -> %p) -> %d\n", regs[0], h, count);
+        regs[0] = count;
+        return true;
     });
     Thunk("ImageList_LoadImage", 758, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t hmod = regs[0], lpbmp = regs[1], cx = regs[2], cGrow = regs[3];
@@ -119,12 +124,17 @@ void Win32Thunks::RegisterImageListHandlers() {
         return true;
     });
     Thunk("ImageList_Remove", 760, [this](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_Remove((HIMAGELIST)UnwrapHandle(regs[0]), (int)regs[1]);
+        HIMAGELIST h = (HIMAGELIST)UnwrapHandle(regs[0]);
+        LOG(THUNK, "[THUNK] ImageList_Remove(0x%08X -> %p, i=%d)\n", regs[0], h, (int)regs[1]);
+        regs[0] = ImageList_Remove(h, (int)regs[1]);
         return true;
     });
     Thunk("ImageList_ReplaceIcon", 762, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(THUNK, "[THUNK] ImageList_ReplaceIcon(himl=0x%08X, i=%d, hicon=0x%08X)\n",
+            regs[0], (int)regs[1], regs[2]);
         regs[0] = ImageList_ReplaceIcon((HIMAGELIST)UnwrapHandle(regs[0]),
             (int)regs[1], (HICON)(intptr_t)(int32_t)regs[2]);
+        LOG(THUNK, "[THUNK]   -> %d\n", (int)regs[0]);
         return true;
     });
     Thunk("ImageList_GetIcon", 754, [this](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -143,7 +153,9 @@ void Win32Thunks::RegisterImageListHandlers() {
         ildp.cbSize  = sizeof(IMAGELISTDRAWPARAMS);
         ildp.himl    = (HIMAGELIST)UnwrapHandle(mem.Read32(p + 4));
         ildp.i       = (int)mem.Read32(p + 8);
-        ildp.hdcDst  = (HDC)(intptr_t)(int32_t)mem.Read32(p + 12);
+        /* GDI handles always fit in 32 bits with upper 32 bits zero — zero-extend,
+           NOT sign-extend, to avoid corrupting handles with bit 31 set. */
+        ildp.hdcDst  = (HDC)(uintptr_t)mem.Read32(p + 12);
         ildp.x       = (int)mem.Read32(p + 16);
         ildp.y       = (int)mem.Read32(p + 20);
         ildp.cx      = (int)mem.Read32(p + 24);
@@ -161,8 +173,10 @@ void Win32Thunks::RegisterImageListHandlers() {
         return true;
     });
     Thunk("ImageList_SetOverlayImage", 766, [this](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ImageList_SetOverlayImage((HIMAGELIST)UnwrapHandle(regs[0]),
-            (int)regs[1], (int)regs[2]);
+        HIMAGELIST h = (HIMAGELIST)UnwrapHandle(regs[0]);
+        LOG(THUNK, "[THUNK] ImageList_SetOverlayImage(0x%08X -> %p, iImage=%d, iOverlay=%d)\n",
+            regs[0], h, (int)regs[1], (int)regs[2]);
+        regs[0] = ImageList_SetOverlayImage(h, (int)regs[1], (int)regs[2]);
         return true;
     });
 }

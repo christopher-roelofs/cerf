@@ -162,7 +162,27 @@ void Win32Thunks::RegisterShellHandlers() {
         return true;
     });
     /* SHGetFileInfo(pszPath, dwFileAttributes, psfi, cbFileInfo, uFlags) — forward to ceshell.dll */
-    Thunk("SHGetFileInfo", 482, forwardToArm("ceshell.dll", "SHGetFileInfo", 5));
+    Thunk("SHGetFileInfo", 482, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t pszPath_ptr = regs[0], dwFileAttrs = regs[1], psfi = regs[2];
+        uint32_t cbFileInfo = regs[3], uFlags = ReadStackArg(regs, mem, 0);
+        std::wstring path = pszPath_ptr ? ReadWStringFromEmu(mem, pszPath_ptr) : L"(null)";
+        LOG(THUNK, "[THUNK] SHGetFileInfo('%ls', attrs=0x%X, psfi=0x%08X, cb=%d, flags=0x%04X)\n",
+            path.c_str(), dwFileAttrs, psfi, cbFileInfo, uFlags);
+        LoadedDll* mod = LoadArmDll("ceshell.dll");
+        if (mod && callback_executor) {
+            uint32_t addr = PELoader::ResolveExportName(mem, mod->pe_info, "SHGetFileInfo");
+            if (addr) {
+                uint32_t args[5] = { regs[0], regs[1], regs[2], regs[3], uFlags };
+                regs[0] = callback_executor(addr, args, 5);
+                LOG(THUNK, "[THUNK]   -> returned 0x%08X (iIcon=%d)\n",
+                    regs[0], psfi ? (int)mem.Read32(psfi + 4) : -1);
+                return true;
+            }
+        }
+        LOG(THUNK, "[THUNK]   -> ceshell.dll not available, returning 0\n");
+        regs[0] = 0;
+        return true;
+    });
     /* GetOpenFileNameW / GetSaveFileNameW — coredll forwards to ceshell!SHGetOpenFileName.
        In real coredll, both Open and Save go through SHGetOpenFileName in ceshell.dll. */
     Thunk("GetOpenFileNameW", 488, forwardToArm("ceshell.dll", "SHGetOpenFileName", 1));

@@ -249,8 +249,13 @@ int main(int argc, char* argv[]) {
             cpu.r[REG_PC] = arm_addr;
         }
 
-        /* Allocate a small stack frame for the callback */
+        /* Allocate a small stack frame for the callback and push extra args.
+           ARM calling convention: args[0-3] in r0-r3, args[4+] on the stack.
+           Stack grows downward; 5th arg at [SP+0], 6th at [SP+4], etc. */
         cpu.r[REG_SP] -= 0x100;
+        for (int i = 4; i < nargs; i++) {
+            mem.Write32(cpu.r[REG_SP] + (uint32_t)(i - 4) * 4, args[i]);
+        }
 
         /* Run until callback returns (hits sentinel) */
         while (!cpu.halted) {

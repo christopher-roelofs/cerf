@@ -27,11 +27,20 @@ void Win32Thunks::RegisterSystemHandlers() {
         return true;
     });
     Thunk("GetSysColor", 889, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* WinCE passes color indices with 0x40000000 flag — strip it */
-        regs[0] = GetSysColor(regs[0] & 0x3FFFFFFF); return true;
+        /* WinCE passes color indices with 0x40000000 flag — strip it.
+           WinCE added COLOR_STATIC=25 and COLOR_STATICTEXT=26 which don't
+           exist on desktop Windows (index 25 is undefined, 26 is COLOR_HOTLIGHT).
+           Map them to appropriate desktop equivalents. */
+        int idx = regs[0] & 0x3FFFFFFF;
+        if (idx == 25) idx = COLOR_3DFACE;     /* WinCE COLOR_STATIC */
+        else if (idx == 26) idx = COLOR_WINDOWTEXT; /* WinCE COLOR_STATICTEXT */
+        regs[0] = GetSysColor(idx); return true;
     });
     Thunk("GetSysColorBrush", 937, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)GetSysColorBrush(regs[0] & 0x3FFFFFFF); return true;
+        int idx = regs[0] & 0x3FFFFFFF;
+        if (idx == 25) idx = COLOR_3DFACE;
+        else if (idx == 26) idx = COLOR_WINDOWTEXT;
+        regs[0] = (uint32_t)(uintptr_t)GetSysColorBrush(idx); return true;
     });
     Thunk("GetTickCount", 535, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetTickCount(); return true;
@@ -111,6 +120,18 @@ void Win32Thunks::RegisterSystemHandlers() {
         uint32_t old = mem.Read32(regs[0]);
         mem.Write32(regs[0], regs[1]);
         regs[0] = old;
+        return true;
+    });
+    Thunk("InterlockedCompareExchange", 1492, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* R0=Destination, R1=Exchange, R2=Comperand
+           If *Destination == Comperand, store Exchange; return original value */
+        uint32_t original = mem.Read32(regs[0]);
+        if (original == regs[2]) {
+            mem.Write32(regs[0], regs[1]);
+        }
+        LOG(THUNK, "[THUNK] InterlockedCompareExchange(0x%08X, exch=0x%08X, comp=0x%08X) -> 0x%08X %s\n",
+            regs[0], regs[1], regs[2], original, (original == regs[2]) ? "(exchanged)" : "(no change)");
+        regs[0] = original;
         return true;
     });
     Thunk("CreateEventW", 495, [](uint32_t* regs, EmulatedMemory&) -> bool {
