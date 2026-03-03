@@ -2,6 +2,10 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "win32_thunks.h"
 #include "../log.h"
+#include <commctrl.h>
+#include <dwmapi.h>
+#pragma comment(lib, "comctl32")
+#pragma comment(lib, "dwmapi")
 
 /* Static member definitions for callback infrastructure */
 std::map<HWND, uint32_t> Win32Thunks::hwnd_wndproc_map;
@@ -10,6 +14,7 @@ std::map<HWND, uint32_t> Win32Thunks::hwnd_dlgproc_map;
 INT_PTR Win32Thunks::modal_dlg_result = 0;
 bool Win32Thunks::modal_dlg_ended = false;
 Win32Thunks* Win32Thunks::s_instance = nullptr;
+std::set<HWND> Win32Thunks::captionok_hwnds;
 
 LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (!s_instance || !s_instance->callback_executor) {
@@ -164,4 +169,158 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     }
 
     return (LRESULT)result;
+}
+
+/* ---------- WS_EX_CAPTIONOKBTN title bar button via window subclassing ---------- */
+
+#define CAPTIONOK_SUBCLASS_ID 0xCE0F0001
+#define HT_CAPTIONOK          0x0200      /* custom WM_NCHITTEST return value */
+
+/* Per-window offset from the right edge of the window to the left edge of
+   native title bar buttons (?, X).  Cached during InstallCaptionOk by probing
+   WM_NCHITTEST, since SM_CXSIZE doesn't match the actual classic-mode button
+   widths on Windows 10/11 with DWM disabled. */
+static std::map<HWND, int> captionok_btns_from_right;
+
+/* Calculate the OK button rect in window (not screen) coordinates.
+   Placed to the left of the native title bar buttons (?, X). */
+static RECT GetCaptionOkBtnRect(HWND hwnd) {
+    int captH = GetSystemMetrics(SM_CYCAPTION);
+    int padBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
+    RECT wr;
+    GetWindowRect(hwnd, &wr);
+    int winW = wr.right - wr.left;
+    /* Use cached probe result if available; otherwise estimate from metrics */
+    int btnsFromRight;
+    auto it = captionok_btns_from_right.find(hwnd);
+    if (it != captionok_btns_from_right.end()) {
+        btnsFromRight = it->second;
+    } else {
+        /* Fallback: estimate from system metrics */
+        LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+        LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        int nativeBtns = 0;
+        if (style & WS_SYSMENU) nativeBtns++;
+        if (exStyle & 0x00000400L) nativeBtns++;
+        if (style & WS_MAXIMIZEBOX) nativeBtns++;
+        if (style & WS_MINIMIZEBOX) nativeBtns++;
+        int frame = GetSystemMetrics(SM_CXFRAME) + padBorder;
+        btnsFromRight = frame + nativeBtns * GetSystemMetrics(SM_CXSIZE);
+    }
+    int okW = captH;  /* Button width ≈ caption height (square-ish) */
+    RECT r;
+    r.right = winW - btnsFromRight;
+    r.left  = r.right - okW;
+    r.top   = padBorder;
+    r.bottom = r.top + captH;
+    return r;
+}
+
+static void PaintCaptionOkBtn(HWND hwnd) {
+    HDC hdc = GetWindowDC(hwnd);
+    if (!hdc) return;
+    bool active = (GetForegroundWindow() == hwnd);
+    RECT r = GetCaptionOkBtnRect(hwnd);
+    /* Button face */
+    HBRUSH br = CreateSolidBrush(GetSysColor(COLOR_BTNFACE));
+    FillRect(hdc, &r, br);
+    DeleteObject(br);
+    DrawEdge(hdc, &r, BDR_RAISEDOUTER, BF_RECT);
+    /* "OK" label */
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, GetSysColor(active ? COLOR_BTNTEXT : COLOR_GRAYTEXT));
+    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT oldFont = (HFONT)SelectObject(hdc, font);
+    DrawTextW(hdc, L"OK", 2, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    ReleaseDC(hwnd, hdc);
+}
+
+LRESULT CALLBACK Win32Thunks::CaptionOkSubclassProc(
+    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR subclassId, DWORD_PTR refData)
+{
+    switch (msg) {
+    case WM_NCHITTEST: {
+        LRESULT def = DefSubclassProc(hwnd, msg, wParam, lParam);
+        /* Only override hits in the caption area (not on native buttons) */
+        if (def == HTCAPTION) {
+            int ptx = (int)(short)LOWORD(lParam);
+            int pty = (int)(short)HIWORD(lParam);
+            RECT wr;
+            GetWindowRect(hwnd, &wr);
+            POINT pt = { ptx - wr.left, pty - wr.top };
+            RECT okRect = GetCaptionOkBtnRect(hwnd);
+            if (PtInRect(&okRect, pt))
+                return HT_CAPTIONOK;
+        }
+        return def;
+    }
+    case WM_NCLBUTTONDOWN:
+        if (wParam == HT_CAPTIONOK) {
+            LOG(THUNK, "[THUNK] CaptionOK clicked on HWND=0x%p, posting WM_COMMAND(IDOK)\n", hwnd);
+            PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0);
+            return 0;
+        }
+        break;
+    case WM_NCPAINT:
+        DefSubclassProc(hwnd, msg, wParam, lParam);
+        PaintCaptionOkBtn(hwnd);
+        return 0;
+    case WM_NCACTIVATE: {
+        LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
+        PaintCaptionOkBtn(hwnd);
+        return r;
+    }
+    case WM_SIZE:
+    case WM_MOVE: {
+        LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
+        PaintCaptionOkBtn(hwnd);
+        return r;
+    }
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, CaptionOkSubclassProc, CAPTIONOK_SUBCLASS_ID);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void Win32Thunks::InstallCaptionOk(HWND hwnd) {
+    /* Disable DWM non-client rendering so our GDI title-bar painting is visible.
+       Without this, DWM on Windows 10/11 paints over our custom NC area. */
+    DWMNCRENDERINGPOLICY policy = DWMNCRP_DISABLED;
+    DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof(policy));
+    /* Force frame recalculation BEFORE probing or installing subclass */
+    SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+    /* Probe the title bar to find where native buttons (?, X) start.
+       Classic NC rendering on Windows 10/11 uses button widths that don't match
+       SM_CXSIZE, so we probe WM_NCHITTEST to find the actual boundary. */
+    RECT wr;
+    GetWindowRect(hwnd, &wr);
+    int padBorder = GetSystemMetrics(SM_CXPADDEDBORDER);
+    int captH = GetSystemMetrics(SM_CYCAPTION);
+    int probe_y = wr.top + padBorder + captH / 2;
+    int btnsFromRight = 0;
+    for (int x = wr.right - 1; x > wr.left + (wr.right - wr.left) / 2; x--) {
+        LRESULT ht = SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(x, probe_y));
+        if (ht == HTCAPTION || ht == HTSYSMENU || ht == HTNOWHERE) {
+            btnsFromRight = wr.right - x - 1;
+            break;
+        }
+    }
+    if (btnsFromRight > 0)
+        captionok_btns_from_right[hwnd] = btnsFromRight;
+
+    SetWindowSubclass(hwnd, CaptionOkSubclassProc, CAPTIONOK_SUBCLASS_ID, 0);
+    PaintCaptionOkBtn(hwnd);
+}
+
+void Win32Thunks::RemoveCaptionOk(HWND hwnd) {
+    RemoveWindowSubclass(hwnd, CaptionOkSubclassProc, CAPTIONOK_SUBCLASS_ID);
+    captionok_btns_from_right.erase(hwnd);
+    /* Re-enable DWM non-client rendering */
+    DWMNCRENDERINGPOLICY policy = DWMNCRP_ENABLED;
+    DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof(policy));
 }

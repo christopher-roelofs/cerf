@@ -201,7 +201,19 @@ void Win32Thunks::RegisterShellHandlers() {
     Thunk("SHRecognizeGesture", stub0("SHRecognizeGesture"));
     Thunk("SHSendBackToFocusWindow", stub0("SHSendBackToFocusWindow"));
     ThunkOrdinal("SHSetAppKeyWndAssoc", 1784);
-    ThunkOrdinal("SHDoneButton", 1782);
+    Thunk("SHDoneButton", 1782, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        HWND hwnd = (HWND)(intptr_t)(int32_t)regs[0];
+        DWORD dwState = regs[1];
+        LOG(THUNK, "[THUNK] SHDoneButton(hwnd=0x%p, dwState=%d)\n", hwnd, dwState);
+        if (!hwnd) { regs[0] = 0; return true; }
+        if (dwState == 1 /*SHDB_SHOW*/ || dwState == 4 /*SHDB_SHOWCANCEL*/) {
+            if (captionok_hwnds.insert(hwnd).second) InstallCaptionOk(hwnd);
+        } else if (dwState == 2 /*SHDB_HIDE*/) {
+            if (captionok_hwnds.erase(hwnd)) RemoveCaptionOk(hwnd);
+        }
+        regs[0] = 1;
+        return true;
+    });
     Thunk("SHSipInfo", stub0("SHSipInfo"));
     ThunkOrdinal("SHNotificationAdd", 1806);
     ThunkOrdinal("SHNotificationRemove", 1808);

@@ -46,7 +46,8 @@ void Win32Thunks::RegisterWindowHandlers() {
         HWND parent = (HWND)(intptr_t)(int32_t)ReadStackArg(regs,mem,4);
         HMENU menu_h = (HMENU)(intptr_t)(int32_t)ReadStackArg(regs,mem,5);
         uint32_t arm_lpParam = ReadStackArg(regs,mem,7);
-        exStyle &= 0x0FFFFFFF;
+        bool has_captionok = (exStyle & 0x80000000) != 0;
+        exStyle &= 0x0FFFFFFF;       /* strip WinCE-only high bits (including WS_EX_CAPTIONOKBTN) */
         /* WinCE COMBOBOX defaults to CBS_DROPDOWN when no CBS type bits are set.
            Desktop Windows treats type=0 as CBS_SIMPLE (list always visible).
            Force CBS_DROPDOWN so combo boxes collapse to edit-only height. */
@@ -103,6 +104,11 @@ void Win32Thunks::RegisterWindowHandlers() {
                 SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
                 SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
             }
+            if (has_captionok) {
+                captionok_hwnds.insert(hwnd);
+                InstallCaptionOk(hwnd);
+                LOG(THUNK, "[THUNK]   WS_EX_CAPTIONOKBTN tracked for HWND=0x%p\n", hwnd);
+            }
         }
         regs[0] = (uint32_t)(uintptr_t)hwnd; return true;
     });
@@ -123,7 +129,14 @@ void Win32Thunks::RegisterWindowHandlers() {
         regs[0] = RedrawWindow(hw, prc, hrgn, flags);
         return true;
     });
-    Thunk("DestroyWindow", 265, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = DestroyWindow((HWND)(intptr_t)(int32_t)regs[0]); return true; });
+    Thunk("DestroyWindow", 265, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        if (captionok_hwnds.erase(hw)) RemoveCaptionOk(hw);
+        hwnd_wndproc_map.erase(hw);
+        hwnd_dlgproc_map.erase(hw);
+        regs[0] = DestroyWindow(hw);
+        return true;
+    });
     Thunk("SetWindowPos", 247, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
         int swp_x = (int)regs[2], swp_y = (int)regs[3];

@@ -107,6 +107,10 @@ public:
     static std::map<UINT_PTR, uint32_t> arm_timer_callbacks;
     /* Map HWND -> ARM DlgProc callback address */
     static std::map<HWND, uint32_t> hwnd_dlgproc_map;
+    /* HWNDs created with WS_EX_CAPTIONOKBTN (0x80000000).  Style is stripped
+       before native CreateWindowEx, but tracked here so WM_CLOSE is converted
+       to WM_COMMAND(IDOK) and GetWindowLongW reports the original style. */
+    static std::set<HWND> captionok_hwnds;
     /* Modal dialog result for EndDialog */
     static INT_PTR modal_dlg_result;
     static bool modal_dlg_ended;
@@ -115,6 +119,11 @@ public:
     static LRESULT CALLBACK EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static INT_PTR CALLBACK EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK MenuBarWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    /* Install/remove the WS_EX_CAPTIONOKBTN title bar button subclass on a window */
+    static void InstallCaptionOk(HWND hwnd);
+    static void RemoveCaptionOk(HWND hwnd);
+private:
+    static LRESULT CALLBACK CaptionOkSubclassProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 private:
     EmulatedMemory& mem;

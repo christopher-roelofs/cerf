@@ -93,10 +93,28 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
     Thunk("SetWindowTextW", 256, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         regs[0]=SetWindowTextW((HWND)(intptr_t)(int32_t)regs[0], ReadWStringFromEmu(mem,regs[1]).c_str()); return true;
     });
-    Thunk("GetWindowLongW", 259, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=GetWindowLongW((HWND)(intptr_t)(int32_t)regs[0],(int)regs[1]); return true; });
+    Thunk("GetWindowLongW", 259, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        LONG val = GetWindowLongW(hw, (int)regs[1]);
+        /* Restore WS_EX_CAPTIONOKBTN bit for tracked windows */
+        if ((int)regs[1] == GWL_EXSTYLE && captionok_hwnds.count(hw))
+            val |= (LONG)0x80000000;
+        regs[0] = (uint32_t)val;
+        return true;
+    });
     Thunk("SetWindowLongW", 258, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LONG nv=(LONG)regs[2]; if((int)regs[1]==GWL_EXSTYLE) nv&=0x0FFFFFFF;
-        regs[0]=SetWindowLongW((HWND)(intptr_t)(int32_t)regs[0],(int)regs[1],nv); return true;
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        LONG nv = (LONG)regs[2];
+        if ((int)regs[1] == GWL_EXSTYLE) {
+            if (nv & (LONG)0x80000000) {
+                if (captionok_hwnds.insert(hw).second) InstallCaptionOk(hw);
+            } else {
+                if (captionok_hwnds.erase(hw)) RemoveCaptionOk(hw);
+            }
+            nv &= 0x0FFFFFFF;
+        }
+        regs[0] = SetWindowLongW(hw, (int)regs[1], nv);
+        return true;
     });
     Thunk("GetWindowTextW", 257, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         wchar_t buf[1024]={}; uint32_t mx=regs[2]; if(mx>1024)mx=1024;
