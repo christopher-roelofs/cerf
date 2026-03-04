@@ -21,7 +21,7 @@ class EmulatedMemory {
 public:
     static const uint32_t PAGE_SIZE = 0x1000;
     static const uint32_t STACK_SIZE = 1024 * 1024; /* 1 MB stack */
-    static const uint32_t STACK_BASE = 0x00100000;  /* Stack grows down from here */
+    static const uint32_t STACK_BASE = 0x01000000;  /* Stack grows down from here (above 64KB boundary) */
 
     std::vector<MemRegion> regions;
 
@@ -32,10 +32,24 @@ public:
         }
     }
 
-    /* Allocate a region in the emulated address space */
+    /* Allocate a region in the emulated address space.
+       Identity-maps ARM addresses to host addresses so ARM pointers are valid
+       native pointers — needed when ARM code passes struct pointers to native
+       Win32 controls (e.g. tab control messages via SendMessageW). */
     uint8_t* Alloc(uint32_t base, uint32_t size, DWORD protect = PAGE_READWRITE, bool is_stack = false) {
         size = AlignUp(size, PAGE_SIZE);
-        uint8_t* ptr = (uint8_t*)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        /* Try to allocate at the exact ARM address for identity mapping */
+        uint8_t* ptr = nullptr;
+        if (base >= 0x10000) { /* Addresses below 64KB can't be allocated on Windows */
+            ptr = (uint8_t*)VirtualAlloc((LPVOID)(uintptr_t)base, size,
+                                         MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        }
+        if (!ptr) {
+            /* Fall back to arbitrary address if identity mapping fails */
+            ptr = (uint8_t*)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            if (ptr)
+                fprintf(stderr, "[MEM] Region 0x%08X+0x%X: fallback to host %p (NOT identity-mapped)\n", base, size, ptr);
+        }
         if (!ptr) {
             fprintf(stderr, "[MEM] Failed to allocate 0x%X bytes for region 0x%08X\n", size, base);
             return nullptr;

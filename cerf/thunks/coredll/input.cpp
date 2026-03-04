@@ -92,6 +92,18 @@ void Win32Thunks::RegisterInputHandlers() {
     ThunkOrdinal("ClipCursor", 731);
     ThunkOrdinal("GetCursor", 733);
     ThunkOrdinal("CreateCursor", 722);
+    Thunk("CreateIconIndirect", 723, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* 32-bit ICONINFO: fIcon(4), xHotspot(4), yHotspot(4), hbmMask(4), hbmColor(4) = 20 bytes */
+        uint32_t addr = regs[0];
+        ICONINFO ii = {};
+        ii.fIcon    = mem.Read32(addr + 0);
+        ii.xHotspot = mem.Read32(addr + 4);
+        ii.yHotspot = mem.Read32(addr + 8);
+        ii.hbmMask  = (HBITMAP)(intptr_t)(int32_t)mem.Read32(addr + 12);
+        ii.hbmColor = (HBITMAP)(intptr_t)(int32_t)mem.Read32(addr + 16);
+        regs[0] = (uint32_t)(uintptr_t)CreateIconIndirect(&ii);
+        return true;
+    });
     ThunkOrdinal("DestroyCursor", 724);
     Thunk("DestroyIcon", 725, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = DestroyIcon((HICON)(intptr_t)(int32_t)regs[0]); return true;

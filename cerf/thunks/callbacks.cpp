@@ -11,6 +11,7 @@
 std::map<HWND, uint32_t> Win32Thunks::hwnd_wndproc_map;
 std::map<UINT_PTR, uint32_t> Win32Thunks::arm_timer_callbacks;
 std::map<HWND, uint32_t> Win32Thunks::hwnd_dlgproc_map;
+uint32_t Win32Thunks::pending_arm_dlgproc = 0;
 INT_PTR Win32Thunks::modal_dlg_result = 0;
 bool Win32Thunks::modal_dlg_ended = false;
 Win32Thunks* Win32Thunks::s_instance = nullptr;

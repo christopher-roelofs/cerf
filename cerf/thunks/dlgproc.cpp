@@ -34,10 +34,17 @@ INT_PTR CALLBACK Win32Thunks::EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 
     auto it = hwnd_dlgproc_map.find(hwnd);
     if (it == hwnd_dlgproc_map.end()) {
-        if (msg == WM_INITDIALOG) {
+        /* During CreateDialogIndirectParamW, WM_INITDIALOG is sent before the
+           API returns, so hwnd_dlgproc_map hasn't been populated yet.  Use the
+           pending_arm_dlgproc that was stashed before the call. */
+        if (msg == WM_INITDIALOG && pending_arm_dlgproc) {
+            LOG(THUNK, "[THUNK] EmuDlgProc: WM_INITDIALOG for new HWND=%p using pending_arm_dlgproc=0x%08X\n",
+                hwnd, pending_arm_dlgproc);
+            hwnd_dlgproc_map[hwnd] = pending_arm_dlgproc;
+            it = hwnd_dlgproc_map.find(hwnd);
+        } else {
             return FALSE;
         }
-        return FALSE;
     }
 
     uint32_t arm_dlgproc = it->second;
@@ -87,7 +94,14 @@ INT_PTR CALLBACK Win32Thunks::EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         emu_lParam
     };
 
+    if (msg == WM_INITDIALOG) {
+        LOG(THUNK, "[THUNK] EmuDlgProc: dispatching WM_INITDIALOG to ARM dlgproc=0x%08X hwnd=%p lParam=0x%X\n",
+            arm_dlgproc, hwnd, (uint32_t)lParam);
+    }
     uint32_t result = s_instance->callback_executor(arm_dlgproc, args, 4);
+    if (msg == WM_INITDIALOG) {
+        LOG(THUNK, "[THUNK] EmuDlgProc: WM_INITDIALOG returned %u\n", result);
+    }
 
     /* Copy back results from WM_MEASUREITEM */
     if (msg == WM_MEASUREITEM && lParam) {

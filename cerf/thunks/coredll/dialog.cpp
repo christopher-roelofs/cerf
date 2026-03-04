@@ -116,8 +116,14 @@ void Win32Thunks::RegisterDialogHandlers() {
         LPARAM initParam = (LPARAM)ReadStackArg(regs, mem, 0);
         auto tmpl = CopyDlgTemplate(mem, lpTemplate);
         bool has_captionok = FixupDlgTemplate(tmpl, wce_sysfont_name);
+        /* Pre-register the ARM dlgproc so EmuDlgProc can dispatch WM_INITDIALOG
+           which is sent during CreateDialogIndirectParamW before it returns. */
+        pending_arm_dlgproc = arm_dlgProc;
         HWND dlg = CreateDialogIndirectParamW(GetModuleHandleW(NULL),
             (LPCDLGTEMPLATEW)tmpl.data(), (HWND)(intptr_t)(int32_t)hwndParent, EmuDlgProc, initParam);
+        pending_arm_dlgproc = 0;
+        LOG(THUNK, "[THUNK] CreateDialogIndirectParamW(parent=0x%X, dlgproc=0x%08X) -> HWND=0x%p (err=%lu)\n",
+            hwndParent, arm_dlgProc, dlg, dlg ? 0UL : GetLastError());
         if (dlg && arm_dlgProc) hwnd_dlgproc_map[dlg] = arm_dlgProc;
         if (dlg && has_captionok) {
             captionok_hwnds.insert(dlg);
@@ -211,5 +217,21 @@ void Win32Thunks::RegisterDialogHandlers() {
     });
     Thunk("IsDialogMessageW", 698, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0; return true;
+    });
+    Thunk("MapDialogRect", 699, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HWND hwnd = (HWND)(intptr_t)(int32_t)regs[0];
+        uint32_t rect_addr = regs[1];
+        RECT rc;
+        rc.left   = (int32_t)mem.Read32(rect_addr + 0);
+        rc.top    = (int32_t)mem.Read32(rect_addr + 4);
+        rc.right  = (int32_t)mem.Read32(rect_addr + 8);
+        rc.bottom = (int32_t)mem.Read32(rect_addr + 12);
+        BOOL ret = MapDialogRect(hwnd, &rc);
+        mem.Write32(rect_addr + 0,  (uint32_t)rc.left);
+        mem.Write32(rect_addr + 4,  (uint32_t)rc.top);
+        mem.Write32(rect_addr + 8,  (uint32_t)rc.right);
+        mem.Write32(rect_addr + 12, (uint32_t)rc.bottom);
+        regs[0] = ret;
+        return true;
     });
 }

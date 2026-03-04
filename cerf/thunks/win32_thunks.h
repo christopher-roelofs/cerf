@@ -107,6 +107,9 @@ public:
     static std::map<UINT_PTR, uint32_t> arm_timer_callbacks;
     /* Map HWND -> ARM DlgProc callback address */
     static std::map<HWND, uint32_t> hwnd_dlgproc_map;
+    /* Stashed ARM DlgProc for CreateDialogIndirectParamW: WM_INITDIALOG is sent
+       during the API call before it returns, so hwnd_dlgproc_map isn't populated yet. */
+    static uint32_t pending_arm_dlgproc;
     /* HWNDs created with WS_EX_CAPTIONOKBTN (0x80000000).  Style is stripped
        before native CreateWindowEx, but tracked here so WM_CLOSE is converted
        to WM_COMMAND(IDOK) and GetWindowLongW reports the original style. */

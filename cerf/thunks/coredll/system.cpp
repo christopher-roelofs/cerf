@@ -205,6 +205,9 @@ void Win32Thunks::RegisterSystemHandlers() {
     Thunk("GetSystemDefaultLangID", 211, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetSystemDefaultLangID(); return true;
     });
+    Thunk("GetUserDefaultLangID", 212, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = GetUserDefaultLangID(); return true;
+    });
     Thunk("GetUserDefaultLCID", 215, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetUserDefaultLCID(); return true;
     });

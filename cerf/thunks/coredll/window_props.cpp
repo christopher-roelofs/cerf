@@ -95,17 +95,29 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
     });
     Thunk("GetWindowLongW", 259, [](uint32_t* regs, EmulatedMemory&) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
-        LONG val = GetWindowLongW(hw, (int)regs[1]);
-        /* Restore WS_EX_CAPTIONOKBTN bit for tracked windows */
-        if ((int)regs[1] == GWL_EXSTYLE && captionok_hwnds.count(hw))
-            val |= (LONG)0x80000000;
-        regs[0] = (uint32_t)val;
+        int idx = (int)regs[1];
+        /* Translate WinCE 32-bit dialog extra data offsets to 64-bit.
+           On WinCE: DWL_MSGRESULT=0, DWL_DLGPROC=4, DWL_USER=8.
+           On x64:   DWLP_MSGRESULT=0, DWLP_DLGPROC=8, DWLP_USER=16.
+           Non-negative indices ≤8 for dialog windows need translation. */
+        if (idx >= 0 && idx <= 8 && hwnd_dlgproc_map.count(hw)) {
+            if (idx == 8)       regs[0] = (uint32_t)GetWindowLongPtrW(hw, DWLP_USER);
+            else if (idx == 4)  regs[0] = hwnd_dlgproc_map[hw]; /* Return ARM dlgproc address */
+            else                regs[0] = (uint32_t)GetWindowLongPtrW(hw, DWLP_MSGRESULT);
+        } else {
+            LONG val = GetWindowLongW(hw, idx);
+            /* Restore WS_EX_CAPTIONOKBTN bit for tracked windows */
+            if (idx == GWL_EXSTYLE && captionok_hwnds.count(hw))
+                val |= (LONG)0x80000000;
+            regs[0] = (uint32_t)val;
+        }
         return true;
     });
     Thunk("SetWindowLongW", 258, [](uint32_t* regs, EmulatedMemory&) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        int idx = (int)regs[1];
         LONG nv = (LONG)regs[2];
-        if ((int)regs[1] == GWL_EXSTYLE) {
+        if (idx == GWL_EXSTYLE) {
             if (nv & (LONG)0x80000000) {
                 if (captionok_hwnds.insert(hw).second) InstallCaptionOk(hw);
             } else {
@@ -113,7 +125,21 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
             }
             nv &= 0x0FFFFFFF;
         }
-        regs[0] = SetWindowLongW(hw, (int)regs[1], nv);
+        /* Translate WinCE 32-bit dialog extra data offsets to 64-bit */
+        if (idx >= 0 && idx <= 8 && hwnd_dlgproc_map.count(hw)) {
+            if (idx == 8) {
+                regs[0] = (uint32_t)SetWindowLongPtrW(hw, DWLP_USER, (LONG_PTR)(int32_t)nv);
+            } else if (idx == 4) {
+                /* DWL_DLGPROC: ARM code setting a new dialog proc — update our map
+                   instead of corrupting the native DLGPROC pointer */
+                regs[0] = (uint32_t)hwnd_dlgproc_map[hw];
+                if (nv) hwnd_dlgproc_map[hw] = (uint32_t)nv;
+            } else {
+                regs[0] = (uint32_t)SetWindowLongPtrW(hw, DWLP_MSGRESULT, (LONG_PTR)(int32_t)nv);
+            }
+        } else {
+            regs[0] = SetWindowLongW(hw, idx, nv);
+        }
         return true;
     });
     Thunk("GetWindowTextW", 257, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
