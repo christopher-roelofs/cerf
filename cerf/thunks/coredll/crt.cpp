@@ -8,22 +8,66 @@
 void Win32Thunks::RegisterCrtHandlers() {
     Thunk("memcpy", 1044, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t dst = regs[0], src = regs[1], len = regs[2];
+        if (len > 0x100000) {
+            LOG(API, "[API] memcpy(0x%08X, 0x%08X, 0x%X) -> HUGE len, capping\n", dst, src, len);
+            len = 0x100000;
+        }
         uint8_t* dst_p = mem.Translate(dst);
         uint8_t* src_p = mem.Translate(src);
-        if (dst_p && src_p) memcpy(dst_p, src_p, len);
+        if (dst_p && src_p && len > 0) {
+            /* Verify host pointers are contiguous (same region) for both src and dst.
+               Fallback regions are NOT identity-mapped, so two adjacent emulated pages
+               may have non-adjacent host addresses. Native memcpy would overrun. */
+            uint8_t* dst_end = mem.Translate(dst + len - 1);
+            uint8_t* src_end = mem.Translate(src + len - 1);
+            bool dst_contiguous = dst_end && (dst_end == dst_p + len - 1);
+            bool src_contiguous = src_end && (src_end == src_p + len - 1);
+            if (dst_contiguous && src_contiguous) {
+                memcpy(dst_p, src_p, len);
+            } else {
+                /* Cross-region copy: do byte-by-byte via emulated memory */
+                for (uint32_t i = 0; i < len; i++)
+                    mem.Write8(dst + i, mem.Read8(src + i));
+            }
+        }
         regs[0] = dst; return true;
     });
     Thunk("memmove", 1046, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t dst = regs[0], src = regs[1], len = regs[2];
         uint8_t* dst_p = mem.Translate(dst);
         uint8_t* src_p = mem.Translate(src);
-        if (dst_p && src_p) memmove(dst_p, src_p, len);
+        if (dst_p && src_p && len > 0) {
+            uint8_t* dst_end = mem.Translate(dst + len - 1);
+            uint8_t* src_end = mem.Translate(src + len - 1);
+            bool dst_ok = dst_end && (dst_end == dst_p + len - 1);
+            bool src_ok = src_end && (src_end == src_p + len - 1);
+            if (dst_ok && src_ok) {
+                memmove(dst_p, src_p, len);
+            } else {
+                if (dst <= src) {
+                    for (uint32_t i = 0; i < len; i++)
+                        mem.Write8(dst + i, mem.Read8(src + i));
+                } else {
+                    for (uint32_t i = len; i > 0; i--)
+                        mem.Write8(dst + i - 1, mem.Read8(src + i - 1));
+                }
+            }
+        }
         regs[0] = dst; return true;
     });
     Thunk("memset", 1047, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint8_t* p = mem.Translate(regs[0]);
-        if (p) memset(p, (uint8_t)regs[1], regs[2]);
-        regs[0] = regs[0]; return true;
+        uint32_t dst = regs[0], val = regs[1] & 0xFF, len = regs[2];
+        uint8_t* p = mem.Translate(dst);
+        if (p && len > 0) {
+            uint8_t* p_end = mem.Translate(dst + len - 1);
+            if (p_end && (p_end == p + len - 1)) {
+                memset(p, val, len);
+            } else {
+                for (uint32_t i = 0; i < len; i++)
+                    mem.Write8(dst + i, (uint8_t)val);
+            }
+        }
+        regs[0] = dst; return true;
     });
     Thunk("memcmp", 1043, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint8_t* ap = mem.Translate(regs[0]);

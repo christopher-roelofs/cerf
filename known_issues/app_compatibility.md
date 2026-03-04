@@ -9,7 +9,7 @@ Quick test results for WinCE apps from `references/Optional Programs/`.
 | Clock.exe (DeClock) | 20KB | Multi-timezone digital clock + calendar | Fully functional, live updating |
 | notepad.exe | 27KB | WinCE Notepad | Fully functional, typing works |
 | calc.exe | 34KB | Calculator with history | Buttons and computation work |
-| Converter.exe | 39KB | Unit converter (temp, length, etc.) | Fully functional after atof fix |
+| Converter.exe | 39KB | Unit converter (temp, length, etc.) | BROKEN — crashes on startup (AYGSHELL DllMain vtable call to NULL, pre-existing) |
 | PLamp.exe | 15KB | Flashlight / screen color tool | Fully functional, color buttons work |
 | CpuLoad.exe | 20KB | CPU load monitor | Shows CPU %, slider works |
 | VolumeCtrl.exe | 46KB | Volume control with custom dial | Custom GDI drawing works |
@@ -29,6 +29,8 @@ Quick test results for WinCE apps from `references/Optional Programs/`.
 | BananaPC.exe | Creates tiny 51x16 taskbar widget (works but useless outside WinCE taskbar) |
 
 | spread_excel.exe (SpreadCE) | WinCE 7 app — window sizing and menu text work, but bottom menu bar clicks don't open menus (ARM modal message loop issue) |
+| DocOpen.exe (PHM Tools) | File open dialog works after memcpy/DllMain fixes. Toolbar buttons unclickable (ARM modal loop). ComboBox doesn't render until clicked. |
+| Run.exe (PHM Tools) | Browse dialog works after DllMain fix. Wrong icon in dialog (warning icon instead of app icon). |
 
 ## Not Working
 
@@ -52,3 +54,5 @@ Quick test results for WinCE apps from `references/Optional Programs/`.
 8. **SM_CXEDGE/SM_CYEDGE override**: Return 1 (WinCE value) instead of 2 (desktop). Fixed ARM commctrl.dll toolbar button text truncation.
 9. **WM_SETTINGCHANGE lParam translation**: Desktop sends lParam=0, WinCE convention is lParam=SPI constant. Translated in EmuWndProc callback.
 10. **SPI action 0xE1 (WinCE 7 SPI_GETSIPINFO)**: Implemented in SystemParametersInfoW thunk. Returns SIPINFO struct with work area. Only 0xE1 is handled (not 0x68 — handling 0x68 breaks WinCE 5 app layouts).
+11. **memcpy/memmove/memset cross-region safety**: Check host pointer contiguity before native memcpy. Fallback regions (NOT identity-mapped) may have non-adjacent host addresses for adjacent emulated pages. Fall back to byte-by-byte copy. Fixed DocOpen.exe crash.
+12. **ARM DLL DllMain initialization**: Call DllMain(DLL_PROCESS_ATTACH) for on-demand loaded ARM DLLs before forwarding API calls. Fixed g_pShellMalloc NULL crash in ceshell.dll's SHGetOpenFileName (Run.exe Browse, DocOpen.exe).

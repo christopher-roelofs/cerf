@@ -21,6 +21,8 @@ void Win32Thunks::RegisterShellHandlers() {
         return [this, dll, func, nargs](uint32_t* regs, EmulatedMemory& mem) -> bool {
             LoadedDll* mod = LoadArmDll(dll);
             if (mod && callback_executor) {
+                /* Call DllMain for any newly loaded DLLs (including dependencies) */
+                CallDllEntryPoints();
                 uint32_t addr = PELoader::ResolveExportName(mem, mod->pe_info, func);
                 if (addr) {
                     LOG(API, "[API] %s -> forwarding to ARM %s!%s @ 0x%08X\n", func, dll, func, addr);
