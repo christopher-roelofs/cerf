@@ -23,17 +23,25 @@ ARM commctrl's `PropSheetDlgProc` calls `SetWindowLongW(hDlg, 8, ppda)` intendin
 
 ---
 
-## 2. Control layout inside tab pages is broken — OPEN
+## 2. Control layout inside tab pages is broken — RESOLVED
 
 **Description**: The property sheet tabs (Battery, Memory, Storage) appear and can be switched, but all child controls within each page are stacked at y=0 (top of the page area). Labels, progress bars, and buttons all overlap at the same vertical position instead of being laid out vertically.
 
-**Expected**: Controls should be vertically distributed as shown in `on_real_device.png`.
+**Root cause**: Desktop Windows `CreateDialogIndirectParamW` positions child controls at y=0 when `WS_CHILD` is set in the dialog template style. ARM commctrl's `_CreatePageDialog` calls `GetPageDialogStyle()` which forces `WS_CHILD | DS_CONTROL | DS_3DLOOK` on page templates before calling `CreateDialogIndirectParamW`. The DLU-to-pixel conversion for x positions, widths, and heights works correctly, but y coordinates are always mapped to 0 for WS_CHILD templates — verified by testing with different fonts and even a trivial dialog proc.
 
-**Status**: Open — needs investigation. Likely related to DLU-to-pixel conversion or dialog template font metrics for page child dialogs.
+**Fix**: Strip `WS_CHILD` from the template style before calling native `CreateDialogIndirectParamW` (so DLU→pixel conversion works correctly for all coordinates), then reparent the dialog as a child window with `SetParent` + `SetWindowLongPtrW(GWL_STYLE, ... | WS_CHILD)` afterwards.
 
 ---
 
-## 3. Window positioned off-screen at Y=32767 — OPEN
+## 3. Missing tab icons — OPEN
+
+**Description**: On real WinCE devices, the property sheet tabs show small icons next to the tab labels (Battery, Memory, Storage). In cerf, the tab labels appear but without icons.
+
+**Status**: Open — needs investigation. The icons may be loaded from ResInfo.exe resources or system shell resources.
+
+---
+
+## 4. Window positioned off-screen at Y=32767 — OPEN
 
 **Description**: The property sheet window is created at Y=32767 (0x7FFF), which is off-screen. This is the maximum positive signed 16-bit value, suggesting a WinCE coordinate system issue. WinCE uses 16-bit screen coordinates; the property sheet may use CW_USEDEFAULT or a WinCE-specific default that doesn't translate to desktop Windows.
 

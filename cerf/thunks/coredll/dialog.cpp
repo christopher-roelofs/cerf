@@ -119,8 +119,21 @@ void Win32Thunks::RegisterDialogHandlers() {
         /* Pre-register the ARM dlgproc so EmuDlgProc can dispatch WM_INITDIALOG
            which is sent during CreateDialogIndirectParamW before it returns. */
         pending_arm_dlgproc = arm_dlgProc;
+        /* Workaround: CreateDialogIndirectParamW on desktop Windows positions
+           child controls at y=0 when WS_CHILD is in the template style.
+           Strip WS_CHILD before creation (so DLU conversion works), then
+           reparent the window as a child afterwards. */
+        uint32_t tmpl_style = *(uint32_t*)&tmpl[0];
+        bool was_child = (tmpl_style & WS_CHILD) != 0;
+        if (was_child)
+            *(uint32_t*)&tmpl[0] = tmpl_style & ~(uint32_t)WS_CHILD;
         HWND dlg = CreateDialogIndirectParamW(GetModuleHandleW(NULL),
             (LPCDLGTEMPLATEW)tmpl.data(), (HWND)(intptr_t)(int32_t)hwndParent, EmuDlgProc, initParam);
+        if (dlg && was_child) {
+            SetWindowLongPtrW(dlg, GWL_STYLE,
+                GetWindowLongPtrW(dlg, GWL_STYLE) | WS_CHILD);
+            SetParent(dlg, (HWND)(intptr_t)(int32_t)hwndParent);
+        }
         pending_arm_dlgproc = 0;
         LOG(THUNK, "[THUNK] CreateDialogIndirectParamW(parent=0x%X, dlgproc=0x%08X) -> HWND=0x%p (err=%lu)\n",
             hwndParent, arm_dlgProc, dlg, dlg ? 0UL : GetLastError());
