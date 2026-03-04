@@ -160,6 +160,11 @@ void Win32Thunks::RegisterMessageHandlers() {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0]; UINT umsg = regs[1];
         if ((umsg == WM_CREATE || umsg == WM_NCCREATE) && regs[3] != 0) {
             regs[0] = (umsg == WM_NCCREATE) ? 1 : 0;
+        } else if (umsg == WM_SETTEXT && regs[3] != 0) {
+            /* ARM lParam is an emulated memory pointer to a wchar string.
+               Read it and pass a native pointer to DefWindowProcW. */
+            std::wstring text = ReadWStringFromEmu(mem, regs[3]);
+            regs[0] = (uint32_t)DefWindowProcW(hw, WM_SETTEXT, 0, (LPARAM)text.c_str());
         } else {
             regs[0] = (uint32_t)DefWindowProcW(hw, umsg, regs[2], regs[3]);
         }

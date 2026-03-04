@@ -41,11 +41,15 @@ ARM commctrl's `PropSheetDlgProc` calls `SetWindowLongW(hDlg, 8, ppda)` intendin
 
 ---
 
-## 4. Window positioned off-screen at Y=32767 — OPEN
+## 4. Window positioned off-screen at Y=32767 — RESOLVED
 
-**Description**: The property sheet window is created at Y=32767 (0x7FFF), which is off-screen. This is the maximum positive signed 16-bit value, suggesting a WinCE coordinate system issue. WinCE uses 16-bit screen coordinates; the property sheet may use CW_USEDEFAULT or a WinCE-specific default that doesn't translate to desktop Windows.
+**Description**: The property sheet window was created at Y=32767 (0x7FFF), off-screen.
 
-**Status**: Open — cosmetic issue, can be worked around by moving the window.
+**Root cause**: `SystemParametersInfoW` thunk passed NULL for `pvParam`, discarding the output pointer. When ARM commctrl's `SHInitDialog` called `SystemParametersInfoW(SPI_GETWORKAREA, 0, &rect, 0)`, the work area RECT was never written back to emulated memory. The ARM code read garbage values and computed y=84425 for `SetWindowPos`.
+
+**Fix** (`system.cpp`): Marshal `SPI_GETWORKAREA` properly — allocate a native RECT, call the native API, and write the result back to emulated memory at the ARM pointer address.
+
+Also added DLGTEMPLATEEX detection for dialog position clamping (DLGTEMPLATEEX has x/y at offsets 18/20 vs DLGTEMPLATE at 10/12).
 
 ---
 

@@ -16,6 +16,7 @@ Quick test results for WinCE apps from `references/Optional Programs/`.
 | WinWatch.exe | 24KB | Window position fixer | Complex dialog with checkboxes works |
 | Life.exe (G_Life) | game | Conway's Game of Life | Grid, cell placement, auto-run work |
 | Patiences.exe | game | Solitaire card game | Runs, green baize drawn, cards are blank white |
+| solitare.exe | 18KB | WinCE Solitaire (Optional Programs) | Fully functional — cards, game panel, title bar all working |
 
 ## Partially Working
 
@@ -37,8 +38,11 @@ Quick test results for WinCE apps from `references/Optional Programs/`.
 | DMinesweeper.exe | Crash on startup |
 | Tetris.exe | Runs but no windows created |
 
-## Fixes Applied This Session
+## Fixes Applied
 
 1. **atof (ordinal 995)**: Added CRT thunk needed by Converter.exe and other apps
 2. **atol (ordinal 994)**: Added CRT thunk
 3. **Float format specifiers**: Added %f/%e/%g/%G/%E support to wprintf_format helper — doubles occupy two consecutive 32-bit ARM args
+4. **Dialog template DWORD alignment**: Fixed FixupDlgTemplate font name replacement corrupting DLGITEMTEMPLATE alignment when font name size changes (e.g. "MS Sans Serif" → "Tahoma"). This broke solitare.exe's game panel.
+5. **SystemParametersInfoW SPI_GETWORKAREA**: Marshal RECT output to emulated memory. Fixed ResInfo.exe off-screen positioning.
+6. **Window title text**: Fixed DefWindowProcW WM_SETTEXT to marshal ARM string pointers to native strings. Added WS_CAPTION to top-level windows.

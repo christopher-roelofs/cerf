@@ -57,6 +57,23 @@ static bool FixupDlgTemplate(std::vector<uint8_t>& tmpl, const std::wstring& sys
     exStyle &= ~0x80000000u;   /* strip WS_EX_CAPTIONOKBTN — we render it ourselves */
     *(uint32_t*)&tmpl[4] = exStyle;
 
+    /* Detect DLGTEMPLATEEX vs DLGTEMPLATE.
+       DLGTEMPLATEEX has signature 0xFFFF at offset 2, dlgVer=1 at offset 0.
+       DLGTEMPLATE:   style(4) exStyle(4) cdit(2) x(2@10) y(2@12) cx(2) cy(2)
+       DLGTEMPLATEEX: dlgVer(2) sig(2) helpID(4) exStyle(4) style(4) cdit(2) x(2@18) y(2@20) cx(2) cy(2) */
+    bool is_ex = (tmpl.size() >= 4 && *(uint16_t*)&tmpl[2] == 0xFFFF);
+    size_t xy_off = is_ex ? 18 : 10;
+
+    /* Clamp dialog position: WinCE uses 16-bit screen coords (max 240x320).
+       Values like 0x7FFF (32767) mean "default" on WinCE but produce
+       off-screen positioning on desktop Windows. Clamp to 0. */
+    if (tmpl.size() >= xy_off + 4) {
+        int16_t dlg_x = *(int16_t*)&tmpl[xy_off];
+        int16_t dlg_y = *(int16_t*)&tmpl[xy_off + 2];
+        if (dlg_x > 500 || dlg_x < 0) *(int16_t*)&tmpl[xy_off] = 0;
+        if (dlg_y > 500 || dlg_y < 0) *(int16_t*)&tmpl[xy_off + 2] = 0;
+    }
+
     /* Locate the font field in the template.
        DLGTEMPLATE header: style(4) + exStyle(4) + cdit(2) + x(2) + y(2) + cx(2) + cy(2) = 18 bytes
        Then: menu (sz_Or_Ord), class (sz_Or_Ord), title (sz string), [font if DS_SETFONT] */
@@ -77,32 +94,45 @@ static bool FixupDlgTemplate(std::vector<uint8_t>& tmpl, const std::wstring& sys
     if (style & DS_SETFONT) {
         /* DS_SETFONT present: pointSize(WORD) then font name (wchar string).
            Keep the original point size — it controls DLU sizing of all controls.
-           Only replace the font name so it uses the WinCE system font face. */
+           Only replace the font name so it uses the WinCE system font face.
+           IMPORTANT: Each DLGITEMTEMPLATE must be DWORD-aligned, so when the font
+           name changes size we must recompute the alignment padding between the
+           font name's null terminator and the first item. */
         p += 2; /* skip point size (unchanged) */
-        /* Replace font name with sysfont */
         size_t name_start = p;
         while (p + 2 <= tmpl.size() && *(uint16_t*)&tmpl[p]) p += 2;
         p += 2; /* past null */
-        size_t old_name_bytes = p - name_start;
+        /* p = byte after font name null terminator */
+        size_t old_items = (p + 3) & ~(size_t)3; /* DWORD-aligned start of items */
+
         size_t new_name_bytes = (sysfont_name.size() + 1) * 2;
-        if (old_name_bytes != new_name_bytes) {
-            /* Resize: shift everything after the font name */
-            int diff = (int)new_name_bytes - (int)old_name_bytes;
-            if (diff > 0) tmpl.insert(tmpl.begin() + name_start, diff, 0);
-            else if (diff < 0) tmpl.erase(tmpl.begin() + name_start, tmpl.begin() + name_start - diff);
-        }
+        size_t new_name_end = name_start + new_name_bytes;
+        size_t new_items = (new_name_end + 3) & ~(size_t)3;
+        size_t new_pad = new_items - new_name_end;
+
+        /* Erase old font name + old alignment padding, insert new name + new padding */
+        tmpl.erase(tmpl.begin() + name_start, tmpl.begin() + old_items);
+        tmpl.insert(tmpl.begin() + name_start, new_name_bytes + new_pad, 0);
         for (size_t i = 0; i < sysfont_name.size(); i++)
             *(uint16_t*)&tmpl[name_start + i * 2] = (uint16_t)sysfont_name[i];
         *(uint16_t*)&tmpl[name_start + sysfont_name.size() * 2] = 0;
     } else {
-        /* No DS_SETFONT: add it. Insert pointSize + font name at position p.
-           Use 8pt — standard WinCE dialog font size. */
+        /* No DS_SETFONT: add it with 8pt WinCE system font.
+           Must also fix DWORD alignment for items that follow. */
         style |= DS_SETFONT;
         *(uint32_t*)&tmpl[0] = style;
-        int16_t point_size = 8;
-        size_t insert_bytes = 2 + (sysfont_name.size() + 1) * 2;
-        tmpl.insert(tmpl.begin() + p, insert_bytes, 0);
-        *(uint16_t*)&tmpl[p] = (uint16_t)point_size;
+        size_t old_items = (p + 3) & ~(size_t)3; /* current DWORD-aligned item start */
+
+        size_t new_name_bytes = (sysfont_name.size() + 1) * 2;
+        size_t font_data_size = 2 + new_name_bytes; /* pointSize + name + null */
+        size_t new_font_end = p + font_data_size;
+        size_t new_items = (new_font_end + 3) & ~(size_t)3;
+        size_t new_pad = new_items - new_font_end;
+
+        /* Erase old alignment padding, insert font data + new padding */
+        tmpl.erase(tmpl.begin() + p, tmpl.begin() + old_items);
+        tmpl.insert(tmpl.begin() + p, font_data_size + new_pad, 0);
+        *(uint16_t*)&tmpl[p] = 8; /* point size */
         for (size_t i = 0; i < sysfont_name.size(); i++)
             *(uint16_t*)&tmpl[p + 2 + i * 2] = (uint16_t)sysfont_name[i];
         *(uint16_t*)&tmpl[p + 2 + sysfont_name.size() * 2] = 0;
@@ -119,24 +149,8 @@ void Win32Thunks::RegisterDialogHandlers() {
         /* Pre-register the ARM dlgproc so EmuDlgProc can dispatch WM_INITDIALOG
            which is sent during CreateDialogIndirectParamW before it returns. */
         pending_arm_dlgproc = arm_dlgProc;
-        /* Workaround: CreateDialogIndirectParamW on desktop Windows positions
-           child controls at y=0 when WS_CHILD is in the template style.
-           Strip WS_CHILD before creation (so DLU conversion works), then
-           reparent the window as a child afterwards.
-           Use WS_POPUP to prevent WS_OVERLAPPED default (which adds a caption).
-           Strip WS_VISIBLE to prevent the popup from flashing on screen. */
-        uint32_t tmpl_style = *(uint32_t*)&tmpl[0];
-        bool was_child = (tmpl_style & WS_CHILD) != 0;
-        if (was_child)
-            *(uint32_t*)&tmpl[0] = (tmpl_style & ~(uint32_t)(WS_CHILD | WS_VISIBLE)) | WS_POPUP;
         HWND dlg = CreateDialogIndirectParamW(GetModuleHandleW(NULL),
             (LPCDLGTEMPLATEW)tmpl.data(), (HWND)(intptr_t)(int32_t)hwndParent, EmuDlgProc, initParam);
-        if (dlg && was_child) {
-            LONG_PTR style = GetWindowLongPtrW(dlg, GWL_STYLE);
-            style = (style & ~(LONG_PTR)(WS_POPUP | WS_CAPTION)) | WS_CHILD;
-            SetWindowLongPtrW(dlg, GWL_STYLE, style);
-            SetParent(dlg, (HWND)(intptr_t)(int32_t)hwndParent);
-        }
         pending_arm_dlgproc = 0;
         LOG(API, "[API] CreateDialogIndirectParamW(parent=0x%X, dlgproc=0x%08X) -> HWND=0x%p (err=%lu)\n",
             hwndParent, arm_dlgProc, dlg, dlg ? 0UL : GetLastError());

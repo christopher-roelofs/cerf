@@ -231,8 +231,25 @@ void Win32Thunks::RegisterSystemHandlers() {
         }
         regs[0] = 1; return true;
     });
-    Thunk("SystemParametersInfoW", 89, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = SystemParametersInfoW(regs[0], regs[1], NULL, regs[3]); return true;
+    Thunk("SystemParametersInfoW", 89, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        UINT uiAction = regs[0], uiParam = regs[1];
+        uint32_t pvParam = regs[2];
+        UINT fWinIni = regs[3];
+        if (uiAction == SPI_GETWORKAREA && pvParam) {
+            /* Marshal RECT from native → emulated memory */
+            RECT wa;
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+            mem.Write32(pvParam + 0,  (uint32_t)wa.left);
+            mem.Write32(pvParam + 4,  (uint32_t)wa.top);
+            mem.Write32(pvParam + 8,  (uint32_t)wa.right);
+            mem.Write32(pvParam + 12, (uint32_t)wa.bottom);
+            LOG(API, "[API] SystemParametersInfoW(SPI_GETWORKAREA) -> {%d,%d,%d,%d}\n",
+                wa.left, wa.top, wa.right, wa.bottom);
+            regs[0] = 1;
+        } else {
+            regs[0] = SystemParametersInfoW(uiAction, uiParam, NULL, fWinIni);
+        }
+        return true;
     });
     Thunk("GlobalMemoryStatus", 88, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t ptr = regs[0];
