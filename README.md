@@ -4,6 +4,8 @@
 
 Run original Windows CE ARM applications on modern desktop Windows.
 
+![Screenshot](screenshot.png)
+
 CERF is an ARM CPU emulator and Win32 API compatibility layer that executes WinCE ARM binaries natively on x64 Windows. It includes a full ARMv5 instruction set interpreter (ARM + Thumb modes), a PE loader for WinCE executables, and a comprehensive Win32 API thunking layer that translates COREDLL calls to native desktop Win32 APIs.
 
 ## Usage
