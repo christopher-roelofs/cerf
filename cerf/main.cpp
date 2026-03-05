@@ -103,9 +103,10 @@ int main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             PrintUsage(argv[0]);
             return 0;
-        } else {
+        } else if (!exe_path) {
             exe_path = argv[i];
         }
+        /* Arguments after exe_path are for the ARM app (visible via GetCommandLineW) */
     }
 
     /* Apply --no-log after everything else */

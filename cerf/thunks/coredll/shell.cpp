@@ -232,6 +232,16 @@ void Win32Thunks::RegisterShellHandlers() {
             }
         }
         std::wstring mapped_file = file.empty() ? L"" : MapWinCEPath(file);
+        /* WinCE resolves bare filenames by searching \Windows\.
+           If the mapped path doesn't exist, try \Windows\<filename>. */
+        if (!mapped_file.empty() && GetFileAttributesW(mapped_file.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            std::wstring win_path = L"\\Windows\\" + file;
+            std::wstring win_mapped = MapWinCEPath(win_path);
+            if (GetFileAttributesW(win_mapped.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                LOG(API, "[API]   -> resolved '%ls' via \\Windows\\ search path\n", file.c_str());
+                mapped_file = win_mapped;
+            }
+        }
         /* Check if the target is a WinCE ARM executable — spawn cerf.exe */
         if (!mapped_file.empty() && IsArmPE(mapped_file)) {
             wchar_t cerf_path[MAX_PATH];
@@ -241,6 +251,10 @@ void Win32Thunks::RegisterShellHandlers() {
             cmdline += L"\" \"";
             cmdline += mapped_file;
             cmdline += L"\"";
+            if (!params.empty()) {
+                cmdline += L" ";
+                cmdline += params;
+            }
             LOG(API, "[API]   -> ARM PE detected, spawning cerf: %ls\n", cmdline.c_str());
             STARTUPINFOW si = {}; si.cb = sizeof(si);
             PROCESS_INFORMATION pi = {};

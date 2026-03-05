@@ -840,7 +840,7 @@ REGEDIT4
 "Cnct"="`Desktop @ 19200`"
 
 [HKEY_CURRENT_USER\ControlPanel\Desktop]
-"wallpaper"="\\Windows\\WindowsCE.jpg"
+"wallpaper"="\\Windows\\windowsce.bmp"
 
 [HKEY_CURRENT_USER\ControlPanel\Notifications]
 

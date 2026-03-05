@@ -142,6 +142,10 @@ LOG(API, "[API] FunctionName(...) -> stub\n");
 ```
 Never create a silent stub that just returns a value without logging. This is critical for debugging which functions apps actually call.
 
+## IMPORTANT: No Faking Real Functionality
+
+**NEVER replace real WinCE functionality with native/fake implementations** (e.g. intercepting ShellExecuteEx to show a Win11 dialog instead of running the actual ARM binary). If an ARM binary exists for the task, run it. Only implement native workarounds when explicitly permitted by the user. When in doubt, ASK first — don't mock, stub, or substitute real app behavior with host-native shortcuts.
+
 ## IMPORTANT: Known Issues Tracking
 
 **Log debugging findings, root causes, and fixes into `known_issues/<app>.md` files.** These serve as a reference for future sessions — when revisiting an app, check its known_issues file first to avoid re-investigating solved problems. Each issue should document:
