@@ -16,6 +16,7 @@ namespace Log {
         REG    = 1 << 5,
         DBG    = 1 << 6,
         VFS    = 1 << 7,
+        THEME  = 1 << 8,
         ALL    = 0xFFFFFFFF
     };
 

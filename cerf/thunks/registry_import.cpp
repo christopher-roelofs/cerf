@@ -106,6 +106,18 @@ void Win32Thunks::ImportRegFile(const std::string& path) {
             val_str = line.substr(eq + 2);
         } else continue;
 
+        /* Handle line continuations: .reg hex values end lines with '\' to
+           continue on the next line.  Concatenate all continuation lines. */
+        while (!val_str.empty() && val_str.back() == '\\') {
+            std::string next;
+            if (!std::getline(f, next)) break;
+            if (!next.empty() && next.back() == '\r') next.pop_back();
+            /* Strip leading whitespace from continuation line */
+            size_t start = next.find_first_not_of(" \t");
+            if (start != std::string::npos)
+                val_str += next.substr(start);
+        }
+
         RegValue val = {};
         if (ParseRegFileValue(val_str, val))
             registry[current_key].values[val_name] = val;

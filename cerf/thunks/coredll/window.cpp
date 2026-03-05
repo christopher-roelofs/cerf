@@ -182,6 +182,8 @@ void Win32Thunks::RegisterWindowHandlers() {
                 InstallCaptionOk(hwnd);
                 LOG(API, "[API]   WS_EX_CAPTIONOKBTN tracked for HWND=0x%p\n", hwnd);
             }
+            /* Apply WinCE theme (strip UxTheme, set title bar color) */
+            ApplyWindowTheme(hwnd, is_toplevel);
             /* On real WinCE, the default system font is Tahoma (from SYSFNT registry).
                On desktop Windows, native controls default to Segoe UI.
                Send WM_SETFONT with the WinCE system font to child controls so they

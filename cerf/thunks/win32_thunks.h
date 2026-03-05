@@ -181,6 +181,17 @@ public:
     bool fake_screen_resolution = true;
     uint32_t screen_width  = WINCE_SCREEN_WIDTH_DEFAULT;
     uint32_t screen_height = WINCE_SCREEN_HEIGHT_DEFAULT;
+
+    /* WinCE theming (from cerf.ini).
+       enable_theming: load system colors from WinCE registry, apply via IAT hooks.
+       disable_uxtheme: strip UxTheme visual styles from emulated windows. */
+    bool enable_theming = false;
+    bool disable_uxtheme = false;
+    void InitWceTheme();
+    void ApplyWindowTheme(HWND hwnd, bool is_toplevel);
+    void UpdateWceThemeColor(int index, COLORREF color);
+    COLORREF GetWceThemeColor(int index);
+    HBRUSH GetWceThemeBrush(int index);
 private:
 
     /* Virtual filesystem device paths */

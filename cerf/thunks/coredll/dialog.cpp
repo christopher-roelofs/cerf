@@ -167,6 +167,14 @@ void Win32Thunks::RegisterDialogHandlers() {
             InstallCaptionOk(dlg);
             LOG(API, "[API]   Dialog HWND=0x%p has WS_EX_CAPTIONOKBTN\n", dlg);
         }
+        if (dlg) {
+            /* Apply WinCE theme to dialog and all its child controls */
+            ApplyWindowTheme(dlg, true);
+            EnumChildWindows(dlg, [](HWND child, LPARAM lp) -> BOOL {
+                ((Win32Thunks*)lp)->ApplyWindowTheme(child, false);
+                return TRUE;
+            }, (LPARAM)this);
+        }
         regs[0] = (uint32_t)(uintptr_t)dlg;
         return true;
     });
@@ -189,6 +197,12 @@ void Win32Thunks::RegisterDialogHandlers() {
                 InstallCaptionOk(dlg);
                 LOG(API, "[API]   Modal dialog HWND=0x%p has WS_EX_CAPTIONOKBTN\n", dlg);
             }
+            /* Apply WinCE theme to modal dialog and all its child controls */
+            ApplyWindowTheme(dlg, true);
+            EnumChildWindows(dlg, [](HWND child, LPARAM lp) -> BOOL {
+                ((Win32Thunks*)lp)->ApplyWindowTheme(child, false);
+                return TRUE;
+            }, (LPARAM)this);
             uint32_t args[4] = { (uint32_t)(uintptr_t)dlg, WM_INITDIALOG, 0, (uint32_t)initParam };
             callback_executor(arm_dlgProc, args, 4);
         }

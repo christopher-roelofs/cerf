@@ -28,6 +28,7 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
         std::string line;
         while (std::getline(ini, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == ';' || line[0] == '#') continue;
             if (line.substr(0, 7) == "device=") {
                 device_name = line.substr(7);
                 /* Trim whitespace */
@@ -47,6 +48,19 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
                 while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
                     val.pop_back();
                 fake_screen_resolution = (val != "false" && val != "0" && val != "no");
+            }
+            if (line.substr(0, 15) == "enable_theming=") {
+                std::string val = line.substr(15);
+                while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+                    val.pop_back();
+                enable_theming = (val == "true" || val == "1" || val == "yes");
+                LOG(VFS, "[VFS] enable_theming=%d\n", enable_theming);
+            }
+            if (line.substr(0, 16) == "disable_uxtheme=") {
+                std::string val = line.substr(16);
+                while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+                    val.pop_back();
+                disable_uxtheme = (val == "true" || val == "1" || val == "yes");
             }
         }
     }
@@ -73,6 +87,10 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
     /* Now that device_dir is set, initialize the WinCE system font from registry.
        This was deferred from the constructor because LoadRegistry needs device_dir. */
     InitWceSysFont();
+
+    /* Initialize WinCE theming (IAT hooks for system colors, UxTheme stripping).
+       Must run after registry is available. */
+    InitWceTheme();
 }
 
 /* Helper: check if a character is a drive letter */

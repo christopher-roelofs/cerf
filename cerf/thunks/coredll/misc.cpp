@@ -375,7 +375,23 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("GetKeyState", 860, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)GetKeyState((int)regs[0]); return true;
     });
-    Thunk("SetSysColors", 890, stub0("SetSysColors"));
+    Thunk("SetSysColors", 890, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* SetSysColors(cElements, lpaElements, lpaRgbValues)
+           r0=count, r1=ptr to int array of COLOR_* indices, r2=ptr to COLORREF array */
+        int count = (int)regs[0];
+        uint32_t pIndices = regs[1];
+        uint32_t pColors = regs[2];
+        LOG(API, "[API] SetSysColors(count=%d)\n", count);
+        if (enable_theming && pIndices && pColors) {
+            for (int i = 0; i < count; i++) {
+                int idx = (int)mem.Read32(pIndices + i * 4);
+                COLORREF color = mem.Read32(pColors + i * 4);
+                UpdateWceThemeColor(idx, color);
+            }
+        }
+        regs[0] = 1;
+        return true;
+    });
     Thunk("GetAsyncKeyState", 826, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)GetAsyncKeyState((int)regs[0]); return true;
     });

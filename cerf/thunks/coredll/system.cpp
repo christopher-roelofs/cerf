@@ -62,21 +62,31 @@ void Win32Thunks::RegisterSystemHandlers() {
         LOG(API, "[API] GetSystemMetrics(%d) -> %d\n", idx, regs[0]);
         return true;
     });
-    Thunk("GetSysColor", 889, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* WinCE passes color indices with 0x40000000 flag — strip it.
-           WinCE added COLOR_STATIC=25 and COLOR_STATICTEXT=26 which don't
-           exist on desktop Windows (index 25 is undefined, 26 is COLOR_HOTLIGHT).
-           Map them to appropriate desktop equivalents. */
+    Thunk("GetSysColor", 889, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        /* WinCE passes color indices with 0x40000000 flag — strip it. */
         int idx = regs[0] & 0x3FFFFFFF;
-        if (idx == 25) idx = COLOR_3DFACE;     /* WinCE COLOR_STATIC */
-        else if (idx == 26) idx = COLOR_WINDOWTEXT; /* WinCE COLOR_STATICTEXT */
-        regs[0] = GetSysColor(idx); return true;
+        /* When theming is active, return WinCE colors directly (including
+           WinCE-only indices 25=COLOR_STATIC, 26=COLOR_STATICTEXT). */
+        if (enable_theming) {
+            regs[0] = GetWceThemeColor(idx);
+        } else {
+            /* Without theming, map WinCE-only colors to desktop equivalents */
+            if (idx == 25) idx = COLOR_3DFACE;
+            else if (idx == 26) idx = COLOR_WINDOWTEXT;
+            regs[0] = GetSysColor(idx);
+        }
+        return true;
     });
-    Thunk("GetSysColorBrush", 937, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("GetSysColorBrush", 937, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         int idx = regs[0] & 0x3FFFFFFF;
-        if (idx == 25) idx = COLOR_3DFACE;
-        else if (idx == 26) idx = COLOR_WINDOWTEXT;
-        regs[0] = (uint32_t)(uintptr_t)GetSysColorBrush(idx); return true;
+        if (enable_theming) {
+            regs[0] = (uint32_t)(uintptr_t)GetWceThemeBrush(idx);
+        } else {
+            if (idx == 25) idx = COLOR_3DFACE;
+            else if (idx == 26) idx = COLOR_WINDOWTEXT;
+            regs[0] = (uint32_t)(uintptr_t)GetSysColorBrush(idx);
+        }
+        return true;
     });
     Thunk("GetTickCount", 535, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetTickCount(); return true;
