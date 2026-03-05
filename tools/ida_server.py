@@ -92,11 +92,11 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _get_instance_id():
-    """Derive a human-readable instance ID from the loaded binary."""
+    """Derive instance ID from the loaded binary's full path."""
     try:
         path = idaapi.get_input_file_path()
         if path:
-            return os.path.basename(path)
+            return path
     except Exception:
         pass
     return "unknown"
@@ -111,7 +111,6 @@ def _register_instance(port):
     pid = os.getpid()
     info = {
         "instance_id": instance_id,
-        "file_path": idaapi.get_input_file_path() or "",
         "port": port,
         "pid": pid,
         "host": "127.0.0.1",

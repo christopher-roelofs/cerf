@@ -123,12 +123,12 @@ def _discover_live_instances(force: bool = False) -> list[dict[str, Any]]:
 
 def _resolve_target(target: Optional[str]) -> dict[str, Any]:
     """
-    Resolve a target name to a single instance record.
+    Resolve a target to a single instance record.
 
     - If target is None and exactly one instance is running, auto-select it.
     - If target is None and multiple are running, raise with a listing.
-    - Match by exact instance_id, or "name:pid" for disambiguation,
-      or case-insensitive substring as a fallback.
+    - Match by exact instance_id (full path) first, then case-insensitive
+      substring on the full path.
     """
     instances = _discover_live_instances()
 
@@ -140,52 +140,33 @@ def _resolve_target(target: Optional[str]) -> dict[str, Any]:
     if target is None:
         if len(instances) == 1:
             return instances[0]
-        names = [
-            f'  - "{i["instance_id"]}" (pid {i["pid"]}, port {i["port"]})'
-            for i in instances
-        ]
         raise ToolError(
-            "Multiple IDA instances running. Specify target=<name>:\n"
-            + "\n".join(names)
+            "Multiple IDA instances running. Specify target=<path or substring>:\n"
+            + "\n".join(_instance_label(i) for i in instances)
         )
 
-    # Exact match on instance_id
-    matches = [i for i in instances if i["instance_id"] == target]
-    if len(matches) == 1:
-        return matches[0]
+    # Exact match on instance_id (full path)
+    for inst in instances:
+        if inst["instance_id"] == target:
+            return inst
 
-    # PID-qualified match: "commctrl.dll:12340"
-    if ":" in target:
-        name_part, pid_part = target.rsplit(":", 1)
-        try:
-            pid = int(pid_part)
-            matches = [
-                i for i in instances
-                if i["instance_id"] == name_part and i["pid"] == pid
-            ]
-            if len(matches) == 1:
-                return matches[0]
-        except ValueError:
-            pass
-
-    # Case-insensitive substring fallback
+    # Case-insensitive substring match on full path
     lower_target = target.lower()
     matches = [i for i in instances if lower_target in i["instance_id"].lower()]
     if len(matches) == 1:
         return matches[0]
 
     if len(matches) > 1:
-        names = [
-            f'  - "{i["instance_id"]}" (pid {i["pid"]}, port {i["port"]})'
-            for i in matches
-        ]
         raise ToolError(
             f'Ambiguous target "{target}" matches {len(matches)} instances:\n'
-            + "\n".join(names)
-            + '\nUse full name or "name:pid" to disambiguate.'
+            + "\n".join(_instance_label(i) for i in matches)
+            + "\nUse a more specific substring to disambiguate."
         )
 
-    raise ToolError(f'No IDA instance found matching "{target}".')
+    raise ToolError(
+        f'No IDA instance found matching "{target}". Available:\n'
+        + "\n".join(_instance_label(i) for i in instances)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +258,7 @@ def ida_list_instances() -> dict[str, Any]:
     Call this first to see what targets are available.
 
     Returns:
-        {"count": N, "instances": [{"instance_id", "file_path", "port", "pid", "started_at"}, ...]}
+        {"count": N, "instances": [{"instance_id", "port", "pid", "started_at"}, ...]}
     """
     instances = _discover_live_instances(force=True)
     # Strip host field from output (always 127.0.0.1), keep it clean
@@ -285,7 +266,6 @@ def ida_list_instances() -> dict[str, Any]:
     for inst in instances:
         cleaned.append({
             "instance_id": inst.get("instance_id"),
-            "file_path": inst.get("file_path"),
             "port": inst.get("port"),
             "pid": inst.get("pid"),
             "started_at": inst.get("started_at"),
@@ -305,7 +285,7 @@ def ida_ping(target: Optional[str] = None) -> dict[str, Any]:
     Health check. Returns IDA version, Hex-Rays availability, and readonly status.
 
     Args:
-        target: IDA instance to query (e.g. "commctrl.dll"). Optional if only one instance is running.
+        target: IDA instance to query (e.g. "commctrl" or full path). Optional if only one instance is running.
     """
     return _ida_get(target, "/api/ping")
 
