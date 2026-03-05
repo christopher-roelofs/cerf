@@ -1,22 +1,22 @@
 /* WinCE Theme Engine
    Loads system colors from the WinCE registry (HKLM\SYSTEM\GWE\SysColor)
-   and applies them to the process using SetSysColors + per-window UxTheme stripping.
+   and applies them per-process via window subclassing. Zero global side effects.
 
-   SetSysColors updates the kernel-managed shared color table that ALL painting
-   code reads from (title bars, button faces, dialog backgrounds, scrollbars, etc.).
-   This is the only way to change these colors — inline/IAT hooking of GetSysColor
-   doesn't work because internal user32 painting reads the table directly.
-
-   To minimize impact on other applications:
-   - Original colors are saved before modification
-   - Colors are restored on process exit (atexit handler)
-   - SetWindowTheme strips UxTheme per-window for classic look */
+   Approach:
+   - Every cerf window gets a theme subclass proc (via SetWindowSubclass)
+   - The subclass intercepts WM_CTLCOLOR*, WM_ERASEBKGND, WM_NCPAINT
+   - Returns themed brushes and colors for control/dialog backgrounds
+   - Custom-paints the title bar (caption) for top-level windows
+   - SetWindowTheme strips UxTheme per-window for classic WinCE look
+   - No SetSysColors, no global changes, completely per-process */
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 #include "win32_thunks.h"
 #include "../log.h"
 #include <uxtheme.h>
+#include <commctrl.h>
 #pragma comment(lib, "uxtheme")
+#pragma comment(lib, "comctl32")
 
 /* Number of WinCE system color indices (COLOR_SCROLLBAR=0 through COLOR_STATICTEXT=26) */
 #define WCE_NUM_SYSCOLORS 27
@@ -25,10 +25,6 @@
 static bool g_theme_active = false;
 static COLORREF g_wce_colors[WCE_NUM_SYSCOLORS];
 static HBRUSH g_wce_brushes[WCE_NUM_SYSCOLORS];
-
-/* Saved original system colors (for restoration on exit) */
-static COLORREF g_original_colors[WCE_NUM_SYSCOLORS];
-static bool g_colors_saved = false;
 
 /* Default WinCE 5.0 "Windows Standard" system colors.
    COLORREF format: 0x00BBGGRR. */
@@ -62,23 +58,223 @@ static const COLORREF wce5_default_colors[WCE_NUM_SYSCOLORS] = {
     0x00000000, /* 26 COLOR_STATICTEXT        RGB(0,0,0)       black */
 };
 
-/* Color index array for SetSysColors (indices 0-26) */
-static const INT g_color_indices[WCE_NUM_SYSCOLORS] = {
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
-};
+/* ======================================================================
+   Themed Brush Helpers
+   ====================================================================== */
 
-/* Restore original system colors (atexit handler) */
-static void RestoreOriginalColors() {
-    if (g_colors_saved) {
-        SetSysColors(WCE_NUM_SYSCOLORS, g_color_indices, g_original_colors);
-        LOG(THEME, "[THEME] Restored original system colors\n");
-    }
+static HBRUSH GetThemedBrush(int color_idx) {
+    if (color_idx < 0 || color_idx >= WCE_NUM_SYSCOLORS) return NULL;
+    if (!g_wce_brushes[color_idx])
+        g_wce_brushes[color_idx] = CreateSolidBrush(g_wce_colors[color_idx]);
+    return g_wce_brushes[color_idx];
 }
 
-/* Apply our WinCE colors to the system */
-static void ApplyWceColors() {
-    SetSysColors(WCE_NUM_SYSCOLORS, g_color_indices, g_wce_colors);
+static COLORREF GetThemedColor(int color_idx) {
+    if (color_idx >= 0 && color_idx < WCE_NUM_SYSCOLORS)
+        return g_wce_colors[color_idx];
+    return GetSysColor(color_idx);
+}
+
+/* ======================================================================
+   Theme Subclass Proc — handles painting messages for themed windows
+   ====================================================================== */
+
+#define THEME_SUBCLASS_ID 0xCE0F0002
+
+/* refData: 1 = top-level window, 0 = child control */
+static LRESULT CALLBACK ThemeSubclassProc(
+    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR subclassId, DWORD_PTR refData)
+{
+    bool is_toplevel = (refData != 0);
+
+    switch (msg) {
+
+    /* ---- WM_CTLCOLOR* messages: return themed brush for control backgrounds ---- */
+    case WM_CTLCOLORDLG: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, GetThemedColor(COLOR_3DFACE));
+        SetTextColor(hdc, GetThemedColor(COLOR_WINDOWTEXT));
+        return (LRESULT)GetThemedBrush(COLOR_3DFACE);
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, GetThemedColor(COLOR_3DFACE));
+        SetTextColor(hdc, GetThemedColor(COLOR_WINDOWTEXT));
+        return (LRESULT)GetThemedBrush(COLOR_3DFACE);
+    }
+    case WM_CTLCOLORBTN: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, GetThemedColor(COLOR_3DFACE));
+        return (LRESULT)GetThemedBrush(COLOR_3DFACE);
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, GetThemedColor(COLOR_WINDOW));
+        SetTextColor(hdc, GetThemedColor(COLOR_WINDOWTEXT));
+        return (LRESULT)GetThemedBrush(COLOR_WINDOW);
+    }
+    case WM_CTLCOLORLISTBOX: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, GetThemedColor(COLOR_WINDOW));
+        SetTextColor(hdc, GetThemedColor(COLOR_WINDOWTEXT));
+        return (LRESULT)GetThemedBrush(COLOR_WINDOW);
+    }
+    case WM_CTLCOLORSCROLLBAR: {
+        return (LRESULT)GetThemedBrush(COLOR_SCROLLBAR);
+    }
+
+    /* ---- WM_ERASEBKGND: fill window background with themed color ---- */
+    case WM_ERASEBKGND: {
+        /* Determine background color from the window class brush */
+        ULONG_PTR cls_brush = GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND);
+        int color_idx = COLOR_3DFACE; /* default for dialogs */
+        if (cls_brush >= 1 && cls_brush <= 31) {
+            color_idx = (int)cls_brush - 1;
+            if (color_idx >= WCE_NUM_SYSCOLORS) color_idx = COLOR_3DFACE;
+        } else if (cls_brush == 0) {
+            /* No class brush — let DefWindowProc handle it */
+            break;
+        } else {
+            /* Actual HBRUSH handle — not a color constant, don't override */
+            break;
+        }
+        HDC hdc = (HDC)wParam;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        FillRect(hdc, &rc, GetThemedBrush(color_idx));
+        return 1;
+    }
+
+    /* ---- WM_NCPAINT: custom title bar for top-level windows ---- */
+    case WM_NCPAINT: {
+        if (!is_toplevel) break;
+
+        /* Let DefWindowProc draw borders and non-caption NC area first */
+        DefSubclassProc(hwnd, msg, wParam, lParam);
+
+        /* Now overdraw the caption bar with our themed color */
+        HDC hdc = GetWindowDC(hwnd);
+        if (!hdc) return 0;
+
+        bool active = (GetForegroundWindow() == hwnd);
+        COLORREF caption_color = GetThemedColor(active ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION);
+        COLORREF text_color = GetThemedColor(active ? COLOR_CAPTIONTEXT : COLOR_INACTIVECAPTIONTEXT);
+
+        /* Calculate caption rect in window coordinates */
+        RECT wr;
+        GetWindowRect(hwnd, &wr);
+        int winW = wr.right - wr.left;
+        int frame = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        int captH = GetSystemMetrics(SM_CYCAPTION);
+        int border_top = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+
+        RECT captRect;
+        captRect.left = frame;
+        captRect.top = border_top;
+        captRect.right = winW - frame;
+        captRect.bottom = border_top + captH;
+
+        /* Fill caption bar */
+        HBRUSH captBrush = CreateSolidBrush(caption_color);
+        FillRect(hdc, &captRect, captBrush);
+        DeleteObject(captBrush);
+
+        /* Draw caption text */
+        wchar_t title[256] = {};
+        GetWindowTextW(hwnd, title, 256);
+        if (title[0]) {
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, text_color);
+
+            /* Use the system caption font */
+            NONCLIENTMETRICSW ncm = {};
+            ncm.cbSize = sizeof(ncm);
+            SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+            HFONT captFont = CreateFontIndirectW(&ncm.lfCaptionFont);
+            HFONT oldFont = (HFONT)SelectObject(hdc, captFont);
+
+            /* Get icon width to offset text */
+            HICON hIcon = (HICON)SendMessageW(hwnd, WM_GETICON, ICON_SMALL, 0);
+            int iconW = hIcon ? GetSystemMetrics(SM_CXSMICON) + 4 : 0;
+
+            RECT textRect = captRect;
+            textRect.left += 4 + iconW;
+            textRect.right -= 4;
+            DrawTextW(hdc, title, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+            SelectObject(hdc, oldFont);
+            DeleteObject(captFont);
+        }
+
+        /* Draw the icon */
+        HICON hIcon = (HICON)SendMessageW(hwnd, WM_GETICON, ICON_SMALL, 0);
+        if (hIcon) {
+            int iconSize = GetSystemMetrics(SM_CXSMICON);
+            int iconY = captRect.top + (captH - iconSize) / 2;
+            DrawIconEx(hdc, captRect.left + 2, iconY, hIcon, iconSize, iconSize, 0, NULL, DI_NORMAL);
+        }
+
+        /* Draw caption buttons (Close [X], Help [?], etc.) with themed colors.
+           Use DrawFrameControl which draws classic-style buttons. */
+        LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+        LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        int btnW = GetSystemMetrics(SM_CXSIZE) - 2;
+        int btnH = captH - 4;
+        int btnY = captRect.top + 2;
+        int btnX = captRect.right - 2;
+
+        /* Close button */
+        if (style & WS_SYSMENU) {
+            btnX -= btnW;
+            RECT btnR = { btnX, btnY, btnX + btnW, btnY + btnH };
+            /* Fill with themed face color */
+            FillRect(hdc, &btnR, GetThemedBrush(COLOR_3DFACE));
+            DrawFrameControl(hdc, &btnR, DFC_CAPTION, DFCS_CAPTIONCLOSE);
+        }
+
+        /* Help button [?] */
+        if (exStyle & WS_EX_CONTEXTHELP) {
+            btnX -= btnW;
+            RECT btnR = { btnX, btnY, btnX + btnW, btnY + btnH };
+            FillRect(hdc, &btnR, GetThemedBrush(COLOR_3DFACE));
+            DrawFrameControl(hdc, &btnR, DFC_CAPTION, DFCS_CAPTIONHELP);
+        }
+
+        /* Max/Min buttons */
+        if (style & WS_MAXIMIZEBOX) {
+            btnX -= btnW;
+            RECT btnR = { btnX, btnY, btnX + btnW, btnY + btnH };
+            FillRect(hdc, &btnR, GetThemedBrush(COLOR_3DFACE));
+            DrawFrameControl(hdc, &btnR, DFC_CAPTION,
+                IsZoomed(hwnd) ? DFCS_CAPTIONRESTORE : DFCS_CAPTIONMAX);
+        }
+        if (style & WS_MINIMIZEBOX) {
+            btnX -= btnW;
+            RECT btnR = { btnX, btnY, btnX + btnW, btnY + btnH };
+            FillRect(hdc, &btnR, GetThemedBrush(COLOR_3DFACE));
+            DrawFrameControl(hdc, &btnR, DFC_CAPTION, DFCS_CAPTIONMIN);
+        }
+
+        ReleaseDC(hwnd, hdc);
+        return 0;
+    }
+
+    case WM_NCACTIVATE: {
+        if (!is_toplevel) break;
+        /* Let default handle it, then repaint our caption */
+        LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
+        /* Trigger our WM_NCPAINT to redraw caption with active/inactive color */
+        SendMessageW(hwnd, WM_NCPAINT, (WPARAM)1, 0);
+        return r;
+    }
+
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, ThemeSubclassProc, THEME_SUBCLASS_ID);
+        break;
+    }
+
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 /* ---- Theme initialization ---- */
@@ -137,21 +333,8 @@ void Win32Thunks::InitWceTheme() {
         /* Initialize brush cache */
         memset(g_wce_brushes, 0, sizeof(g_wce_brushes));
 
-        /* Save original system colors before overwriting */
-        for (int i = 0; i < WCE_NUM_SYSCOLORS; i++)
-            g_original_colors[i] = GetSysColor(i);
-        g_colors_saved = true;
-
-        /* Register atexit handler to restore colors on process exit */
-        atexit(RestoreOriginalColors);
-
-        /* Apply WinCE colors to the system color table.
-           This updates the kernel-shared color table that all painting
-           code reads from — title bars, buttons, dialogs, everything. */
-        ApplyWceColors();
         g_theme_active = true;
-
-        LOG(THEME, "[THEME] WinCE theming active (SetSysColors). Caption=0x%06X, BtnFace=0x%06X, Window=0x%06X\n",
+        LOG(THEME, "[THEME] WinCE theming active (subclass). Caption=0x%06X, BtnFace=0x%06X, Window=0x%06X\n",
             g_wce_colors[COLOR_ACTIVECAPTION],
             g_wce_colors[COLOR_BTNFACE],
             g_wce_colors[COLOR_WINDOW]);
@@ -163,11 +346,16 @@ void Win32Thunks::InitWceTheme() {
 void Win32Thunks::ApplyWindowTheme(HWND hwnd, bool is_toplevel) {
     if (!hwnd) return;
 
-    /* Strip UxTheme visual styles for classic WinCE look.
-       With SetSysColors applied, the classic renderer uses our WinCE
-       colors for everything — title bars, borders, buttons, dialogs. */
+    /* Strip UxTheme visual styles for classic WinCE look */
     if (disable_uxtheme) {
         SetWindowTheme(hwnd, L"", L"");
+    }
+
+    /* Install theme subclass to intercept painting messages.
+       refData = 1 for top-level (custom title bar), 0 for child controls. */
+    if (enable_theming) {
+        SetWindowSubclass(hwnd, ThemeSubclassProc, THEME_SUBCLASS_ID,
+                          is_toplevel ? 1 : 0);
     }
 }
 
@@ -180,9 +368,6 @@ void Win32Thunks::UpdateWceThemeColor(int index, COLORREF color) {
         DeleteObject(g_wce_brushes[index]);
         g_wce_brushes[index] = nullptr;
     }
-    /* Update the system color table too */
-    INT idx = index;
-    SetSysColors(1, &idx, &color);
 }
 
 /* ---- Thunk-level color access (for ARM code calling GetSysColor) ---- */
