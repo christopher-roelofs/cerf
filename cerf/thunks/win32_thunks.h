@@ -48,11 +48,9 @@ inline const ThunkedDllInfo* FindThunkedDllW(const std::wstring& dll_name) {
 #define THUNK_BASE   0xFE000000
 #define THUNK_STRIDE 4
 
-/* Emulated WinCE screen resolution.
-   ARM apps see this as the device screen size via GetSystemMetrics
-   and SystemParametersInfoW(SPI_GETWORKAREA). */
-#define WINCE_SCREEN_WIDTH   800
-#define WINCE_SCREEN_HEIGHT  600
+/* Default emulated WinCE screen resolution (overridable via cerf.ini). */
+#define WINCE_SCREEN_WIDTH_DEFAULT   800
+#define WINCE_SCREEN_HEIGHT_DEFAULT  600
 
 /* WinCE trap-based API call range.
    WinCE apps may call APIs via trap addresses descending from 0xF0010000.
@@ -152,6 +150,10 @@ private:
     LONG wce_sysfont_height = -12;
     LONG wce_sysfont_weight = FW_NORMAL;
     void InitWceSysFont();
+
+    /* Emulated WinCE screen resolution (from cerf.ini, default 800x600) */
+    uint32_t screen_width  = WINCE_SCREEN_WIDTH_DEFAULT;
+    uint32_t screen_height = WINCE_SCREEN_HEIGHT_DEFAULT;
 
     /* Virtual filesystem device paths */
     std::string cerf_dir;        /* Directory containing cerf.exe */

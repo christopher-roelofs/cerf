@@ -26,11 +26,12 @@ Windows CE has a layered DLL architecture. At the bottom is coredll.dll — the 
 ## Why Only coredll Is Thunked
 
 coredll.dll is special — it's the only DLL that interfaces with the WinCE kernel. It provides:
-- Memory management (VirtualAlloc, HeapAlloc)
+- Memory management (VirtualAlloc, HeapAlloc, malloc)
 - Window management (CreateWindowEx, RegisterClass)
 - GDI (CreateDC, BitBlt, TextOut)
 - File I/O, registry, processes, threads
 - C runtime (malloc, printf, memcpy)
+- System info (GetSystemMetrics, SystemParametersInfo)
 
 Every other DLL is implemented entirely in terms of coredll calls. For example, the decompiled source of commctrl.dll's `CommandBands_InsertBands` shows it just calls `CreateWindowExW("ToolbarWindow32")` and `SendMessage` — pure coredll APIs.
 
@@ -38,12 +39,13 @@ This means if we thunk coredll correctly, all the other DLLs can run as real ARM
 
 ## Bundled ARM DLLs
 
-CERF ships with real ARM DLLs from a Windows CE 5.0 build in the `wince_sys/` source directory. At build time, these are copied to `windows/` next to cerf.exe:
+CERF ships with real ARM DLLs from a Windows CE 5.0 build. These live in the device filesystem at `devices/<device>/fs/Windows/` and are copied to the build output:
 
 ```
 build/Release/x64/
   cerf.exe
-  windows/
+  cerf.ini
+  devices/wince5/fs/Windows/
     commctrl.dll    - Common controls (toolbar, listview, treeview, etc.)
     commdlg.dll     - Common dialogs (GetOpenFileName, GetSaveFileName)
     ole32.dll       - COM runtime (CoCreateInstance, etc.)
@@ -75,23 +77,28 @@ coredll.def re-exports some functions from these DLLs under its own ordinals. Ap
 - **GetOpenFileNameW** (488), **GetSaveFileNameW** (489) — from commdlg
 - **SH*** functions (various ordinals) — from ceshell/aygshell
 - **InitCommonControls/Ex** — from commctrl
+- **DPA_*** / **DSA_*** — data structures originally from commctrl
 
-These are implemented as native thunks in `coredll/imagelist.cpp` and `coredll/shell.cpp`.
+These are implemented as native thunks in `coredll/imagelist.cpp`, `coredll/shell.cpp`, `coredll/dpa.cpp`, and `coredll/dsa.cpp`.
 
 ## ARM DLL Loading
 
 When an app calls `LoadLibraryW("commctrl.dll")` or has a static import from a non-coredll DLL, CERF's `LoadArmDll()`:
 
-1. Searches the app's directory, then `windows/` next to cerf.exe
-2. Loads the ARM PE via `PELoader::LoadDll()`
-3. Recursively resolves imports (may load more ARM DLLs)
-4. Calls `DllMain(DLL_PROCESS_ATTACH)` via the callback executor
-5. Returns the base address as the module handle
+1. Checks the `loaded_dlls` cache (avoids reloading)
+2. Searches: app directory → `devices/<device>/fs/Windows/` → raw path
+3. Loads the ARM PE via `PELoader::LoadDll()` into emulated memory (base at 0x10000000+)
+4. Recursively resolves imports (may load more ARM DLLs)
+5. Queues `DllMain(DLL_PROCESS_ATTACH)` for deferred calling via `callback_executor`
+6. Returns the base address as the module handle
 
-## Custom WinCE System Directory
+## Resource Handling
 
-By default, CERF looks for `windows/` next to the executable. Override with:
+ARM DLLs' resources are accessed in two ways:
 
-```
-cerf.exe --wince-sys=C:\path\to\wince\dlls myapp.exe
-```
+1. **In emulated memory**: `FindResourceInPE` walks the 3-level PE resource directory (Type → Name → Language) in emulated memory, returning RVAs.
+2. **Native fallback**: `GetNativeModuleForResources` loads the ARM PE as a data-only native module (`LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE`) for `LoadString`, `LoadBitmap`, etc. Cached per DLL.
+
+## WinCE System Font
+
+The device's WinCE system font is read from `HKLM\System\GDI\SYSFNT` in the registry (default: Tahoma, -12pt, FW_NORMAL). All `GetStockObject(DEFAULT_GUI_FONT)` / `GetStockObject(SYSTEM_FONT)` calls return this font instead of the desktop's default, ensuring ARM apps render with the correct WinCE appearance.

@@ -93,10 +93,9 @@ void Win32Thunks::RegisterWindowHandlers() {
             /* WinCE top-level windows always have a title bar with text.
                Ensure WS_CAPTION is set so desktop Windows draws the title text. */
             style |= WS_CAPTION;
-            RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
             int bw = GetSystemMetrics(SM_CXBORDER), bh = GetSystemMetrics(SM_CYBORDER);
-            x = wa.left-bw; y = wa.top-bh;
-            w = (wa.right-wa.left)+bw*2; h = (wa.bottom-wa.top)+bh*2;
+            x = -bw; y = -bh;
+            w = (int)screen_width+bw*2; h = (int)screen_height+bh*2;
             exStyle |= WS_EX_APPWINDOW;
         } else {
             if (x==(int)0x80000000) x=0; if (y==(int)0x80000000) y=0;

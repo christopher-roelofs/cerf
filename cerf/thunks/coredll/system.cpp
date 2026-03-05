@@ -31,12 +31,12 @@ void Win32Thunks::RegisterSystemHandlers() {
         }
         return true;
     });
-    Thunk("GetSystemMetrics", 885, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("GetSystemMetrics", 885, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         int idx = (int)regs[0];
         /* Return WinCE-compatible screen dimensions so ARM apps see a
            reasonable screen size rather than the desktop's full resolution. */
-        if (idx == SM_CXSCREEN) { regs[0] = WINCE_SCREEN_WIDTH;  LOG(API, "[API] GetSystemMetrics(SM_CXSCREEN) -> %d\n", regs[0]); return true; }
-        if (idx == SM_CYSCREEN) { regs[0] = WINCE_SCREEN_HEIGHT; LOG(API, "[API] GetSystemMetrics(SM_CYSCREEN) -> %d\n", regs[0]); return true; }
+        if (idx == SM_CXSCREEN) { regs[0] = screen_width;  LOG(API, "[API] GetSystemMetrics(SM_CXSCREEN) -> %d\n", regs[0]); return true; }
+        if (idx == SM_CYSCREEN) { regs[0] = screen_height; LOG(API, "[API] GetSystemMetrics(SM_CYSCREEN) -> %d\n", regs[0]); return true; }
         /* WinCE uses 1px edges vs 2px on desktop Windows. ARM commctrl.dll
            toolbar code depends on this for correct button width calculation. */
         if (idx == SM_CXEDGE || idx == SM_CYEDGE) { regs[0] = 1; return true; }
@@ -252,7 +252,7 @@ void Win32Thunks::RegisterSystemHandlers() {
         regs[0] = 1; return true;
     });
     ThunkOrdinal("SystemParametersInfoW", 5403); /* WinCE 7 aygshell uses this ordinal */
-    Thunk("SystemParametersInfoW", 89, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+    Thunk("SystemParametersInfoW", 89, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         UINT uiAction = regs[0], uiParam = regs[1];
         uint32_t pvParam = regs[2];
         UINT fWinIni = regs[3];
@@ -260,10 +260,10 @@ void Win32Thunks::RegisterSystemHandlers() {
             /* Return WinCE-compatible work area */
             mem.Write32(pvParam + 0,  0);    /* left */
             mem.Write32(pvParam + 4,  0);    /* top */
-            mem.Write32(pvParam + 8,  WINCE_SCREEN_WIDTH);   /* right */
-            mem.Write32(pvParam + 12, WINCE_SCREEN_HEIGHT);  /* bottom */
+            mem.Write32(pvParam + 8,  screen_width);   /* right */
+            mem.Write32(pvParam + 12, screen_height);  /* bottom */
             LOG(API, "[API] SystemParametersInfoW(SPI_GETWORKAREA) -> {0,0,%d,%d}\n",
-                WINCE_SCREEN_WIDTH, WINCE_SCREEN_HEIGHT);
+                screen_width, screen_height);
             regs[0] = 1;
         } else if (uiAction == 0xE1 /* WinCE 7 SPI_GETSIPINFO via aygshell */ && pvParam) {
             /* WinCE Soft Input Panel info. Fill SIPINFO struct:
@@ -275,8 +275,8 @@ void Win32Thunks::RegisterSystemHandlers() {
             /* rcVisibleDesktop */
             mem.Write32(pvParam + 8,  0);     /* left */
             mem.Write32(pvParam + 12, 0);     /* top */
-            mem.Write32(pvParam + 16, WINCE_SCREEN_WIDTH);   /* right */
-            mem.Write32(pvParam + 20, WINCE_SCREEN_HEIGHT);  /* bottom */
+            mem.Write32(pvParam + 16, screen_width);   /* right */
+            mem.Write32(pvParam + 20, screen_height);  /* bottom */
             /* rcSipRect = empty (SIP hidden) */
             mem.Write32(pvParam + 24, 0);
             mem.Write32(pvParam + 28, 0);
@@ -285,7 +285,7 @@ void Win32Thunks::RegisterSystemHandlers() {
             mem.Write32(pvParam + 40, 0);  /* dwImDataSize */
             mem.Write32(pvParam + 44, 0);  /* pvImData */
             LOG(API, "[API] SystemParametersInfoW(0x%X/SPI_GETSIPINFO) -> vis={0,0,%d,%d}\n",
-                uiAction, WINCE_SCREEN_WIDTH, WINCE_SCREEN_HEIGHT);
+                uiAction, screen_width, screen_height);
             regs[0] = 1;
         } else {
             regs[0] = SystemParametersInfoW(uiAction, uiParam, NULL, fWinIni);

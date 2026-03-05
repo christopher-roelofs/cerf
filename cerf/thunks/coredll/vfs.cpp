@@ -34,6 +34,14 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
                 while (!device_name.empty() && (device_name.back() == ' ' || device_name.back() == '\t'))
                     device_name.pop_back();
             }
+            if (line.substr(0, 13) == "screen_width=") {
+                int v = atoi(line.substr(13).c_str());
+                if (v > 0) screen_width = (uint32_t)v;
+            }
+            if (line.substr(0, 14) == "screen_height=") {
+                int v = atoi(line.substr(14).c_str());
+                if (v > 0) screen_height = (uint32_t)v;
+            }
         }
     }
     /* CLI override takes priority */
