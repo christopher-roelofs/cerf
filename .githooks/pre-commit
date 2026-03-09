@@ -1,0 +1,24 @@
+#!/bin/bash
+# Pre-commit hook: reject source files larger than 300 lines.
+# Checks only staged .cpp, .h, .py files.
+#
+# Install: git config core.hooksPath .githooks
+
+MAX_LINES=300
+FAIL=0
+
+for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|h|py)$'); do
+    if [ -f "$file" ]; then
+        lines=$(wc -l < "$file" | tr -d ' ')
+        if [ "$lines" -gt "$MAX_LINES" ]; then
+            echo "ERROR: $file has $lines lines (max $MAX_LINES)"
+            FAIL=1
+        fi
+    fi
+done
+
+if [ "$FAIL" -eq 1 ]; then
+    echo ""
+    echo "Split large files before committing."
+    exit 1
+fi
