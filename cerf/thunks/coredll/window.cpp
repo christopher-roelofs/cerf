@@ -249,6 +249,29 @@ void Win32Thunks::RegisterWindowHandlers() {
         int swp_x = (int)regs[2], swp_y = (int)regs[3];
         int swp_cx = (int)ReadStackArg(regs,mem,0), swp_cy = (int)ReadStackArg(regs,mem,1);
         UINT swp_flags = ReadStackArg(regs,mem,2);
+        /* For top-level WS_CAPTION windows, the ARM code passes WinCE window
+           dimensions (1px border + thin caption). Inflate to desktop frame
+           just like CreateWindowExW and MoveWindow do. */
+        if (!(swp_flags & SWP_NOSIZE) && swp_cx > 0 && swp_cy > 0) {
+            LONG swp_style = GetWindowLongW(hw, GWL_STYLE);
+            /* Inflate for any non-child WS_CAPTION window, including owned popup
+               dialogs (property sheets, etc.) where GetParent()!=NULL. */
+            if (!(swp_style & WS_CHILD) && (swp_style & WS_CAPTION)) {
+                DWORD exStyle = (DWORD)GetWindowLongW(hw, GWL_EXSTYLE);
+                int cyCaption = GetSystemMetrics(SM_CYCAPTION);
+                int orig_cx = swp_cx, orig_cy = swp_cy;
+                int client_w = swp_cx - 2;
+                int client_h = swp_cy - 2 - cyCaption;
+                if (client_w < 1) client_w = 1;
+                if (client_h < 1) client_h = 1;
+                RECT rc = {0, 0, client_w, client_h};
+                AdjustWindowRectEx(&rc, swp_style, FALSE, exStyle);
+                swp_cx = rc.right - rc.left;
+                swp_cy = rc.bottom - rc.top;
+                LOG(API, "[API] SetWindowPos INFLATE hwnd=%p: WinCE(%dx%d)->client(%dx%d)->native(%dx%d) style=0x%lX exStyle=0x%lX\n",
+                    hw, orig_cx, orig_cy, client_w, client_h, swp_cx, swp_cy, (unsigned long)swp_style, (unsigned long)exStyle);
+            }
+        }
         LOG(API, "[API] SetWindowPos(hwnd=0x%p, x=%d, y=%d, cx=%d, cy=%d, flags=0x%X)\n",
             hw, swp_x, swp_y, swp_cx, swp_cy, swp_flags);
         regs[0] = SetWindowPos(hw, (HWND)(intptr_t)(int32_t)regs[1], swp_x, swp_y, swp_cx, swp_cy, swp_flags);
@@ -260,9 +283,9 @@ void Win32Thunks::RegisterWindowHandlers() {
         int mw_h = (int)ReadStackArg(regs,mem,0); BOOL mw_rep = ReadStackArg(regs,mem,1);
         /* For top-level WS_CAPTION windows, the app passes WinCE window
            dimensions.  Inflate to desktop frame just like CreateWindowExW. */
-        HWND mw_parent = GetParent(hw);
         LONG mw_style = GetWindowLongW(hw, GWL_STYLE);
-        if (mw_parent == NULL && !(mw_style & WS_CHILD) && (mw_style & WS_CAPTION) && mw_w > 0 && mw_h > 0) {
+        /* Inflate for any non-child WS_CAPTION window, including owned popups. */
+        if (!(mw_style & WS_CHILD) && (mw_style & WS_CAPTION) && mw_w > 0 && mw_h > 0) {
             DWORD exStyle = (DWORD)GetWindowLongW(hw, GWL_EXSTYLE);
             int cyCaption = GetSystemMetrics(SM_CYCAPTION);
             int client_w = mw_w - 2;

@@ -55,9 +55,17 @@ void Win32Thunks::RegisterSystemHandlers() {
                 return true;
             }
         }
-        /* WinCE uses 1px edges vs 2px on desktop Windows. ARM commctrl.dll
-           toolbar code depends on this for correct button width calculation. */
+        /* WinCE uses 1px borders/edges everywhere — override all frame-related
+           metrics so ARM code computes WinCE-compatible window sizes.
+           Our CreateWindowExW/MoveWindow/SetWindowPos inflation thunks assume
+           ARM code uses 1px borders (subtracting 2 total).  If ARM code sees
+           native SM_CXDLGFRAME=3 or SM_CXFRAME=4, it computes oversized window
+           dimensions, causing extra space in the client area after inflation. */
         if (idx == SM_CXEDGE || idx == SM_CYEDGE) { regs[0] = 1; return true; }
+        /* SM_CXBORDER(5)/SM_CYBORDER(6) are already 1 on desktop — no override needed */
+        if (idx == SM_CXDLGFRAME || idx == SM_CYDLGFRAME) { regs[0] = 1; return true; }
+        if (idx == SM_CXFRAME || idx == SM_CYFRAME) { regs[0] = 1; return true; }
+        if (idx == 92 /* SM_CXPADDEDBORDER */) { regs[0] = 0; return true; }
         regs[0] = GetSystemMetrics(idx);
         LOG(API, "[API] GetSystemMetrics(%d) -> %d\n", idx, regs[0]);
         return true;

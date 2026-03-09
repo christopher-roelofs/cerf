@@ -71,16 +71,37 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
            Applied universally (not just tracked HWNDs) because WM_CREATE fires
            during CreateWindowExW before the HWND can be added to a tracking set. */
         if (ret) {
-            HWND parent = GetParent(hw);
             LONG style = GetWindowLongW(hw, GWL_STYLE);
-            if (parent == NULL && !(style & WS_CHILD) && (style & WS_CAPTION)) {
+            /* WinCE-equivalent rect for any non-child WS_CAPTION window, including
+               owned popup dialogs (property sheets, etc.) where GetParent()!=NULL.
+               Without this, ARM code sees native desktop frame sizes (thick borders)
+               and computes oversized window dimensions. */
+            if (!(style & WS_CHILD) && (style & WS_CAPTION)) {
+                RECT native_rc = rc;
                 RECT client_rc; GetClientRect(hw, &client_rc);
                 POINT client_tl = {0, 0}; ClientToScreen(hw, &client_tl);
                 int cyCaption = GetSystemMetrics(SM_CYCAPTION);
+                /* If this HWND has a DLU-based client override (desktop minimum
+                   width is larger than the DLU-specified size), use the override
+                   so ARM sizing code computes growth from the correct small size. */
+                int cw = client_rc.right, ch = client_rc.bottom;
+                if (hw == dlu_override_hwnd && dlu_override_client_w > 0) {
+                    cw = dlu_override_client_w;
+                    ch = dlu_override_client_h;
+                    /* Clear after first use — the override is only needed for the
+                       initial GetWindowRect that ARM sizing code uses to compute
+                       growth.  Subsequent calls should see the real dimensions. */
+                    dlu_override_hwnd = nullptr;
+                    LOG(API, "[API] GetWindowRect DLU override hwnd=%p: actual_client(%ldx%ld)->override_client(%dx%d)\n",
+                        hw, client_rc.right, client_rc.bottom, cw, ch);
+                }
                 rc.left   = client_tl.x - 1;
                 rc.top    = client_tl.y - cyCaption - 1;
-                rc.right  = client_tl.x + client_rc.right + 1;
-                rc.bottom = client_tl.y + client_rc.bottom + 1;
+                rc.right  = client_tl.x + cw + 1;
+                rc.bottom = client_tl.y + ch + 1;
+                LOG(API, "[API] GetWindowRect WinCE hwnd=%p: native(%ld,%ld,%ld,%ld)->wince(%ld,%ld,%ld,%ld) client=%dx%d\n",
+                    hw, native_rc.left, native_rc.top, native_rc.right, native_rc.bottom,
+                    rc.left, rc.top, rc.right, rc.bottom, cw, ch);
             }
         }
         mem.Write32(regs[1],rc.left); mem.Write32(regs[1]+4,rc.top);

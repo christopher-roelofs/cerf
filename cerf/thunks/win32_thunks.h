@@ -136,6 +136,18 @@ public:
     /* Stashed ARM DlgProc for CreateDialogIndirectParamW: WM_INITDIALOG is sent
        during the API call before it returns, so hwnd_dlgproc_map isn't populated yet. */
     static uint32_t pending_arm_dlgproc;
+    /* Stashed template DLU dimensions for pre-INITDIALOG resize: desktop Windows
+       enforces a minimum width for captioned windows that WinCE doesn't have.
+       We resize to DLU-based dimensions BEFORE WM_INITDIALOG so ARM code
+       (e.g. InitPropSheetDlg) sees the correct small size. */
+    static uint16_t pending_template_cx;
+    static uint16_t pending_template_cy;
+    /* During WM_INITDIALOG dispatch, override GetWindowRect to return DLU-based
+       client dimensions instead of the inflated desktop minimum.  This lets ARM
+       sizing code (e.g. InitPropSheetDlg) compute correct growth. */
+    static HWND dlu_override_hwnd;
+    static int dlu_override_client_w;
+    static int dlu_override_client_h;
     /* HWNDs created with WS_EX_CAPTIONOKBTN (0x80000000).  Style is stripped
        before native CreateWindowEx, but tracked here so WM_CLOSE is converted
        to WM_COMMAND(IDOK) and GetWindowLongW reports the original style. */

@@ -146,6 +146,9 @@ void Win32Thunks::RegisterDialogHandlers() {
         LPARAM initParam = (LPARAM)ReadStackArg(regs, mem, 0);
         auto tmpl = CopyDlgTemplate(mem, lpTemplate);
         bool has_captionok = FixupDlgTemplate(tmpl, wce_sysfont_name);
+        /* Extract template dimensions for post-creation fixup */
+        uint16_t t_cx = *(uint16_t*)&tmpl[14], t_cy = *(uint16_t*)&tmpl[16];
+        LOG(API, "[API] CreateDialogIndirectParamW: template cx=%u cy=%u\n", t_cx, t_cy);
         /* Use the ARM module's native resource handle so SS_ICON/SS_BITMAP
            controls in the dialog template find their resources correctly. */
         HMODULE native_mod = GetNativeModuleForResources(hInst);
@@ -153,9 +156,13 @@ void Win32Thunks::RegisterDialogHandlers() {
         /* Pre-register the ARM dlgproc so EmuDlgProc can dispatch WM_INITDIALOG
            which is sent during CreateDialogIndirectParamW before it returns. */
         pending_arm_dlgproc = arm_dlgProc;
+        pending_template_cx = t_cx;
+        pending_template_cy = t_cy;
         HWND dlg = CreateDialogIndirectParamW(dlg_inst,
             (LPCDLGTEMPLATEW)tmpl.data(), (HWND)(intptr_t)(int32_t)hwndParent, EmuDlgProc, initParam);
         pending_arm_dlgproc = 0;
+        pending_template_cx = 0;
+        pending_template_cy = 0;
         LOG(API, "[API] CreateDialogIndirectParamW(parent=0x%X, dlgproc=0x%08X) -> HWND=0x%p (err=%lu)\n",
             hwndParent, arm_dlgProc, dlg, dlg ? 0UL : GetLastError());
         /* Only set the DlgProc if it wasn't already updated during WM_INITDIALOG
@@ -279,7 +286,10 @@ void Win32Thunks::RegisterDialogHandlers() {
         rc.top    = (int32_t)mem.Read32(rect_addr + 4);
         rc.right  = (int32_t)mem.Read32(rect_addr + 8);
         rc.bottom = (int32_t)mem.Read32(rect_addr + 12);
+        RECT dlu = rc; /* save DLU values for logging */
         BOOL ret = MapDialogRect(hwnd, &rc);
+        LOG(API, "[API] MapDialogRect(hwnd=%p) DLU{%ld,%ld,%ld,%ld} -> PX{%ld,%ld,%ld,%ld}\n",
+            hwnd, dlu.left, dlu.top, dlu.right, dlu.bottom, rc.left, rc.top, rc.right, rc.bottom);
         mem.Write32(rect_addr + 0,  (uint32_t)rc.left);
         mem.Write32(rect_addr + 4,  (uint32_t)rc.top);
         mem.Write32(rect_addr + 8,  (uint32_t)rc.right);
