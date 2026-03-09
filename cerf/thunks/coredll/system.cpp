@@ -121,12 +121,31 @@ void Win32Thunks::RegisterSystemHandlers() {
     });
     Thunk("GetSystemInfo", 542, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         if (regs[0]) {
-            SYSTEM_INFO si; GetSystemInfo(&si);
-            mem.Write32(regs[0]+0, 0); mem.Write32(regs[0]+4, si.dwPageSize);
-            mem.Write32(regs[0]+8, 0x10000); mem.Write32(regs[0]+12, 0x7FFFFFFF);
-            mem.Write32(regs[0]+20, 1); mem.Write32(regs[0]+24, 0x4);
+            uint32_t p = regs[0];
+            /* WinCE SYSTEM_INFO (36 bytes):
+               +0  wProcessorArchitecture(W) + wReserved(W) = dwOemId
+               +4  dwPageSize
+               +8  lpMinimumApplicationAddress (32-bit ptr)
+               +12 lpMaximumApplicationAddress (32-bit ptr)
+               +16 dwActiveProcessorMask
+               +20 dwNumberOfProcessors
+               +24 dwProcessorType
+               +28 dwAllocationGranularity
+               +32 wProcessorLevel (WORD)
+               +34 wProcessorRevision (WORD) */
+            mem.Write32(p+0,  5);           /* PROCESSOR_ARCHITECTURE_ARM */
+            mem.Write32(p+4,  0x1000);      /* dwPageSize = 4KB (WinCE standard) */
+            mem.Write32(p+8,  0x10000);     /* lpMinimumApplicationAddress */
+            mem.Write32(p+12, 0x7FFFFFFF);  /* lpMaximumApplicationAddress */
+            mem.Write32(p+16, 1);           /* dwActiveProcessorMask */
+            mem.Write32(p+20, 1);           /* dwNumberOfProcessors */
+            mem.Write32(p+24, 2577);        /* dwProcessorType = PROCESSOR_ARM_7TDMI (2577) */
+            mem.Write32(p+28, 0x10000);     /* dwAllocationGranularity = 64KB */
+            mem.Write16(p+32, 5);           /* wProcessorLevel = ARMv5 */
+            mem.Write16(p+34, 0);           /* wProcessorRevision */
+            LOG(API, "[API] GetSystemInfo -> ARM, 1 CPU, page=4096\n");
         }
-        return true;
+        regs[0] = 1; return true;
     });
     Thunk("Sleep", 496, [](uint32_t* regs, EmulatedMemory&) -> bool {
         Sleep(regs[0]); return true;
@@ -414,6 +433,24 @@ void Win32Thunks::RegisterSystemHandlers() {
             if (fWinIni & SPIF_SENDCHANGE)
                 SendMessageW(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETDESKWALLPAPER, 0);
             regs[0] = 1;
+        } else if (uiAction == 0x0101 /* SPI_GETPLATFORMTYPE */ && pvParam && uiParam > 0) {
+            const wchar_t* plat = L"PocketPC";
+            size_t len = wcslen(plat);
+            uint32_t max_chars = uiParam;
+            for (size_t i = 0; i < len && i < max_chars - 1; i++)
+                mem.Write16(pvParam + (uint32_t)(i * 2), (uint16_t)plat[i]);
+            mem.Write16(pvParam + (uint32_t)(std::min(len, (size_t)(max_chars - 1)) * 2), 0);
+            LOG(API, "[API] SystemParametersInfoW(SPI_GETPLATFORMTYPE) -> '%ls'\n", plat);
+            regs[0] = 1;
+        } else if (uiAction == 0x0108 /* SPI_GETOEMINFO */ && pvParam && uiParam > 0) {
+            const wchar_t* oem = L"CERF Emulator";
+            size_t len = wcslen(oem);
+            uint32_t max_chars = uiParam;
+            for (size_t i = 0; i < len && i < max_chars - 1; i++)
+                mem.Write16(pvParam + (uint32_t)(i * 2), (uint16_t)oem[i]);
+            mem.Write16(pvParam + (uint32_t)(std::min(len, (size_t)(max_chars - 1)) * 2), 0);
+            LOG(API, "[API] SystemParametersInfoW(SPI_GETOEMINFO) -> '%ls'\n", oem);
+            regs[0] = 1;
         } else {
             regs[0] = SystemParametersInfoW(uiAction, uiParam, NULL, fWinIni);
         }
@@ -423,8 +460,11 @@ void Win32Thunks::RegisterSystemHandlers() {
         uint32_t ptr = regs[0];
         if (ptr) {
             MEMORYSTATUS ms = {}; ms.dwLength = sizeof(ms); GlobalMemoryStatus(&ms);
-            uint32_t total_phys = (uint32_t)std::min(ms.dwTotalPhys, (SIZE_T)UINT32_MAX);
-            uint32_t avail_phys = (uint32_t)std::min(ms.dwAvailPhys, (SIZE_T)UINT32_MAX);
+            /* Cap at 2GB to stay positive when ARM code interprets as signed int32_t.
+               WinCE devices had 32-256MB anyway, so this is generous. */
+            const SIZE_T MAX_MEM = 0x7FFFFFFF;
+            uint32_t total_phys = (uint32_t)std::min(ms.dwTotalPhys, MAX_MEM);
+            uint32_t avail_phys = (uint32_t)std::min(ms.dwAvailPhys, MAX_MEM);
             if (fake_total_phys > 0) {
                 /* Scale available proportionally to fake total */
                 double ratio = (double)fake_total_phys / (double)total_phys;
@@ -459,6 +499,71 @@ void Win32Thunks::RegisterSystemHandlers() {
     Thunk("IsAPIReady", 30, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] IsAPIReady(%d) -> TRUE\n", regs[0]);
         regs[0] = 1; return true;
+    });
+    /* KernelIoControl — WinCE kernel I/O control interface.
+       Used by device property dialogs to query processor name, OEM info, etc.
+       via IOCTL_HAL_GET_DEVICE_INFO and similar control codes. */
+    Thunk("KernelIoControl", 557, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dwIoControlCode = regs[0];
+        uint32_t lpInBuf = regs[1], nInBufSize = regs[2];
+        uint32_t lpOutBuf = regs[3];
+        uint32_t nOutBufSize = ReadStackArg(regs, mem, 0);
+        uint32_t lpBytesReturned = ReadStackArg(regs, mem, 1);
+        LOG(API, "[API] KernelIoControl(ioctl=0x%X, inBuf=0x%X, inSize=%u, outBuf=0x%X, outSize=%u) -> stub\n",
+            dwIoControlCode, lpInBuf, nInBufSize, lpOutBuf, nOutBufSize);
+
+        /* IOCTL_PROCESSOR_INFORMATION = 0x01010064 (CTL_CODE(FILE_DEVICE_HAL, 25, ...))
+           Returns PROCESSOR_INFO struct (576 bytes):
+           +0   wVersion (WORD)
+           +2   szProcessCore[40] (80 bytes, WCHAR)
+           +82  wCoreRevision (WORD)
+           +84  szProcessorName[40] (80 bytes, WCHAR)
+           +164 wProcessorRevision (WORD)
+           +166 szCatalogNumber[100] (200 bytes, WCHAR)
+           +366 szVendor[100] (200 bytes, WCHAR)
+           +566 dwInstructionSet (DWORD)
+           +570 dwClockSpeed (DWORD) */
+        if (dwIoControlCode == 0x01010064 && lpOutBuf && nOutBufSize >= 576) {
+            /* Zero-fill first */
+            for (uint32_t i = 0; i < 576; i += 4) mem.Write32(lpOutBuf + i, 0);
+            mem.Write16(lpOutBuf + 0, 1); /* wVersion */
+            /* szProcessCore */
+            const wchar_t* core = L"ARMv5TEJ";
+            for (size_t i = 0; i <= wcslen(core); i++)
+                mem.Write16(lpOutBuf + 2 + (uint32_t)(i * 2), (uint16_t)core[i]);
+            mem.Write16(lpOutBuf + 82, 5); /* wCoreRevision */
+            /* szProcessorName */
+            const wchar_t* name = L"ARM920T";
+            for (size_t i = 0; i <= wcslen(name); i++)
+                mem.Write16(lpOutBuf + 84 + (uint32_t)(i * 2), (uint16_t)name[i]);
+            mem.Write16(lpOutBuf + 164, 0); /* wProcessorRevision */
+            /* szVendor */
+            const wchar_t* vendor = L"ARM Ltd.";
+            for (size_t i = 0; i <= wcslen(vendor); i++)
+                mem.Write16(lpOutBuf + 366 + (uint32_t)(i * 2), (uint16_t)vendor[i]);
+            mem.Write32(lpOutBuf + 566, 5); /* dwInstructionSet = ARMv5 */
+            mem.Write32(lpOutBuf + 570, 400); /* dwClockSpeed = 400 MHz */
+            if (lpBytesReturned) mem.Write32(lpBytesReturned, 576);
+            LOG(API, "[API] KernelIoControl(IOCTL_PROCESSOR_INFORMATION) -> ARM920T\n");
+            regs[0] = 1;
+        }
+        /* IOCTL_HAL_GET_DEVICE_INFO = 0x01010004 */
+        else if (dwIoControlCode == 0x01010004 && lpOutBuf && nOutBufSize >= 2) {
+            const wchar_t* info = L"CERF Emulator";
+            size_t len = wcslen(info);
+            uint32_t bytes = (uint32_t)((len + 1) * 2);
+            if (bytes <= nOutBufSize) {
+                for (size_t i = 0; i <= len; i++)
+                    mem.Write16(lpOutBuf + (uint32_t)(i * 2), (uint16_t)info[i]);
+                if (lpBytesReturned) mem.Write32(lpBytesReturned, bytes);
+                regs[0] = 1;
+            } else {
+                regs[0] = 0;
+            }
+        } else {
+            regs[0] = 0; /* Not handled */
+        }
+        return true;
     });
     /* Ordinal-only entries */
     ThunkOrdinal("GetTimeZoneInformation", 27);
