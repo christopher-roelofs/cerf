@@ -125,10 +125,26 @@ post_load:
             LOG(REG, "[REG] Pre-populated CLSID %ls -> %ls\n", clsid, dll);
         }
     };
+    /* CAnimThread reads HKCU\...\Internet Explorer\Main\AnimationTicks.
+       If the key is missing, RegOpenKeyExW fails and _dwTimerInterval stays
+       at 0, causing SetTimer(elapse=0) → WM_TIMER flood. Ensure the key
+       exists so the code falls through to the 120ms default. */
+    {
+        std::wstring ie_main = L"hkcu\\software\\microsoft\\internet explorer\\main";
+        if (registry.find(ie_main) == registry.end()) {
+            registry[ie_main];
+            EnsureParentKeys(ie_main);
+        }
+    }
+
     /* IShellFolder — shell desktop/folder namespace */
     ensureShellClsid(L"{000214A0-0000-0000-C000-000000000046}", L"ceshell.dll");
     /* ShellDesktop — CLSID_ShellDesktop */
     ensureShellClsid(L"{00021400-0000-0000-C000-000000000046}", L"ceshell.dll");
+    /* WebBrowser — needed by explorer's Explore window to host shell view */
+    ensureShellClsid(L"{8856F961-340A-11D0-A96B-00C04FD705A2}", L"shdocvw.dll");
+    /* WebBrowser_V1 */
+    ensureShellClsid(L"{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}", L"shdocvw.dll");
 }
 
 void Win32Thunks::SaveRegistry() {
@@ -141,7 +157,6 @@ void Win32Thunks::SaveRegistry() {
     }
 
     for (auto& [path, key] : registry) {
-        if (key.values.empty()) continue;
         f << "[" << WideToNarrow(path) << "]\n";
         for (auto& [name, val] : key.values) {
             f << "\"" << WideToNarrow(name) << "\"=";

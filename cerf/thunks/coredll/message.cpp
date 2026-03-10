@@ -86,6 +86,7 @@ void Win32Thunks::RegisterMessageHandlers() {
                Don't try to dispatch it natively (would call corrupt address). */
             if (hwnd == NULL) { regs[0] = 0; return true; }
         }
+        if (message == WM_PAINT) tls_paint_hwnd = hwnd;
         auto it = hwnd_wndproc_map.find(hwnd);
         if (it != hwnd_wndproc_map.end() && callback_executor) {
             if (message == WM_CHAR || message == WM_KEYDOWN || message == WM_LBUTTONDOWN) {

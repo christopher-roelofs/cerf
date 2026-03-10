@@ -62,7 +62,6 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
 
     /* Recursively install thunks for this DLL's own imports */
     InstallThunks(loaded_dlls[wlower].pe_info);
-
     /* Queue DLL entry point (DllMain) for deferred call after CPU init */
     if (entry != 0 && dll_info.entry_point_rva != 0) {
         LOG(API, "[API]  DLL has entry point at 0x%08X - queued for init\n", entry);

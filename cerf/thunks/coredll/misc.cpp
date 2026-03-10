@@ -249,13 +249,17 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("ImmSetCompositionWindow", 810, stub0("ImmSetCompositionWindow"));
     Thunk("ImmGetVirtualKey", 1210, stub0("ImmGetVirtualKey"));
     Thunk("PostKeybdMessage", 832, stub0("PostKeybdMessage"));
-    /* Memory validation */
-    Thunk("IsBadReadPtr", 522, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0; /* Always return FALSE - pointer is valid */
+    /* Memory validation — check EmulatedMemory regions.  Native IsBadReadPtr
+       rejects WinCE kernel-mapped regions (0x20000000+) that don't exist
+       natively, but always returning 0 crashes on garbage pointers.  Check
+       the base address against our region table for correct behavior. */
+    Thunk("IsBadReadPtr", 522, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
         return true;
     });
-    Thunk("IsBadWritePtr", 523, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0; return true;
+    Thunk("IsBadWritePtr", 523, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
+        return true;
     });
     /* Keyboard */
     Thunk("GetKeyboardLayout", 1229, [](uint32_t* regs, EmulatedMemory&) -> bool {

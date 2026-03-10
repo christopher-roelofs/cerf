@@ -79,6 +79,7 @@ public:
     static INT_PTR modal_dlg_result;
     static bool modal_dlg_ended;
     static Win32Thunks* s_instance;
+    static thread_local HWND tls_paint_hwnd; /* last WM_PAINT target per thread */
     std::vector<uint32_t> setjmp_stack;    /* RaiseException recovery */
 
     static LRESULT CALLBACK EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -156,7 +157,7 @@ private:
     std::string ResolveOrdinal(uint16_t ordinal, const std::string& dll_name = "coredll.dll");
 
     uint32_t AllocThunk(const std::string& dll, const std::string& func, uint16_t ordinal, bool by_ordinal);
-    bool ExecuteThunk(const ThunkEntry& entry, uint32_t* regs, EmulatedMemory& mem);
+    bool ExecuteThunk(ThunkEntry& entry, uint32_t* regs, EmulatedMemory& mem);
     uint32_t ReadStackArg(uint32_t* regs, EmulatedMemory& mem, int index);
     HMODULE GetNativeModuleForResources(uint32_t emu_handle);
 
@@ -225,6 +226,7 @@ private:
     void RegisterResourceHandlers();
     void RegisterShellHandlers();
     void RegisterProcessHandlers();
+    void RegisterFileMappingHandlers();
     void RegisterMiscHandlers();
     void RegisterComHandlers();
     void RegisterImageListHandlers();

@@ -97,14 +97,14 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
     return result;
 }
 
-bool Win32Thunks::ExecuteThunk(const ThunkEntry& entry, uint32_t* regs, EmulatedMemory& mem) {
-    std::string func = entry.func_name;
-    if (func.empty() && entry.by_ordinal) {
-        func = ResolveOrdinal(entry.ordinal, entry.dll_name);
-        if (!func.empty()) {
-            LOG(API, "[API] Resolved ordinal %d -> %s\n", entry.ordinal, func.c_str());
+bool Win32Thunks::ExecuteThunk(ThunkEntry& entry, uint32_t* regs, EmulatedMemory& mem) {
+    if (entry.func_name.empty() && entry.by_ordinal) {
+        entry.func_name = ResolveOrdinal(entry.ordinal, entry.dll_name);
+        if (!entry.func_name.empty()) {
+            LOG(API, "[API] Resolved ordinal %d -> %s\n", entry.ordinal, entry.func_name.c_str());
         }
     }
+    const std::string& func = entry.func_name;
 
     /* Map-based dispatch: look up handler by function name */
     auto it = thunk_handlers.find(func);

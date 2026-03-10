@@ -2,6 +2,10 @@
 #include "../win32_thunks.h"
 #include "../../log.h"
 #include <cstdio>
+#include <map>
+
+/* Track submenu→parent so DestroyMenu can detach (WinCE auto-detaches, desktop doesn't) */
+static std::map<HMENU, HMENU> submenu_parents;
 
 void Win32Thunks::RegisterMenuHandlers() {
     Thunk("CreateMenu", 851, [](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -12,13 +16,45 @@ void Win32Thunks::RegisterMenuHandlers() {
     });
     Thunk("DestroyMenu", 844, [](uint32_t* regs, EmulatedMemory&) -> bool {
         HMENU h = (HMENU)(intptr_t)(int32_t)regs[0];
+        /* Track repeated failures on the same handle to detect infinite loops.
+           WinCE DestroyMenu auto-detaches submenus; desktop doesn't.
+           Only detach after 2+ consecutive failures (loop detected). Single failures
+           are left as-is to preserve startup behavior where failures are expected. */
+        static HMENU last_failed = NULL;
+        static int fail_count = 0;
         BOOL ok = DestroyMenu(h);
-        LOG(API, "[API] DestroyMenu(0x%p) -> %d err=%lu\n", h, ok, ok ? 0 : GetLastError());
+        if (!ok) {
+            if (h == last_failed) fail_count++;
+            else { last_failed = h; fail_count = 1; }
+            if (fail_count >= 2) {
+                auto it = submenu_parents.find(h);
+                if (it != submenu_parents.end()) {
+                    HMENU parent = it->second;
+                    int count = GetMenuItemCount(parent);
+                    for (int i = 0; i < count; i++) {
+                        if (GetSubMenu(parent, i) == h) {
+                            RemoveMenu(parent, i, MF_BYPOSITION);
+                            break;
+                        }
+                    }
+                    submenu_parents.erase(it);
+                    ok = DestroyMenu(h);
+                }
+                fail_count = 0;
+                last_failed = NULL;
+            }
+        } else {
+            submenu_parents.erase(h);
+            last_failed = NULL;
+            fail_count = 0;
+        }
+        LOG(API, "[API] DestroyMenu(0x%p) -> %d\n", h, ok);
         regs[0] = ok; return true;
     });
     Thunk("GetSubMenu", 855, [](uint32_t* regs, EmulatedMemory&) -> bool {
         HMENU h = (HMENU)(intptr_t)(int32_t)regs[0];
         HMENU sub = GetSubMenu(h, regs[1]);
+        if (sub) submenu_parents[sub] = h;
         LOG(API, "[API] GetSubMenu(0x%p, %d) -> 0x%p (trunc=0x%08X)\n", h, regs[1], sub, (uint32_t)(uintptr_t)sub);
         regs[0] = (uint32_t)(uintptr_t)sub; return true;
     });

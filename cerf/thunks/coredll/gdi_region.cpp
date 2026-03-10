@@ -51,6 +51,18 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
     });
     Thunk("BeginPaint", 260, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        /* ARM toolbar code sometimes passes GetClientRect's return value (TRUE=1)
+           instead of the real hwnd due to register clobbering in nested callbacks.
+           Detect and fix: IsWindow fails for small bogus values. */
+        if (!IsWindow(hw) && tls_paint_hwnd && IsWindow(tls_paint_hwnd)) {
+            LOG(API, "[API] BeginPaint: bad hwnd=0x%p, using tls_paint_hwnd=0x%p\n", hw, tls_paint_hwnd);
+            hw = tls_paint_hwnd;
+        } else if (!IsWindow(hw)) {
+            LOG(API, "[API] BeginPaint: bad hwnd=0x%p, no fallback\n", hw);
+            uint32_t ps_addr = regs[1];
+            for (int i = 0; i < 6; i++) mem.Write32(ps_addr + i*4, 0);
+            regs[0] = 0; return true;
+        }
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hw, &ps);
         uint32_t ps_addr = regs[1];
         mem.Write32(ps_addr+0, (uint32_t)(uintptr_t)hdc); mem.Write32(ps_addr+4, ps.fErase);

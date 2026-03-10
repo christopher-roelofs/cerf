@@ -33,7 +33,13 @@ void Win32Thunks::RegisterSyncHandlers() {
             auto it = cs_map.find(addr);
             if (it != cs_map.end()) cs = it->second;
         }
-        if (cs) EnterCriticalSection(cs);
+        if (cs) {
+            LOG(API, "[API] EnterCriticalSection(0x%08X) ...\n", addr);
+            EnterCriticalSection(cs);
+            LOG(API, "[API] EnterCriticalSection(0x%08X) acquired\n", addr);
+        } else {
+            LOG(API, "[API] EnterCriticalSection(0x%08X) UNKNOWN CS\n", addr);
+        }
         return true;
     });
     Thunk("LeaveCriticalSection", 5, [this](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -44,7 +50,10 @@ void Win32Thunks::RegisterSyncHandlers() {
             auto it = cs_map.find(addr);
             if (it != cs_map.end()) cs = it->second;
         }
-        if (cs) LeaveCriticalSection(cs);
+        if (cs) {
+            LeaveCriticalSection(cs);
+            LOG(API, "[API] LeaveCriticalSection(0x%08X)\n", addr);
+        }
         return true;
     });
     Thunk("InitLocale", 8, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
@@ -79,8 +88,30 @@ void Win32Thunks::RegisterSyncHandlers() {
             regs[1], regs[2], h, regs[0]);
         return true;
     });
+    /* WaitForSingleObject — pump sent messages while waiting to prevent
+       cross-thread deadlocks.  WinCE GWES delivers cross-thread messages
+       at the kernel level; desktop Windows requires the target thread to
+       call a message-retrieval function.  MsgWaitForMultipleObjects with
+       QS_SENDMESSAGE + PeekMessage(PM_NOREMOVE) lets sent messages through
+       without pulling posted messages out of order. */
     Thunk("WaitForSingleObject", 497, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = WaitForSingleObject((HANDLE)(intptr_t)(int32_t)regs[0], regs[1]); return true;
+        HANDLE h = (HANDLE)(intptr_t)(int32_t)regs[0];
+        DWORD timeout = regs[1];
+        DWORD start = GetTickCount();
+        for (;;) {
+            DWORD elapsed = GetTickCount() - start;
+            DWORD remaining = (timeout == INFINITE) ? INFINITE
+                : (elapsed >= timeout ? 0 : timeout - elapsed);
+            DWORD r = MsgWaitForMultipleObjects(1, &h, FALSE,
+                                                remaining, QS_SENDMESSAGE);
+            if (r == WAIT_OBJECT_0 + 1) {
+                MSG msg;
+                PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
+                continue;
+            }
+            regs[0] = r;
+            return true;
+        }
     });
     Thunk("CloseHandle", 553, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t fake = regs[0]; HANDLE h = UnwrapHandle(fake);

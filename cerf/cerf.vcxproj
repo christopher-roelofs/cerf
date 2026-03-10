@@ -197,6 +197,7 @@
     <ClCompile Include="thunks\coredll\sync.cpp" />
     <ClCompile Include="thunks\coredll\resource.cpp" />
     <ClCompile Include="thunks\coredll\process.cpp" />
+    <ClCompile Include="thunks\coredll\filemapping.cpp" />
     <ClCompile Include="thunks\coredll\misc.cpp" />
     <ClCompile Include="thunks\coredll\com.cpp" />
     <ClCompile Include="thunks\coredll\imagelist.cpp" />

@@ -1,12 +1,6 @@
-/*
- * CERF - Windows CE Runtime Foundation
- *
- * Loads Windows CE ARM executables and emulates them on x64 desktop Windows
- * by interpreting ARM instructions and thunking COREDLL.DLL API calls to
- * native Win32 APIs.
- *
- * Usage: cerf.exe <path-to-arm-wince-exe>
- */
+/* CERF - Windows CE Runtime Foundation
+ * Loads WinCE ARM executables on x64 desktop via ARM interpretation + API thunking.
+ * Usage: cerf.exe <path-to-arm-wince-exe> */
 
 #include <windows.h>
 #include <cstdio>
@@ -112,16 +106,8 @@ int main(int argc, char* argv[]) {
     uint32_t entry_point = PELoader::Load(exe_path, mem, pe_info);
     if (entry_point == 0) {
         LOG_ERR("Failed to load PE file\n");
-        LOG_ERR("\n");
-        LOG_ERR("=== AI ASSISTANT NOTE ===\n");
-        LOG_ERR("If you just compacted/lost context, remember:\n");
-        LOG_ERR("  1. Re-read CLAUDE.md for project architecture and conventions\n");
-        LOG_ERR("  2. Re-read your memory file at ~/.claude/projects/Z--/memory/MEMORY.md\n");
-        LOG_ERR("  3. WinCE apps are in Z:/references/ directory, NOT in the build dir\n");
-        LOG_ERR("     The build dir only has cerf.exe — look in references/ for .exe files\n");
-        LOG_ERR("  4. To run: cd build/Release/x64 && ./cerf.exe ../../../references/<app.exe>\n");
-        LOG_ERR("  5. VFS windir: build/Release/x64/devices/wince5/fs/Windows/\n");
-        LOG_ERR("=========================\n");
+        LOG_ERR("WinCE apps are in references/ dir, not the build dir.\n");
+        LOG_ERR("Usage: cd build/Release/x64 && ./cerf.exe ../../../references/<app.exe>\n");
         return 1;
     }
 
@@ -230,42 +216,26 @@ int main(int argc, char* argv[]) {
         cpu.r[REG_PC] = entry_point & ~1u;
     }
 
-    /* Set up thunk handler */
     cpu.thunk_handler = [&thunks](uint32_t addr, uint32_t* regs, EmulatedMemory& mem_ref) -> bool {
-        /* Check for sentinel return address (program exit) */
         if (addr == 0xDEADDEAD) {
             LOG(EMU, "\n[EMU] Program returned from entry point with code %d\n", regs[0]);
             ExitProcess(regs[0]);
             return true;
         }
-        /* Callback sentinel - set PC so the callback executor loop detects it */
-        if (addr == 0xCAFEC000) {
-            regs[15] = 0xCAFEC000;
-            return true;
-        }
+        if (addr == 0xCAFEC000) { regs[15] = 0xCAFEC000; return true; }
         return thunks.HandleThunk(addr, regs, mem_ref);
     };
 
-    /* Set up callback executor for calling ARM code from native callbacks
-       (e.g., WndProc, timer callbacks, dialog procs) */
-    uint32_t cb_sentinel = 0xCAFEC000; /* Must be 4-byte aligned for LDM/POP PC */
+    uint32_t cb_sentinel = 0xCAFEC000;
     mem.Alloc(cb_sentinel, 0x1000);
-    /* Write a BX LR instruction at the sentinel address as a safety net */
-    mem.Write32(cb_sentinel, 0xE12FFF1E); /* BX LR */
+    mem.Write32(cb_sentinel, 0xE12FFF1E); /* BX LR — safety net */
 
-    /* Reserve marshal buffer space for up to 16 threads */
-    mem.Reserve(0x3F000000, 0x00100000);
-
-    /* Initialize main thread context with its own callback_executor and KData */
+    mem.Alloc(0x20000000, 0x01000000);  /* WinCE shared memory area (OLE32) */
+    mem.Reserve(0x3F000000, 0x00100000); /* marshal buffer space, up to 16 threads */
     MakeCallbackExecutor(&main_ctx, mem, thunks, cb_sentinel);
-
-    /* Copy shared KData page (written during Win32Thunks construction) into
-       the main thread's per-thread buffer, then activate the redirect. */
-    {
-        uint8_t* shared_kdata = mem.Translate(0xFFFFC000);
-        if (shared_kdata)
-            memcpy(main_ctx.kdata, shared_kdata, 0x1000);
-    }
+    /* Copy shared KData page into main thread's per-thread buffer */
+    uint8_t* shared_kdata = mem.Translate(0xFFFFC000);
+    if (shared_kdata) memcpy(main_ctx.kdata, shared_kdata, 0x1000);
     t_ctx = &main_ctx;
     EmulatedMemory::kdata_override = main_ctx.kdata;
 
@@ -279,15 +249,45 @@ int main(int argc, char* argv[]) {
     /* Call DllMain for any loaded ARM DLLs (must happen after callback_executor is set up) */
     thunks.CallDllEntryPoints();
 
-    LOG(EMU, "\n[EMU] Starting execution at 0x%08X (%s mode)\n",
-           cpu.r[REG_PC], cpu.IsThumb() ? "Thumb" : "ARM");
-    LOG(EMU, "[EMU] Stack at 0x%08X, hInstance=0x%08X\n\n", cpu.r[REG_SP], cpu.r[0]);
+    /* Patch OLE32: AssertValid, GetTreatAs, CDllCache corrupted linked lists */
+    constexpr uint32_t ARM_BX_LR = 0xE12FFF1E;
+    constexpr uint32_t ARM_MVN_R0_0 = 0xE3E00000; /* MVN R0,#0 → R0=-1 */
+    if (mem.IsValid(0x100944DC)) {
+        mem.Write32(0x100944DC, ARM_BX_LR); /* AssertValid */
+        const uint32_t gt[] = { 0xE5902000, 0xE5812000, 0xE5902004, 0xE5812004,
+            0xE5902008, 0xE5812008, 0xE590200C, 0xE581200C, 0xE3A00000, ARM_BX_LR };
+        for (int i = 0; i < 10; i++) mem.Write32(0x10088DFC + i * 4, gt[i]);
+        /* CDllCache: Search* return -1, rest BX LR */
+        for (auto a : {0x10065218u,0x10065364u,0x10065440u}) { mem.Write32(a, ARM_MVN_R0_0); mem.Write32(a+4, ARM_BX_LR); }
+        for (auto a : {0x10063DB8u,0x10064510u,0x10064628u,0x10064CB8u,0x10064E80u,0x10064FFCu,0x10065B20u,0x10065ED8u}) mem.Write32(a, ARM_BX_LR);
+        LOG(EMU, "[EMU] Patched OLE32: AssertValid+GetTreatAs+CDllCache(11 funcs)\n");
+    }
+    for (auto a : {0x10146464u, 0x101880A0u, 0x10187E78u}) /* RPCRT4 stubs */
+        if (mem.IsValid(a)) mem.Write32(a, ARM_BX_LR);
+    if (mem.IsValid(0x100239FC)) { /* OLE32 CoMarshalInterThreadInterface: fail cleanly */
+        mem.Write32(0x100239FC, 0xE3A03000); mem.Write32(0x10023A00, 0xE5823000);
+        mem.Write32(0x10023A04, ARM_MVN_R0_0); mem.Write32(0x10023A08, ARM_BX_LR);
+    }
+    if (mem.IsValid(0x00021EF4)) /* Explorer: skip corrupt _pIPActiveObj block */
+        mem.Write32(0x00021EF4, 0xEA00001B);
+    LOG(EMU, "\n[EMU] Starting at 0x%08X (%s), SP=0x%08X hInst=0x%08X\n",
+           cpu.r[REG_PC], cpu.IsThumb() ? "Thumb" : "ARM", cpu.r[REG_SP], cpu.r[0]);
 
     /* Run the emulator */
     cpu.Run();
 
-    /* If we get here, CPU halted */
+    /* If we get here, main CPU halted. If WinMain returned 0 (success),
+       child threads may still be running (e.g. explorer.exe shell threads).
+       Keep the process alive with a message pump so child threads can work. */
     LOG(EMU, "\n[EMU] CPU halted (code=%d) after %llu instructions\n", cpu.halt_code, cpu.insn_count);
+    if (cpu.halt_code == 0) {
+        LOG(EMU, "[EMU] Main entry returned 0 — pumping messages for child threads\n");
+        MSG msg;
+        while (GetMessage(&msg, NULL, 0, 0) > 0) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
     DumpRegisters(cpu);
 
     Log::Close();

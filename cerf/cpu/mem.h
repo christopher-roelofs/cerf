@@ -84,7 +84,9 @@ public:
             fprintf(stderr, "[MEM] Failed to allocate 0x%X bytes for region 0x%08X\n", size, base);
             return nullptr;
         }
-        memset(ptr, 0, size);
+        /* Windows zeroes newly committed pages — no memset needed.
+           Skipping memset also avoids zeroing already-committed pages
+           when sub-page allocators commit shared pages. */
         regions.push_back({ base, size, ptr, protect, is_stack });
         return ptr;
     }
@@ -197,9 +199,12 @@ public:
         return STACK_BASE - 16; /* Return initial SP, slightly below top */
     }
 
-    /* Auto-allocate on fault: if an access hits unmapped memory, allocate a page */
+    /* Auto-allocate on fault: if an access hits unmapped memory, allocate a page.
+       Reject addresses that can't be identity-mapped on Windows (below 64KB or
+       near 4GB boundary) — fallback allocations would crash if passed to native code. */
     uint8_t* AutoAlloc(uint32_t addr) {
         uint32_t page_base = addr & ~(PAGE_SIZE - 1);
+        if (page_base < 0x10000 || page_base >= 0xF0000000) return nullptr;
         return Alloc(page_base, PAGE_SIZE);
     }
 

@@ -54,7 +54,9 @@ void Win32Thunks::RegisterProcessHandlers() {
 
                 /* Allocate per-thread stack in emulated memory */
                 uint32_t stack_size = 0x100000; /* 1MB */
-                uint32_t stack_bottom = 0x02000000 + thread_idx * stack_size;
+                /* Thread stacks below 0x02000000 (WinCE 32MB slot boundary).
+                   Range 0x01900000-0x01FFFFFF (7 thread slots). */
+                uint32_t stack_bottom = 0x01900000 + thread_idx * stack_size;
                 info->mem->Alloc(stack_bottom, stack_size);
                 uint32_t stack_top = stack_bottom + stack_size - 16;
 
@@ -100,7 +102,6 @@ void Win32Thunks::RegisterProcessHandlers() {
                     thread_idx, cpu.r[REG_PC], stack_top, info->parameter);
                 delete info;
 
-                /* Run the thread */
                 cpu.Run();
 
                 LOG(API, "[THREAD] Thread %d exited with R0=0x%X\n",
@@ -210,8 +211,30 @@ void Win32Thunks::RegisterProcessHandlers() {
             LOG(API, "[API]   WaitForMulti handle[%u]: raw=0x%08X -> native=%p\n",
                 i, raw, handles[i]);
         }
-        /* With real threads, no need to cap timeout — each thread has its own message pump */
-        DWORD result = WaitForMultipleObjects(nCount, handles, bWaitAll, dwMilliseconds);
+        /* Pump sent messages while waiting to prevent cross-thread deadlocks.
+           For bWaitAll=TRUE, use bWaitAll=FALSE in MsgWait and do a non-blocking
+           check of the full set when any single handle signals. */
+        DWORD start = GetTickCount();
+        DWORD result;
+        for (;;) {
+            DWORD elapsed = GetTickCount() - start;
+            DWORD remaining = (dwMilliseconds == INFINITE) ? INFINITE
+                : (elapsed >= dwMilliseconds ? 0 : dwMilliseconds - elapsed);
+            result = MsgWaitForMultipleObjects(nCount, handles, FALSE,
+                                               remaining, QS_SENDMESSAGE);
+            if (result == WAIT_OBJECT_0 + nCount) {
+                MSG msg;
+                PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
+                continue;
+            }
+            if (bWaitAll && result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + nCount) {
+                /* One handle signaled but we need all — poll the full set */
+                DWORD full = WaitForMultipleObjects(nCount, handles, TRUE, 0);
+                if (full != WAIT_TIMEOUT) { result = full; break; }
+                continue;
+            }
+            break;
+        }
         if (result == WAIT_FAILED) {
             LOG(API, "[API] WaitForMultipleObjects(n=%u, waitAll=%d, ms=%u) -> WAIT_FAILED (err=%lu)\n",
                 nCount, bWaitAll, dwMilliseconds, GetLastError());
@@ -220,76 +243,6 @@ void Win32Thunks::RegisterProcessHandlers() {
                 nCount, bWaitAll, dwMilliseconds, result);
         }
         regs[0] = result;
-        return true;
-    });
-
-    /* File mapping: read file contents into emulated memory */
-    Thunk("CreateFileMappingW", 548, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HANDLE hFile = UnwrapHandle(regs[0]);
-        uint32_t flProtect = regs[2];
-        LOG(API, "[API] CreateFileMappingW(hFile=0x%08X, protect=0x%X)\n", regs[0], flProtect);
-        if (hFile == INVALID_HANDLE_VALUE || hFile == NULL) {
-            LOG(API, "[API]   -> FAILED (invalid file handle)\n");
-            regs[0] = 0; return true;
-        }
-        DWORD file_size = GetFileSize(hFile, NULL);
-        if (file_size == INVALID_FILE_SIZE || file_size == 0) {
-            LOG(API, "[API]   -> FAILED (file size = 0x%X)\n", file_size);
-            regs[0] = 0; return true;
-        }
-        /* Allocate emulated memory and read the file into it */
-        static uint32_t next_mmap = 0x50000000;
-        uint32_t alloc_size = (file_size + 0xFFF) & ~0xFFF;
-        uint8_t* host_ptr = mem.Alloc(next_mmap, alloc_size);
-        if (!host_ptr) {
-            LOG(API, "[API]   -> FAILED (alloc)\n");
-            regs[0] = 0; return true;
-        }
-        /* Save and restore file pointer */
-        DWORD saved_pos = SetFilePointer(hFile, 0, NULL, FILE_CURRENT);
-        SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
-        DWORD bytes_read = 0;
-        ReadFile(hFile, host_ptr, file_size, &bytes_read, NULL);
-        SetFilePointer(hFile, saved_pos, NULL, FILE_BEGIN);
-        /* Store mapping info: use handle map with emu address as the data */
-        uint32_t emu_addr = next_mmap;
-        next_mmap += alloc_size;
-        /* Pack mapping info: store in file_mappings map */
-        file_mappings[WrapHandle((HANDLE)(uintptr_t)emu_addr)] = { emu_addr, file_size };
-        uint32_t fake_handle = next_fake_handle - 1; /* last wrapped handle */
-        LOG(API, "[API]   -> handle=0x%08X (mapped %u bytes at emu 0x%08X)\n",
-            fake_handle, bytes_read, emu_addr);
-        regs[0] = fake_handle;
-        return true;
-    });
-    Thunk("MapViewOfFile", 549, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t mapping_handle = regs[0];
-        uint32_t offset_high = regs[2], offset_low = regs[3];
-        LOG(API, "[API] MapViewOfFile(handle=0x%08X, offset=0x%X:%08X)\n",
-            mapping_handle, offset_high, offset_low);
-        auto it = file_mappings.find(mapping_handle);
-        if (it == file_mappings.end()) {
-            LOG(API, "[API]   -> FAILED (unknown mapping)\n");
-            regs[0] = 0; return true;
-        }
-        uint32_t addr = it->second.emu_addr + offset_low;
-        LOG(API, "[API]   -> 0x%08X (size=%u)\n", addr, it->second.size);
-        regs[0] = addr;
-        return true;
-    });
-    Thunk("UnmapViewOfFile", 550, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] UnmapViewOfFile(0x%08X) -> 1\n", regs[0]);
-        regs[0] = 1; return true;
-    });
-    /* CreateFileForMappingW - same as CreateFileW but used specifically before mapping */
-    Thunk("CreateFileForMappingW", 1167, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
-        uint32_t access = regs[1], share = regs[2];
-        uint32_t creation = ReadStackArg(regs, mem, 0), flags = ReadStackArg(regs, mem, 1);
-        std::wstring host_path = MapWinCEPath(wce_path);
-        HANDLE h = CreateFileW(host_path.c_str(), access, share, NULL, creation, flags, NULL);
-        regs[0] = WrapHandle(h);
-        LOG(API, "[API] CreateFileForMappingW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
         return true;
     });
 }

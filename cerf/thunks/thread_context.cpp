@@ -74,7 +74,7 @@ void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,
         while (!cpu.halted) {
             uint32_t pc = cpu.r[REG_PC];
             if (pc == sentinel || pc == (sentinel & ~1u)) break;
-            if (pc < 0x1000 && cb_depth > 1) {
+            if (pc < 0x1000) {
                 LOG(API, "[API] callback_executor: NULL function pointer "
                     "(PC=0x%08X) at depth=%d, aborting\n", pc, cb_depth);
                 cpu.r[0] = 0;
@@ -85,12 +85,9 @@ void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,
                 last_thunk_step = step_count;
                 last_thunk_count = ctx->thunk_call_count;
             }
-            if (step_count - last_thunk_step > 50000000 ||
-                ctx->thunk_call_count - start_thunk_count > 200000) {
-                bool pure_arm = (step_count - last_thunk_step > 50000000);
-                LOG(API, "\n[FATAL] callback_executor: infinite loop (%s) "
+            if (step_count - last_thunk_step > 50000000) {
+                LOG(API, "\n[FATAL] callback_executor: infinite loop (pure ARM) "
                     "at PC=0x%08X depth=%d steps=%u thunks=%llu\n",
-                    pure_arm ? "pure ARM" : "thunk-calling",
                     pc, cb_depth, step_count,
                     ctx->thunk_call_count - start_thunk_count);
                 LOG(API, "[FATAL] ARM state is corrupt — exiting.\n");

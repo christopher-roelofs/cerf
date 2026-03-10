@@ -168,6 +168,11 @@ void Win32Thunks::RegisterWindowHandlers() {
         if (className == L"SysListView32") {
             style |= 0x0100; /* LVS_AUTOARRANGE */
         }
+        /* shdocvw creates Shell Embedding & DefShellView without WS_VISIBLE; the
+           browser's view activation code should call ShowWindow later but doesn't
+           complete in emulation (vtable corruption). Force them visible. */
+        if (className == L"Shell Embedding" || className == L"DefShellView")
+            style |= WS_VISIBLE;
         LOG(API, "[API] CreateWindowExW: class='%ls' title='%ls' style=0x%08X exStyle=0x%08X parent=0x%p size=(%dx%d) lpParam=0x%08X\n", className.c_str(), windowName.c_str(), style, exStyle, parent, w, h, arm_lpParam);
         HWND hwnd = CreateWindowExW(exStyle, lpClassName, windowName.c_str(), style, x, y, w, h, parent, menu_h, GetModuleHandleW(NULL), (LPVOID)(uintptr_t)arm_lpParam);
         if (!hwnd) {

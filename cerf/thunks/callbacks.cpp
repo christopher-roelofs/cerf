@@ -22,6 +22,7 @@ INT_PTR Win32Thunks::modal_dlg_result = 0;
 bool Win32Thunks::modal_dlg_ended = false;
 Win32Thunks* Win32Thunks::s_instance = nullptr;
 std::set<HWND> Win32Thunks::captionok_hwnds;
+thread_local HWND Win32Thunks::tls_paint_hwnd = NULL;
 
 LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (!s_instance || !t_ctx || !t_ctx->callback_executor) {
