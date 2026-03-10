@@ -186,6 +186,28 @@ void Win32Thunks::RegisterMessageHandlers() {
                 LOG(API, "[API] SendMessageW LVM_0x%04X hwnd=%p class='%ls' wP=0x%X lP=0x%X\n",
                     umsg, hw, cls, (uint32_t)wp, (uint32_t)lp);
             }
+            /* Dump LVITEMW fields on LVM_INSERTITEMW (0x104D) */
+            if (umsg == 0x104D && lp) {
+                uint32_t a = (uint32_t)lp;
+                uint32_t mask = mem.Read32(a + 0);
+                int iItem = (int)mem.Read32(a + 4);
+                uint32_t pszText = mem.Read32(a + 20);
+                int cchMax = (int)mem.Read32(a + 24);
+                int iImage = (int)mem.Read32(a + 28);
+                uint32_t lParam = mem.Read32(a + 32);
+                std::wstring txt;
+                if (pszText == 0xFFFFFFFF) {
+                    txt = L"<CALLBACK>";
+                } else if (pszText) {
+                    for (int i = 0; i < 40; i++) {
+                        wchar_t c = (wchar_t)mem.Read16(pszText + i * 2);
+                        if (!c) break;
+                        txt += c;
+                    }
+                }
+                LOG(API, "[LVINST] LVM_INSERTITEMW: iItem=%d mask=0x%X pszText=0x%08X('%ls') iImage=%d lParam=0x%08X\n",
+                    iItem, mask, pszText, txt.c_str(), iImage, lParam);
+            }
             regs[0] = (uint32_t)SendMessageW(hw, umsg, wp, lp);
             if (umsg >= 0x1000 && umsg <= 0x10FF) {
                 LOG(API, "[API] SendMessageW LVM_0x%04X -> result=%d (0x%X)\n",

@@ -64,6 +64,22 @@ void Log::Close() {
     }
 }
 
+/* Thread-local process name for log prefix */
+thread_local const char* g_log_process_name = nullptr;
+thread_local DWORD g_log_process_id = 0;
+
+void Log::SetProcessName(const char* name, uint32_t pid) {
+    g_log_process_name = name;
+    g_log_process_id = pid;
+}
+
+static void PrintPrefix(FILE* f, DWORD tid) {
+    if (g_log_process_name && g_log_process_name[0])
+        fprintf(f, "[T%lu|%s:%lu] ", tid, g_log_process_name, (unsigned long)g_log_process_id);
+    else
+        fprintf(f, "[T%lu] ", tid);
+}
+
 void Log::Print(Category cat, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -71,12 +87,12 @@ void Log::Print(Category cat, const char* fmt, ...) {
     EnsureLogCS();
     EnterCriticalSection(&g_log_cs);
     if (g_enabled & cat) {
-        printf("[T%lu] ", tid);
+        PrintPrefix(stdout, tid);
         vprintf(fmt, args);
         if (g_flush) fflush(stdout);
     }
     if (g_logfile) {
-        fprintf(g_logfile, "[T%lu] ", tid);
+        PrintPrefix(g_logfile, tid);
         va_list args2;
         va_copy(args2, args);
         vfprintf(g_logfile, fmt, args2);
@@ -93,10 +109,10 @@ void Log::Err(const char* fmt, ...) {
     DWORD tid = GetCurrentThreadId();
     EnsureLogCS();
     EnterCriticalSection(&g_log_cs);
-    fprintf(stderr, "[T%lu] ", tid);
+    PrintPrefix(stderr, tid);
     vfprintf(stderr, fmt, args);
     if (g_logfile) {
-        fprintf(g_logfile, "[T%lu] ", tid);
+        PrintPrefix(g_logfile, tid);
         va_list args2;
         va_copy(args2, args);
         vfprintf(g_logfile, fmt, args2);
@@ -113,11 +129,11 @@ void Log::Raw(const char* fmt, ...) {
     DWORD tid = GetCurrentThreadId();
     EnsureLogCS();
     EnterCriticalSection(&g_log_cs);
-    printf("[T%lu] ", tid);
+    PrintPrefix(stdout, tid);
     vprintf(fmt, args);
     if (g_flush) fflush(stdout);
     if (g_logfile) {
-        fprintf(g_logfile, "[T%lu] ", tid);
+        PrintPrefix(g_logfile, tid);
         va_list args2;
         va_copy(args2, args);
         vfprintf(g_logfile, fmt, args2);

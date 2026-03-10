@@ -12,6 +12,7 @@ struct ThreadContext {
     uint64_t thunk_call_count = 0;
     uint32_t marshal_base = 0x3F000000;
     uint8_t kdata[0x1000] = {};  /* per-thread KData page (TLS, thread ID) */
+    char process_name[32] = {};  /* human-readable name for log lines */
 
     using CallbackExecutor = std::function<uint32_t(uint32_t addr, uint32_t* args, int nargs)>;
     CallbackExecutor callback_executor;

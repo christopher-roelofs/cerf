@@ -9,6 +9,8 @@
 void Win32Thunks::RegisterResourceHandlers() {
     Thunk("LoadStringW", 874, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t hmod = regs[0], str_id = regs[1], dst = regs[2], maxlen = regs[3];
+        LOG(API, "[API] LoadStringW(hmod=0x%08X, id=%d, dst=0x%08X, maxlen=%d)\n",
+            hmod, str_id, dst, maxlen);
         if (maxlen > 4096) maxlen = 4096;
         uint32_t bundle_id = (str_id / 16) + 1, string_idx = str_id % 16;
         uint32_t rsrc_rva = 0, rsrc_sz = 0; bool is_arm = false;
@@ -29,6 +31,12 @@ void Win32Thunks::RegisterResourceHandlers() {
                 rsrc_rva = pair.second.pe_info.rsrc_rva;
                 rsrc_sz = pair.second.pe_info.rsrc_size; break;
             }
+        }
+        if (!is_arm && hmod != 0) {
+            LOG(API, "[API]   LoadStringW: hmod 0x%08X not in loaded_dlls (emu_hinstance=0x%08X)\n",
+                hmod, emu_hinstance);
+        } else if (is_arm && rsrc_rva == 0) {
+            LOG(API, "[API]   LoadStringW: hmod 0x%08X ARM but rsrc_rva=0\n", hmod);
         }
         if (is_arm && rsrc_rva) {
             uint32_t data_rva = 0, data_size = 0;
@@ -53,11 +61,14 @@ void Win32Thunks::RegisterResourceHandlers() {
                         uint32_t copy_len = (len < maxlen - 1) ? len : maxlen - 1;
                         for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, p[i]);
                         mem.Write16(dst + copy_len * 2, 0);
+                        LOG(API, "[API]   LoadStringW -> %d chars\n", copy_len);
                         regs[0] = copy_len; return true;
                     }
                 }
             }
             if (dst && maxlen > 0) mem.Write16(dst, 0);
+            LOG(API, "[API]   LoadStringW -> NOT FOUND (ARM rsrc, id=%d bundle=%d idx=%d rsrc_rva=0x%X)\n",
+                str_id, bundle_id, string_idx, rsrc_rva);
             regs[0] = 0;
         } else {
             wchar_t buf[1024] = {}; if (maxlen > 1024) maxlen = 1024;

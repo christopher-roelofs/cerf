@@ -81,7 +81,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t addr = BumpAlloc(next_lrealloc, mem, new_size);
         uint8_t* old_host = mem.Translate(old_ptr);
         uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) memcpy(new_host, old_host, std::min(new_size, 0x1000u));
+        if (old_host && new_host) memcpy(new_host, old_host, new_size);
         regs[0] = addr;
         return true;
     });
@@ -117,7 +117,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t addr = BumpAlloc(next_hrealloc, mem, new_size);
         uint8_t* old_host = mem.Translate(old_ptr);
         uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) memcpy(new_host, old_host, std::min(new_size, 0x1000u));
+        if (old_host && new_host) memcpy(new_host, old_host, new_size);
         regs[0] = addr;
         return true;
     });
@@ -144,7 +144,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t addr = BumpAlloc(next_malloc, mem, size);
         uint8_t* old_host = old_ptr ? mem.Translate(old_ptr) : nullptr;
         uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) memcpy(new_host, old_host, std::min(size, 0x1000u));
+        if (old_host && new_host) memcpy(new_host, old_host, size);
         regs[0] = addr;
         return true;
     });

@@ -106,8 +106,12 @@ uint32_t PELoader::LoadIntoSlot(const char* path, EmulatedMemory& mem,
         return 0;
     }
 
-    /* Copy headers into slot buffer */
-    uint8_t* image = slot.buffer + info.image_base;
+    /* Copy headers into slot buffer — use Translate for identity-mapped slots */
+    uint8_t* image = slot.Translate(info.image_base);
+    if (!image) {
+        LOG_ERR("[PE] Cannot translate image base 0x%08X in slot\n", info.image_base);
+        return 0;
+    }
     uint32_t hdr_copy = std::min((uint32_t)size, info.size_of_headers);
     memcpy(image, data.data(), hdr_copy);
 
@@ -120,7 +124,9 @@ uint32_t PELoader::LoadIntoSlot(const char* path, EmulatedMemory& mem,
         if (s.PointerToRawData + raw_size > size) continue;
         DWORD vsize = s.Misc.VirtualSize ? s.Misc.VirtualSize : raw_size;
         uint32_t copy_size = (raw_size < vsize) ? raw_size : vsize;
-        memcpy(image + s.VirtualAddress, data.data() + s.PointerToRawData, copy_size);
+        uint8_t* section_dst = slot.Translate(info.image_base + s.VirtualAddress);
+        if (section_dst)
+            memcpy(section_dst, data.data() + s.PointerToRawData, copy_size);
     }
 
     /* No relocation needed — image loads at its preferred base within the slot */

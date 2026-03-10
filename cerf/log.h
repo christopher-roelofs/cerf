@@ -29,6 +29,7 @@ namespace Log {
     void SetFlush(bool enabled);
     void Close();
 
+    void SetProcessName(const char* name, uint32_t pid);
     void Print(Category cat, const char* fmt, ...);
     void Err(const char* fmt, ...);
     void Raw(const char* fmt, ...);

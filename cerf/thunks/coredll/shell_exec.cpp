@@ -173,72 +173,93 @@ void Win32Thunks::RegisterShellExecHandler() {
             return true;
         }
 
-        /* ARM PE child process — try LoadDll first (shared address space),
-           fall back to ProcessSlot (per-process virtual address space) */
+        /* ARM PE child process — own OS thread with ProcessSlot for isolation */
         if (!mapped_file.empty() && IsArmPE(mapped_file)) {
-            LOG(API, "[API]   -> ARM PE detected\n");
+            LOG(API, "[API]   -> ARM PE detected, launching as child process\n");
             std::string narrow_path;
             for (auto c : mapped_file) narrow_path += (char)c;
-            PEInfo child_pe = {};
-            uint32_t child_entry = 0;
-            ProcessSlot* slot = nullptr;
-
-            /* Try shared-address-space loading first (works when no conflict) */
-            child_entry = PELoader::LoadDll(narrow_path.c_str(), mem, child_pe);
-            if (child_entry) {
-                LOG(API, "[API]   -> loaded in shared address space at 0x%08X\n",
-                    child_pe.image_base);
-            } else {
-                /* Address conflict — use per-process virtual address space */
-                LOG(API, "[API]   -> address conflict, creating ProcessSlot\n");
-                slot = new ProcessSlot();
-                if (!slot->buffer) {
-                    LOG(API, "[API]   -> ProcessSlot allocation failed\n");
-                    delete slot;
-                    mem.Write32(sei_addr + 0x20, 0);
-                    regs[0] = 0;
-                    return true;
-                }
-                child_pe = {};
-                child_entry = PELoader::LoadIntoSlot(
-                    narrow_path.c_str(), mem, child_pe, *slot);
-                if (child_entry) {
-                    LOG(API, "[API]   -> loaded in ProcessSlot at 0x%08X\n",
-                        child_pe.image_base);
-                }
-            }
-
-            if (child_entry && callback_executor) {
-                /* Activate process slot overlay for this thread */
-                ProcessSlot* prev_slot = EmulatedMemory::process_slot;
-                if (slot) EmulatedMemory::process_slot = slot;
-
-                InstallThunks(child_pe);
-                CallDllEntryPoints();
-                uint32_t cmdline_addr = 0x60001000;
-                mem.Alloc(cmdline_addr, 0x1000);
-                if (!params.empty()) {
-                    for (size_t j = 0; j < params.size() && j < 0x7FE; j++)
-                        mem.Write16(cmdline_addr + (uint32_t)(j * 2), (uint16_t)params[j]);
-                    mem.Write16(cmdline_addr + (uint32_t)(params.size() * 2), 0);
-                } else {
-                    mem.Write16(cmdline_addr, 0);
-                }
-                uint32_t args[4] = { child_pe.image_base, 0, cmdline_addr, 1 };
-                LOG(API, "[API]   -> calling WinMain at 0x%08X (hInst=0x%X, cmdLine='%ls')\n",
-                    child_entry, child_pe.image_base, params.c_str());
-                uint32_t ret = callback_executor(child_entry, args, 4);
-                LOG(API, "[API]   -> WinMain returned %d\n", ret);
-                mem.Write32(sei_addr + 0x20, 42);
-
-                /* Restore parent process slot and cleanup */
-                EmulatedMemory::process_slot = prev_slot;
-                if (slot) { delete slot; slot = nullptr; }
-            } else {
-                LOG(API, "[API]   -> failed to load ARM PE\n");
-                if (slot) { delete slot; slot = nullptr; }
+            struct ChildProcInfo { std::string path; std::wstring cmdline;
+                                   EmulatedMemory* mem; Win32Thunks* thunks; };
+            auto* cpi = new ChildProcInfo{ narrow_path, params, &mem, this };
+            DWORD realThreadId = 0;
+            HANDLE hThread = ::CreateThread(NULL, 0,
+                [](LPVOID param) -> DWORD {
+                    auto* cpi = (ChildProcInfo*)param;
+                    int thread_idx = g_next_thread_index.fetch_add(1);
+                    ThreadContext ctx;
+                    ctx.marshal_base = 0x3F000000 + (thread_idx + 1) * 0x10000;
+                    t_ctx = &ctx;
+                    { const char* p = cpi->path.c_str();
+                      const char* fname = strrchr(p, '/');
+                      if (!fname) fname = strrchr(p, '\\');
+                      fname = fname ? fname + 1 : p;
+                      snprintf(ctx.process_name, sizeof(ctx.process_name), "%s", fname);
+                      Log::SetProcessName(ctx.process_name, GetCurrentThreadId()); }
+                    ProcessSlot slot;
+                    if (!slot.buffer) {
+                        LOG(API, "[API] ShellExecuteEx: ProcessSlot alloc failed\n");
+                        delete cpi; t_ctx = nullptr; return 1;
+                    }
+                    EmulatedMemory::process_slot = &slot;
+                    PEInfo child_pe = {};
+                    uint32_t entry = PELoader::LoadIntoSlot(
+                        cpi->path.c_str(), *cpi->mem, child_pe, slot);
+                    if (!entry) {
+                        LOG(API, "[API] ShellExecuteEx: LoadIntoSlot failed\n");
+                        EmulatedMemory::process_slot = nullptr;
+                        delete cpi; t_ctx = nullptr; return 1;
+                    }
+                    uint32_t stack_top = 0x00FFFFF0;
+                    InitThreadKData(&ctx, *cpi->mem, GetCurrentThreadId());
+                    EmulatedMemory::kdata_override = ctx.kdata;
+                    ArmCpu& cpu = ctx.cpu;
+                    cpu.mem = cpi->mem;
+                    cpu.thunk_handler = [thunks = cpi->thunks](
+                            uint32_t addr, uint32_t* r, EmulatedMemory& m) -> bool {
+                        if (addr == 0xDEADDEAD) {
+                            LOG(EMU, "[EMU] Child process returned with code %d\n", r[0]);
+                            return true;
+                        }
+                        if (addr == 0xCAFEC000) { r[15] = 0xCAFEC000; return true; }
+                        return thunks->HandleThunk(addr, r, m);
+                    };
+                    MakeCallbackExecutor(&ctx, *cpi->mem, *cpi->thunks, 0xCAFEC000);
+                    cpi->mem->Alloc(ctx.marshal_base, 0x10000);
+                    cpi->thunks->InstallThunks(child_pe);
+                    cpi->thunks->CallDllEntryPoints();
+                    uint32_t cmdline_addr = 0x60003000;
+                    cpi->mem->Alloc(cmdline_addr, 0x1000);
+                    for (size_t j = 0; j < cpi->cmdline.size() && j < 0x7FE; j++)
+                        cpi->mem->Write16(cmdline_addr + (uint32_t)(j * 2),
+                                          (uint16_t)cpi->cmdline[j]);
+                    cpi->mem->Write16(cmdline_addr + (uint32_t)(cpi->cmdline.size() * 2), 0);
+                    cpu.r[0] = child_pe.image_base; cpu.r[1] = 0;
+                    cpu.r[2] = cmdline_addr; cpu.r[3] = 1;
+                    cpu.r[REG_SP] = stack_top; cpu.r[REG_LR] = 0xDEADDEAD;
+                    if (entry & 1) { cpu.cpsr |= PSR_T; cpu.r[REG_PC] = entry & ~1u; }
+                    else { cpu.r[REG_PC] = entry; }
+                    cpu.cpsr |= 0x13;
+                    LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X '%s'\n",
+                        cpu.r[REG_PC], stack_top, ctx.process_name);
+                    delete cpi;
+                    cpu.Run();
+                    uint32_t exit_code = cpu.r[0];
+                    LOG(API, "[PROC] Child process exited with code %u\n", exit_code);
+                    EmulatedMemory::process_slot = nullptr;
+                    EmulatedMemory::kdata_override = nullptr;
+                    t_ctx = nullptr;
+                    return exit_code;
+                },
+                cpi, 0, &realThreadId);
+            if (!hThread) {
+                LOG(API, "[API] ShellExecuteEx: CreateThread failed (err=%lu)\n", GetLastError());
+                delete cpi;
                 mem.Write32(sei_addr + 0x20, 0);
+                regs[0] = 0;
+                return true;
             }
+            LOG(API, "[API]   -> child process thread=%u\n", realThreadId);
+            mem.Write32(sei_addr + 0x20, 42);
             regs[0] = 1;
         } else {
             /* Not an ARM PE — try native ShellExecuteExW */

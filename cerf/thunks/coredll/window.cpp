@@ -107,8 +107,11 @@ void Win32Thunks::RegisterWindowHandlers() {
         /* Detect fullscreen-like windows: top-level with dimensions matching screen size.
            These should use WS_POPUP style with exact screen dimensions, no frame inflation.
            Examples: DesktopExplorerWindow (WS_CLIPCHILDREN|WS_CLIPSIBLINGS|WS_CAPTION, size=screen) */
+        /* Fullscreen = exact screen size match.  Windows slightly larger (e.g.
+           control.exe 816x519 on 800x480) are normal captioned windows whose
+           WinCE dimensions include the frame — NOT fullscreen. */
         bool is_fullscreen = is_toplevel && w > 0 && h > 0 &&
-            (uint32_t)w >= screen_width && (uint32_t)h >= screen_height;
+            (uint32_t)w == screen_width && (uint32_t)h == screen_height;
         if (is_toplevel && !is_popup_no_caption && !is_fullscreen) {
             /* WinCE top-level windows always have a title bar with text.
                Ensure WS_CAPTION is set so desktop Windows draws the title text.

@@ -82,9 +82,15 @@ void Win32Thunks::RegisterModuleHandlers() {
         std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
         auto* info = FindThunkedDllW(lower);
         if (info) { regs[0] = info->fake_handle; LOG(API, "[API]   -> thunked (%s)\n", info->name); return true; }
-        /* Use LoadArmDll which handles search paths, caching, and recursive import resolution */
+        /* Strip path prefix — LoadArmDll takes bare filenames and searches
+           wince_sys_dir / exe_dir.  e.g. "\Windows\connpnl.cpl" → "connpnl.cpl" */
         std::string narrow_name;
         for (auto c : name) narrow_name += (char)c;
+        { auto slash = narrow_name.rfind('\\');
+          if (slash != std::string::npos) narrow_name = narrow_name.substr(slash + 1);
+          auto fslash = narrow_name.rfind('/');
+          if (fslash != std::string::npos) narrow_name = narrow_name.substr(fslash + 1);
+        }
         LoadedDll* dll = LoadArmDll(narrow_name);
         if (!dll) {
             LOG(API, "[API]   DLL not found: %s\n", narrow_name.c_str());
@@ -233,6 +239,11 @@ void Win32Thunks::RegisterModuleHandlers() {
         if (info) { regs[0] = info->fake_handle; return true; }
         std::string narrow_name;
         for (auto c : name) narrow_name += (char)c;
+        { auto slash = narrow_name.rfind('\\');
+          if (slash != std::string::npos) narrow_name = narrow_name.substr(slash + 1);
+          auto fslash = narrow_name.rfind('/');
+          if (fslash != std::string::npos) narrow_name = narrow_name.substr(fslash + 1);
+        }
         LoadedDll* dll = LoadArmDll(narrow_name);
         if (!dll) {
             LOG(API, "[API]   DLL not found: %s\n", narrow_name.c_str());

@@ -239,6 +239,12 @@ int main(int argc, char* argv[]) {
     t_ctx = &main_ctx;
     EmulatedMemory::kdata_override = main_ctx.kdata;
 
+    { const char* fname = strrchr(exe_path, '/');
+      if (!fname) fname = strrchr(exe_path, '\\');
+      fname = fname ? fname + 1 : exe_path;
+      snprintf(main_ctx.process_name, sizeof(main_ctx.process_name), "%s", fname);
+      Log::SetProcessName(main_ctx.process_name, GetCurrentThreadId()); }
+
     /* Set up the trampoline: thunk handlers use this->callback_executor which
        delegates to the current thread's real callback_executor via t_ctx. */
     thunks.callback_executor = [](uint32_t addr, uint32_t* args, int nargs) -> uint32_t {
@@ -276,9 +282,6 @@ int main(int argc, char* argv[]) {
     /* Run the emulator */
     cpu.Run();
 
-    /* If we get here, main CPU halted. If WinMain returned 0 (success),
-       child threads may still be running (e.g. explorer.exe shell threads).
-       Keep the process alive with a message pump so child threads can work. */
     LOG(EMU, "\n[EMU] CPU halted (code=%d) after %llu instructions\n", cpu.halt_code, cpu.insn_count);
     if (cpu.halt_code == 0) {
         LOG(EMU, "[EMU] Main entry returned 0 — pumping messages for child threads\n");

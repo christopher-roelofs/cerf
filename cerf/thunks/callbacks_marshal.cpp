@@ -22,34 +22,18 @@ bool MarshalNotify(HWND hwnd, WPARAM wParam, LPARAM lParam,
                    uint32_t arm_wndproc, EmulatedMemory& emem,
                    MarshalCallbackExecutor executor, LRESULT& out_result)
 {
-    /* ARM-originated WM_NOTIFY: lParam fits in 32 bits */
+    /* ARM-originated WM_NOTIFY: lParam fits in 32 bits.
+       With identity-mapped ProcessSlot, ARM addresses ARE native addresses,
+       so native controls write directly to ARM memory. */
     if (lParam > 0 && (lParam >> 32) == 0) {
         uint32_t arm_lp = (uint32_t)lParam;
         int32_t code_peek = (int32_t)emem.Read32(arm_lp + 8);
         if (code_peek == LVN_GETDISPINFOW || code_peek == LVN_GETDISPINFOA) {
-            uint32_t mask = emem.Read32(arm_lp + 12);
-            int iItem = (int)emem.Read32(arm_lp + 16);
-            int iImage = (int)emem.Read32(arm_lp + 40);
-            uint32_t pszText = emem.Read32(arm_lp + 32);
-            LOG(API, "[DISP] LVN_GETDISPINFO(ARM) BEFORE: iItem=%d mask=0x%X iImage=%d pszText=0x%08X\n",
-                iItem, mask, iImage, pszText);
             uint32_t args[4] = {
                 (uint32_t)(uintptr_t)hwnd, WM_NOTIFY,
                 (uint32_t)wParam, arm_lp
             };
             uint32_t result = executor(arm_wndproc, args, 4);
-            iImage = (int)emem.Read32(arm_lp + 40);
-            pszText = emem.Read32(arm_lp + 32);
-            std::wstring disp_text;
-            if (pszText && (mask & 0x0001 /*LVIF_TEXT*/)) {
-                for (int i = 0; i < 64; i++) {
-                    wchar_t c = (wchar_t)emem.Read16(pszText + i * 2);
-                    if (!c) break;
-                    disp_text += c;
-                }
-            }
-            LOG(API, "[DISP] LVN_GETDISPINFO(ARM) AFTER: iItem=%d iImage=%d text='%ls'\n",
-                iItem, iImage, disp_text.c_str());
             out_result = (LRESULT)(intptr_t)(int32_t)result;
             return true;
         }

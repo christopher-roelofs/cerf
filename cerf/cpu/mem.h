@@ -20,37 +20,44 @@ struct MemRegion {
 };
 
 /* Per-process virtual address space overlay (WinCE slot 0: 0x00000000-0x01FFFFFF).
-   Each WinCE process gets its own 32MB slot. When a child process runs on a thread,
-   that thread's process_slot pointer is set so Translate() returns the overlay's
-   memory instead of the parent's for addresses in [0, SLOT_SIZE). DLLs above
-   0x02000000 are shared and not overlaid. */
+   DLLs above 0x02000000 are shared and not overlaid. */
 struct ProcessSlot {
-    static const uint32_t SLOT_SIZE = 0x02000000; /* 32 MB */
-    uint8_t* buffer = nullptr;    /* Host allocation backing the slot */
-    uint32_t committed = 0;       /* Bytes actually committed (may be < SLOT_SIZE) */
-
+    static const uint32_t SLOT_SIZE = 0x02000000;
+    static const uint32_t IDENTITY_BASE = 0x00010000;
+    uint8_t* buffer = nullptr;
+    uint32_t committed = 0;
+    bool identity_mapped = false;
     ProcessSlot() {
-        /* Allocate 32MB fully committed — each WinCE process gets slot 0 */
-        buffer = (uint8_t*)VirtualAlloc(NULL, SLOT_SIZE,
-                                         MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        void* p = VirtualAlloc((void*)(uintptr_t)IDENTITY_BASE,
+                               SLOT_SIZE - IDENTITY_BASE,
+                               MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (p == (void*)(uintptr_t)IDENTITY_BASE) {
+            buffer = (uint8_t*)p; identity_mapped = true;
+        } else {
+            if (p) VirtualFree(p, 0, MEM_RELEASE);
+            buffer = (uint8_t*)VirtualAlloc(NULL, SLOT_SIZE,
+                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        }
     }
-    ~ProcessSlot() {
-        if (buffer) VirtualFree(buffer, 0, MEM_RELEASE);
-    }
-
-    /* Commit pages within the slot (relative to slot base 0) */
+    ~ProcessSlot() { if (buffer) VirtualFree(buffer, 0, MEM_RELEASE); }
     bool Commit(uint32_t offset, uint32_t size) {
+        if (identity_mapped) {
+            if (offset < IDENTITY_BASE) {
+                if (offset + size <= IDENTITY_BASE) return true;
+                size -= (IDENTITY_BASE - offset); offset = IDENTITY_BASE;
+            }
+            return offset + size <= SLOT_SIZE;
+        }
         if (!buffer || offset + size > SLOT_SIZE) return false;
-        /* Round down to page, round up size */
         uint32_t page_off = offset & ~0xFFFu;
         uint32_t page_end = (offset + size + 0xFFF) & ~0xFFFu;
-        void* p = VirtualAlloc(buffer + page_off, page_end - page_off,
-                               MEM_COMMIT, PAGE_READWRITE);
-        return p != nullptr;
+        return VirtualAlloc(buffer + page_off, page_end - page_off, MEM_COMMIT, PAGE_READWRITE) != nullptr;
     }
-
-    /* Translate an ARM address within slot range to host pointer */
     uint8_t* Translate(uint32_t addr) const {
+        if (identity_mapped) {
+            if (addr < IDENTITY_BASE || addr >= SLOT_SIZE) return nullptr;
+            return (uint8_t*)(uintptr_t)addr;
+        }
         if (!buffer || addr >= SLOT_SIZE) return nullptr;
         return buffer + addr;
     }

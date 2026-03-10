@@ -5,8 +5,6 @@
 #include "../../log.h"
 #include <cstdio>
 #include <vector>
-
-
 void Win32Thunks::RegisterProcessHandlers() {
     auto stub0 = [](const char* name) -> ThunkHandler {
         return [name](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -36,10 +34,12 @@ void Win32Thunks::RegisterProcessHandlers() {
             EmulatedMemory* mem;
             Win32Thunks* thunks;
             uint32_t sentinel;
+            char parent_process[32];
         };
         auto* info = new ThreadStartInfo{
-            lpStartAddress, lpParameter, &mem, this, 0xCAFEC000
+            lpStartAddress, lpParameter, &mem, this, 0xCAFEC000, {}
         };
+        if (t_ctx) snprintf(info->parent_process, 32, "%s", t_ctx->process_name);
 
         DWORD realThreadId = 0;
         HANDLE hThread = ::CreateThread(NULL, 0,
@@ -51,6 +51,11 @@ void Win32Thunks::RegisterProcessHandlers() {
                 ThreadContext ctx;
                 ctx.marshal_base = 0x3F000000 + (thread_idx + 1) * 0x10000;
                 t_ctx = &ctx;
+
+                /* Inherit process name from parent thread */
+                snprintf(ctx.process_name, sizeof(ctx.process_name), "%s",
+                         info->parent_process);
+                Log::SetProcessName(ctx.process_name, GetCurrentThreadId());
 
                 /* Allocate per-thread stack in emulated memory */
                 uint32_t stack_size = 0x100000; /* 1MB */
@@ -153,19 +158,21 @@ void Win32Thunks::RegisterProcessHandlers() {
                 Win32Thunks* thunks;
             };
             auto* cpi = new ChildProcInfo{ narrow_path, cmdline, &mem, this };
-
             DWORD realThreadId = 0;
             HANDLE hThread = ::CreateThread(NULL, 0,
                 [](LPVOID param) -> DWORD {
                     auto* cpi = (ChildProcInfo*)param;
                     int thread_idx = g_next_thread_index.fetch_add(1);
 
-                    /* Create per-thread context */
                     ThreadContext ctx;
                     ctx.marshal_base = 0x3F000000 + (thread_idx + 1) * 0x10000;
                     t_ctx = &ctx;
-
-                    /* Create per-process virtual address space */
+                    { const char* p = cpi->path.c_str();
+                      const char* fname = strrchr(p, '/');
+                      if (!fname) fname = strrchr(p, '\\');
+                      fname = fname ? fname + 1 : p;
+                      snprintf(ctx.process_name, sizeof(ctx.process_name), "%s", fname);
+                      Log::SetProcessName(ctx.process_name, GetCurrentThreadId()); }
                     ProcessSlot slot;
                     if (!slot.buffer) {
                         LOG(API, "[API] CreateProcessW: ProcessSlot alloc failed\n");
