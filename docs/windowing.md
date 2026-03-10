@@ -45,7 +45,7 @@ WM_NCCALCSIZE handler:
 This handler lives in both EmuWndProc (for ARM-class windows) and
 ThemeSubclassProc (for dialog windows that use DefDlgProc).
 
-### 2. PaintWinCENCArea (theme.cpp)
+### 2. PaintWinCENCArea (theme_subclass.cpp)
 
 Draws the WinCE-style NC area during WM_NCPAINT:
 
@@ -54,10 +54,14 @@ Draws the WinCE-style NC area during WM_NCPAINT:
 - Caption buttons: Close (X), Help (?), OK — drawn right-to-left
 - Caption text with system font
 
-### 3. HitTestWinCECaption (theme.cpp)
+### 3. HitTestWinCECaption (theme_subclass.cpp)
 
 Hit-tests the caption area during WM_NCHITTEST, returning HTCLOSE, HTHELP,
 HT_CAPTIONOK, or HTCAPTION for drag support.
+
+**Critical**: The custom hit-test runs BEFORE DefSubclassProc because
+DefWindowProc returns HTNOWHERE for the NC area of borderless WS_POPUP
+windows, so a post-DefSubclassProc check would never fire.
 
 ## Style Tracking
 
@@ -139,10 +143,12 @@ eliminates this entire class of bugs.
 |------|------|
 | `coredll/window.cpp` | CreateWindowExW thunk (WS_POPUP conversion) |
 | `callbacks.cpp` | EmuWndProc (WM_NCCALCSIZE for ARM-class windows) |
-| `theme.cpp` | PaintWinCENCArea, HitTestWinCECaption, ThemeSubclassProc |
+| `theme.cpp` | Colors, inline hooks, initialization, per-window theme apply |
+| `theme_subclass.cpp` | PaintWinCENCArea, HitTestWinCECaption, ThemeSubclassProc |
+| `theme_internal.h` | Shared declarations between theme.cpp and theme_subclass.cpp |
 | `coredll/window_props.cpp` | GetWindowLongW/SetWindowLongW (style map lookups) |
 | `coredll/window_layout.cpp` | SetWindowPos/MoveWindow (pass-through) |
 | `coredll/system.cpp` | GetSystemMetrics (WinCE frame values) |
-| `coredll/dialog.cpp` | Dialog template fixup + style map population |
+| `coredll/dialog.cpp` | Dialog handler thunks + style map population |
+| `coredll/dialog_template.cpp` | ComputeDlgTemplateSize, CopyDlgTemplate, FixupDlgTemplate |
 | `callbacks_marshal.cpp` | CREATESTRUCT marshaling |
-| `captionok.cpp` | WS_EX_CAPTIONOKBTN stubs (painting now in theme.cpp) |
