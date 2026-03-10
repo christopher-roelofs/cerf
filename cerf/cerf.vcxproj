@@ -154,6 +154,7 @@
     <ClCompile Include="cpu\thumb_insn.cpp" />
     <!-- PE loader -->
     <ClCompile Include="loader\pe_loader.cpp" />
+    <ClCompile Include="loader\pe_loader_exports.cpp" />
     <!-- Logging -->
     <ClCompile Include="log.cpp" />
     <!-- Entry point -->
@@ -205,6 +206,7 @@
     <ClCompile Include="thunks\coredll\dsa.cpp" />
     <ClCompile Include="thunks\coredll\module.cpp" />
     <ClCompile Include="thunks\coredll\shell.cpp" />
+    <ClCompile Include="thunks\coredll\shell_exec.cpp" />
     <ClCompile Include="thunks\coredll\vfs.cpp" />
     <ClCompile Include="thunks\theme.cpp" />
     <ClCompile Include="thunks\thread_context.cpp" />

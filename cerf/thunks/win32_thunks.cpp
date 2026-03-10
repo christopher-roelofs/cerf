@@ -156,6 +156,7 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterStdioHandlers();
     RegisterVfsHandlers();
     RegisterShellHandlers();
+    RegisterShellExecHandler();
     current_dll_context.clear();
 
     /* WinCE UserKData page at fixed address 0xFFFFC800.

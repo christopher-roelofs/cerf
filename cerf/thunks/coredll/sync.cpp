@@ -181,4 +181,53 @@ void Win32Thunks::RegisterSyncHandlers() {
         }
         return true;
     });
+
+    Thunk("WaitForMultipleObjects", 498, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t nCount = regs[0];
+        uint32_t lpHandles = regs[1];
+        BOOL bWaitAll = regs[2];
+        uint32_t dwMilliseconds = regs[3];
+        if (nCount == 0 || nCount > 64 || !lpHandles) {
+            LOG(API, "[API] WaitForMultipleObjects(n=%u) -> WAIT_FAILED (bad args)\n", nCount);
+            regs[0] = WAIT_FAILED;
+            return true;
+        }
+        HANDLE handles[64];
+        for (uint32_t i = 0; i < nCount; i++) {
+            uint32_t raw = mem.Read32(lpHandles + i * 4);
+            handles[i] = (HANDLE)(intptr_t)(int32_t)raw;
+            LOG(API, "[API]   WaitForMulti handle[%u]: raw=0x%08X -> native=%p\n",
+                i, raw, handles[i]);
+        }
+        /* Pump sent messages while waiting to prevent cross-thread deadlocks */
+        DWORD start = GetTickCount();
+        DWORD result;
+        for (;;) {
+            DWORD elapsed = GetTickCount() - start;
+            DWORD remaining = (dwMilliseconds == INFINITE) ? INFINITE
+                : (elapsed >= dwMilliseconds ? 0 : dwMilliseconds - elapsed);
+            result = MsgWaitForMultipleObjects(nCount, handles, FALSE,
+                                               remaining, QS_SENDMESSAGE);
+            if (result == WAIT_OBJECT_0 + nCount) {
+                MSG msg;
+                PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
+                continue;
+            }
+            if (bWaitAll && result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + nCount) {
+                DWORD full = WaitForMultipleObjects(nCount, handles, TRUE, 0);
+                if (full != WAIT_TIMEOUT) { result = full; break; }
+                continue;
+            }
+            break;
+        }
+        if (result == WAIT_FAILED) {
+            LOG(API, "[API] WaitForMultipleObjects(n=%u, waitAll=%d, ms=%u) -> WAIT_FAILED (err=%lu)\n",
+                nCount, bWaitAll, dwMilliseconds, GetLastError());
+        } else {
+            LOG(API, "[API] WaitForMultipleObjects(n=%u, waitAll=%d, ms=%u) -> 0x%X\n",
+                nCount, bWaitAll, dwMilliseconds, result);
+        }
+        regs[0] = result;
+        return true;
+    });
 }

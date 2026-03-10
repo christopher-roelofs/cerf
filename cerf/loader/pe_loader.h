@@ -49,6 +49,12 @@ public:
     /* Load a DLL dependency into emulated memory */
     static uint32_t LoadDll(const char* path, EmulatedMemory& mem, PEInfo& info);
 
+    /* Load a PE into a ProcessSlot overlay (for child EXEs at conflicting addresses).
+       Sets EmulatedMemory::process_slot for the calling thread, loads sections into
+       the slot buffer, processes relocations and imports. Returns entry point or 0. */
+    static uint32_t LoadIntoSlot(const char* path, EmulatedMemory& mem,
+                                  PEInfo& info, ProcessSlot& slot);
+
     /* Resolve an export ordinal from a loaded PE's export directory.
        Returns the virtual address (base + RVA) of the exported function, or 0 if not found. */
     static uint32_t ResolveExportOrdinal(EmulatedMemory& mem, const PEInfo& info, uint16_t ordinal);

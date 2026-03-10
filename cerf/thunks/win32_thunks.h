@@ -235,4 +235,5 @@ private:
     void RegisterDsaHandlers();
     void RegisterStdioHandlers();
     void RegisterVfsHandlers();
+    void RegisterShellExecHandler();
 };

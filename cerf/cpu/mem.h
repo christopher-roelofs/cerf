@@ -19,6 +19,43 @@ struct MemRegion {
     bool     is_external = false; /* True for externally-owned buffers (don't free) */
 };
 
+/* Per-process virtual address space overlay (WinCE slot 0: 0x00000000-0x01FFFFFF).
+   Each WinCE process gets its own 32MB slot. When a child process runs on a thread,
+   that thread's process_slot pointer is set so Translate() returns the overlay's
+   memory instead of the parent's for addresses in [0, SLOT_SIZE). DLLs above
+   0x02000000 are shared and not overlaid. */
+struct ProcessSlot {
+    static const uint32_t SLOT_SIZE = 0x02000000; /* 32 MB */
+    uint8_t* buffer = nullptr;    /* Host allocation backing the slot */
+    uint32_t committed = 0;       /* Bytes actually committed (may be < SLOT_SIZE) */
+
+    ProcessSlot() {
+        /* Allocate 32MB fully committed — each WinCE process gets slot 0 */
+        buffer = (uint8_t*)VirtualAlloc(NULL, SLOT_SIZE,
+                                         MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    }
+    ~ProcessSlot() {
+        if (buffer) VirtualFree(buffer, 0, MEM_RELEASE);
+    }
+
+    /* Commit pages within the slot (relative to slot base 0) */
+    bool Commit(uint32_t offset, uint32_t size) {
+        if (!buffer || offset + size > SLOT_SIZE) return false;
+        /* Round down to page, round up size */
+        uint32_t page_off = offset & ~0xFFFu;
+        uint32_t page_end = (offset + size + 0xFFF) & ~0xFFFu;
+        void* p = VirtualAlloc(buffer + page_off, page_end - page_off,
+                               MEM_COMMIT, PAGE_READWRITE);
+        return p != nullptr;
+    }
+
+    /* Translate an ARM address within slot range to host pointer */
+    uint8_t* Translate(uint32_t addr) const {
+        if (!buffer || addr >= SLOT_SIZE) return nullptr;
+        return buffer + addr;
+    }
+};
+
 class EmulatedMemory {
 public:
     static const uint32_t PAGE_SIZE = 0x1000;
@@ -29,6 +66,11 @@ public:
        go to this buffer instead of shared memory. Each ARM thread sets this to its
        own ThreadContext::kdata[] before entering ARM execution. */
     static thread_local uint8_t* kdata_override;
+
+    /* Per-thread process slot overlay. When set, addresses in [0, 0x02000000)
+       resolve through this overlay instead of the global regions. This implements
+       WinCE's per-process virtual address space (slot 0). */
+    static thread_local ProcessSlot* process_slot;
 
     std::vector<MemRegion> regions;
     std::mutex alloc_mutex;  /* Protects regions vector during Alloc/Reserve */
@@ -61,6 +103,14 @@ public:
     uint8_t* Alloc(uint32_t base, uint32_t size, DWORD protect = PAGE_READWRITE, bool is_stack = false) {
         std::lock_guard<std::mutex> lock(alloc_mutex);
         size = AlignUp(size, PAGE_SIZE);
+        /* If a process slot overlay is active and the address falls in slot 0,
+           commit pages in the overlay instead of global memory. */
+        if (process_slot && base < ProcessSlot::SLOT_SIZE) {
+            if (process_slot->Commit(base, size))
+                return process_slot->buffer + base;
+            fprintf(stderr, "[MEM] ProcessSlot commit failed at 0x%08X+0x%X\n", base, size);
+            return nullptr;
+        }
         /* Try to allocate at the exact ARM address for identity mapping */
         uint8_t* ptr = nullptr;
         if (base >= 0x10000) { /* Addresses below 64KB can't be allocated on Windows */
@@ -97,6 +147,10 @@ public:
            Single branch, almost always not-taken (well-predicted). */
         if (kdata_override && (addr >> 12) == 0xFFFFC)
             return kdata_override + (addr & 0xFFF);
+        /* Per-process slot overlay: addresses in [0, 0x02000000) go to the
+           thread's private process slot instead of the global regions. */
+        if (process_slot && addr < ProcessSlot::SLOT_SIZE)
+            return process_slot->Translate(addr);
         for (auto& r : regions) {
             if (addr >= r.base && addr < r.base + r.size) {
                 return r.host_ptr + (addr - r.base);

@@ -139,31 +139,126 @@ void Win32Thunks::RegisterProcessHandlers() {
         LOG(API, "[API] CreateProcessW(image='%ls', cmdline='%ls', curdir='%ls', flags=0x%X)\n",
                image.c_str(), cmdline.c_str(), curdir.c_str(), fdwCreate);
         std::wstring mapped_image = image.empty() ? L"" : MapWinCEPath(image);
-        /* If image is an ARM PE, spawn cerf.exe to run it */
+        /* If image is an ARM PE, run it in-process with per-process virtual address space */
         if (!mapped_image.empty() && IsArmPE(mapped_image)) {
-            /* Build cerf.exe command line: cerf.exe <mapped_image_path> */
-            wchar_t cerf_path[MAX_PATH];
-            GetModuleFileNameW(NULL, cerf_path, MAX_PATH);
-            std::wstring cerf_cmdline = L"\"";
-            cerf_cmdline += cerf_path;
-            cerf_cmdline += L"\" \"";
-            cerf_cmdline += mapped_image;
-            cerf_cmdline += L"\"";
-            LOG(API, "[API]   -> ARM PE detected, spawning cerf: %ls\n", cerf_cmdline.c_str());
-            STARTUPINFOW si = {}; si.cb = sizeof(si);
-            PROCESS_INFORMATION pi = {};
-            std::vector<wchar_t> cmd_buf(cerf_cmdline.begin(), cerf_cmdline.end());
-            cmd_buf.push_back(0);
-            BOOL ret = CreateProcessW(cerf_path, cmd_buf.data(),
-                NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
-            if (ret && procinfo_ptr) {
-                mem.Write32(procinfo_ptr + 0x00, WrapHandle(pi.hProcess));
-                mem.Write32(procinfo_ptr + 0x04, WrapHandle(pi.hThread));
-                mem.Write32(procinfo_ptr + 0x08, pi.dwProcessId);
-                mem.Write32(procinfo_ptr + 0x0C, pi.dwThreadId);
+            LOG(API, "[API]   -> ARM PE, launching with ProcessSlot\n");
+            std::string narrow_path;
+            for (auto c : mapped_image) narrow_path += (char)c;
+
+            /* Capture what the child thread needs */
+            struct ChildProcInfo {
+                std::string path;
+                std::wstring cmdline;
+                EmulatedMemory* mem;
+                Win32Thunks* thunks;
+            };
+            auto* cpi = new ChildProcInfo{ narrow_path, cmdline, &mem, this };
+
+            DWORD realThreadId = 0;
+            HANDLE hThread = ::CreateThread(NULL, 0,
+                [](LPVOID param) -> DWORD {
+                    auto* cpi = (ChildProcInfo*)param;
+                    int thread_idx = g_next_thread_index.fetch_add(1);
+
+                    /* Create per-thread context */
+                    ThreadContext ctx;
+                    ctx.marshal_base = 0x3F000000 + (thread_idx + 1) * 0x10000;
+                    t_ctx = &ctx;
+
+                    /* Create per-process virtual address space */
+                    ProcessSlot slot;
+                    if (!slot.buffer) {
+                        LOG(API, "[API] CreateProcessW: ProcessSlot alloc failed\n");
+                        delete cpi; t_ctx = nullptr; return 1;
+                    }
+                    EmulatedMemory::process_slot = &slot;
+
+                    /* Load PE into the slot */
+                    PEInfo child_pe = {};
+                    uint32_t entry = PELoader::LoadIntoSlot(
+                        cpi->path.c_str(), *cpi->mem, child_pe, slot);
+                    if (!entry) {
+                        LOG(API, "[API] CreateProcessW: LoadIntoSlot failed\n");
+                        EmulatedMemory::process_slot = nullptr;
+                        delete cpi; t_ctx = nullptr; return 1;
+                    }
+
+                    /* Allocate per-thread stack (in the slot) */
+                    uint32_t stack_top = 0x00FFFFF0;
+
+                    /* Initialize per-thread KData */
+                    InitThreadKData(&ctx, *cpi->mem, GetCurrentThreadId());
+                    EmulatedMemory::kdata_override = ctx.kdata;
+
+                    /* Set up CPU */
+                    ArmCpu& cpu = ctx.cpu;
+                    cpu.mem = cpi->mem;
+                    cpu.thunk_handler = [thunks = cpi->thunks](
+                            uint32_t addr, uint32_t* r, EmulatedMemory& m) -> bool {
+                        if (addr == 0xDEADDEAD) {
+                            LOG(EMU, "[EMU] Child process returned with code %d\n", r[0]);
+                            return true;
+                        }
+                        if (addr == 0xCAFEC000) { r[15] = 0xCAFEC000; return true; }
+                        return thunks->HandleThunk(addr, r, m);
+                    };
+
+                    MakeCallbackExecutor(&ctx, *cpi->mem, *cpi->thunks, 0xCAFEC000);
+                    cpi->mem->Alloc(ctx.marshal_base, 0x10000);
+                    cpi->thunks->InstallThunks(child_pe);
+                    cpi->thunks->CallDllEntryPoints();
+
+                    /* Build command line in shared memory */
+                    uint32_t cmdline_addr = 0x60003000;
+                    cpi->mem->Alloc(cmdline_addr, 0x1000);
+                    for (size_t j = 0; j < cpi->cmdline.size() && j < 0x7FE; j++)
+                        cpi->mem->Write16(cmdline_addr + (uint32_t)(j * 2),
+                                          (uint16_t)cpi->cmdline[j]);
+                    cpi->mem->Write16(cmdline_addr + (uint32_t)(cpi->cmdline.size() * 2), 0);
+
+                    /* Set up WinMain args */
+                    cpu.r[0] = child_pe.image_base;
+                    cpu.r[1] = 0;
+                    cpu.r[2] = cmdline_addr;
+                    cpu.r[3] = 1; /* SW_SHOWNORMAL */
+                    cpu.r[REG_SP] = stack_top;
+                    cpu.r[REG_LR] = 0xDEADDEAD;
+                    if (entry & 1) {
+                        cpu.cpsr |= PSR_T;
+                        cpu.r[REG_PC] = entry & ~1u;
+                    } else {
+                        cpu.r[REG_PC] = entry;
+                    }
+                    cpu.cpsr |= 0x13;
+
+                    LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X\n",
+                        cpu.r[REG_PC], stack_top);
+                    delete cpi;
+                    cpu.Run();
+
+                    uint32_t exit_code = cpu.r[0];
+                    LOG(API, "[PROC] Child process exited with code %u\n", exit_code);
+                    EmulatedMemory::process_slot = nullptr;
+                    EmulatedMemory::kdata_override = nullptr;
+                    t_ctx = nullptr;
+                    return exit_code;
+                },
+                cpi, 0, &realThreadId);
+
+            if (!hThread) {
+                LOG(API, "[API] CreateProcessW: CreateThread failed (err=%lu)\n", GetLastError());
+                delete cpi;
+                regs[0] = 0;
+                return true;
             }
-            LOG(API, "[API]   -> %s (pid=%d)\n", ret ? "OK" : "FAILED", ret ? pi.dwProcessId : 0);
-            regs[0] = ret;
+            if (procinfo_ptr) {
+                mem.Write32(procinfo_ptr + 0x00, WrapHandle(hThread));
+                mem.Write32(procinfo_ptr + 0x04, WrapHandle(hThread));
+                mem.Write32(procinfo_ptr + 0x08, realThreadId);
+                mem.Write32(procinfo_ptr + 0x0C, realThreadId);
+            }
+            LOG(API, "[API]   -> child process thread=%u\n", realThreadId);
+            regs[0] = 1;
         } else {
             /* Not an ARM PE — try native CreateProcessW */
             STARTUPINFOW si = {}; si.cb = sizeof(si);
@@ -193,56 +288,5 @@ void Win32Thunks::RegisterProcessHandlers() {
     Thunk("SetThreadPriority", 514, stub0("SetThreadPriority"));
     Thunk("GetExitCodeProcess", 519, stub0("GetExitCodeProcess"));
     Thunk("OpenProcess", 509, stub0("OpenProcess"));
-    Thunk("WaitForMultipleObjects", 498, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        /* WaitForMultipleObjects(nCount, lpHandles, bWaitAll, dwMilliseconds) */
-        uint32_t nCount = regs[0];
-        uint32_t lpHandles = regs[1];
-        BOOL bWaitAll = regs[2];
-        uint32_t dwMilliseconds = regs[3];
-        if (nCount == 0 || nCount > 64 || !lpHandles) {
-            LOG(API, "[API] WaitForMultipleObjects(n=%u) -> WAIT_FAILED (bad args)\n", nCount);
-            regs[0] = WAIT_FAILED;
-            return true;
-        }
-        HANDLE handles[64];
-        for (uint32_t i = 0; i < nCount; i++) {
-            uint32_t raw = mem.Read32(lpHandles + i * 4);
-            handles[i] = (HANDLE)(intptr_t)(int32_t)raw;
-            LOG(API, "[API]   WaitForMulti handle[%u]: raw=0x%08X -> native=%p\n",
-                i, raw, handles[i]);
-        }
-        /* Pump sent messages while waiting to prevent cross-thread deadlocks.
-           For bWaitAll=TRUE, use bWaitAll=FALSE in MsgWait and do a non-blocking
-           check of the full set when any single handle signals. */
-        DWORD start = GetTickCount();
-        DWORD result;
-        for (;;) {
-            DWORD elapsed = GetTickCount() - start;
-            DWORD remaining = (dwMilliseconds == INFINITE) ? INFINITE
-                : (elapsed >= dwMilliseconds ? 0 : dwMilliseconds - elapsed);
-            result = MsgWaitForMultipleObjects(nCount, handles, FALSE,
-                                               remaining, QS_SENDMESSAGE);
-            if (result == WAIT_OBJECT_0 + nCount) {
-                MSG msg;
-                PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
-                continue;
-            }
-            if (bWaitAll && result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + nCount) {
-                /* One handle signaled but we need all — poll the full set */
-                DWORD full = WaitForMultipleObjects(nCount, handles, TRUE, 0);
-                if (full != WAIT_TIMEOUT) { result = full; break; }
-                continue;
-            }
-            break;
-        }
-        if (result == WAIT_FAILED) {
-            LOG(API, "[API] WaitForMultipleObjects(n=%u, waitAll=%d, ms=%u) -> WAIT_FAILED (err=%lu)\n",
-                nCount, bWaitAll, dwMilliseconds, GetLastError());
-        } else {
-            LOG(API, "[API] WaitForMultipleObjects(n=%u, waitAll=%d, ms=%u) -> 0x%X\n",
-                nCount, bWaitAll, dwMilliseconds, result);
-        }
-        regs[0] = result;
-        return true;
-    });
+    /* WaitForMultipleObjects moved to sync.cpp */
 }

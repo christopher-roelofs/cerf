@@ -21,6 +21,7 @@ cerf/
   thunks/
     win32_thunks.h                 - Win32Thunks class, ThunkEntry, ThunkedDllInfo table
     win32_thunks.cpp               - Core thunk infrastructure, dispatch, callbacks, ARM DLL loader
+    thread_context.h/.cpp          - Per-thread ARM state (ArmCpu, TLS, KData, callback_executor)
     coredll/                       - COREDLL.DLL thunks (one file per functional group)
       memory.cpp                   - VirtualAlloc, HeapAlloc, malloc, LocalAlloc, etc.
       string.cpp                   - wcslen, wcscpy, wsprintfW, MultiByteToWideChar, etc.
@@ -41,8 +42,9 @@ cerf/
       system.cpp                   - GetSystemMetrics, time, sync, TLS, locale
       resource.cpp                 - LoadString, LoadBitmap, LoadIcon, etc.
       module.cpp                   - GetModuleHandle, LoadLibrary, GetProcAddress
-      process.cpp                  - Process/thread management
+      process.cpp                  - CreateThread, CreateProcessW (real OS threads + ProcessSlot)
       shell.cpp                    - Shell APIs (SH* functions, file dialogs)
+      shell_exec.cpp               - ShellExecuteEx (ARM PE child loading via ProcessSlot)
       imagelist.cpp                - ImageList_* and InitCommonControls (coredll re-exports)
       misc.cpp                     - Debug, clipboard, sound, COM, IMM stubs
       vfs.cpp                      - Virtual filesystem: WinCE ↔ host path translation
@@ -71,6 +73,8 @@ bundled/                           - Files bundled with the build output
 - **64-bit handle safety**: Native Windows uses 64-bit pointers/handles. ARM code uses 32-bit. Handles are sign-extended via `(intptr_t)(int32_t)` when passing to native APIs, and truncated back to uint32_t for ARM registers.
 - **Callback bridging**: Native callbacks (WndProc, DlgProc, TimerProc) invoke back into ARM code via `callback_executor`. Sentinel address 0xCAFEC000 signals callback return.
 - **WinCE fullscreen**: WinCE apps run fullscreen by default. CERF sizes windows to the desktop work area and hides borders, preserving the app's original window style for correct rendering.
+- **Per-process virtual address space (ProcessSlot)**: WinCE gives each process a 32MB slot (slot 0: 0x00000000-0x01FFFFFF). CERF implements this via `ProcessSlot` — a 32MB committed buffer. A `thread_local ProcessSlot*` in `EmulatedMemory` overrides `Translate()` for addresses in slot 0 range. DLLs above 0x02000000 are shared. Child EXEs that conflict with the parent's address (e.g. control.exe and explorer.exe both at 0x00010000) each get their own slot.
+- **Real OS threading**: Each ARM thread is a real Windows thread with its own `ArmCpu`, `ThreadContext`, per-thread KData page, and optional `ProcessSlot`. `CreateThread` and `CreateProcessW` both create real OS threads.
 
 ## Building
 
