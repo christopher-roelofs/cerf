@@ -5,6 +5,7 @@
 #include <fstream>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 /* String conversion helpers (also in registry_import.cpp — static, trivial) */
 
@@ -32,120 +33,75 @@ void Win32Thunks::LoadRegistry() {
     if (registry_loaded) return;
     registry_loaded = true;
 
-    /* Store registry in the device directory */
-    registry_path = device_dir + "registry.txt";
+    /* Store registry in the device directory as standard .reg format */
+    registry_path = device_dir + "registry.reg";
     LOG(REG, "[REG] Loading registry from %s\n", registry_path.c_str());
 
-    std::ifstream f(registry_path);
-    if (!f.is_open()) {
-        LOG(REG, "[REG] No registry file found, looking for WinCE .reg import\n");
-        /* Import a WinCE registry export (.reg file) from the device directory.
-           This provides default COM CLSIDs etc. */
-        std::string import_path;
-        {
-            import_path = device_dir + "registry_to_import.reg";
-            std::ifstream test(import_path);
-            if (!test.is_open()) import_path = "";
-        }
-        if (!import_path.empty()) {
-            ImportRegFile(import_path);
+    {
+        std::ifstream f(registry_path);
+        if (f.is_open()) {
+            f.close();
+            ImportRegFile(registry_path);
+            LOG(REG, "[REG] Loaded %zu keys\n", registry.size());
+        } else {
+            LOG(REG, "[REG] No registry file, importing from import_registry/\n");
+            /* Import all .reg files from the import_registry subdirectory.
+               Files are processed in sorted order for deterministic results. */
+            std::string import_dir = device_dir + "import_registry";
+            namespace fs = std::filesystem;
+            if (fs::is_directory(import_dir)) {
+                std::vector<std::string> reg_files;
+                std::string custom_reg;
+                for (auto& entry : fs::directory_iterator(import_dir)) {
+                    if (entry.is_regular_file() &&
+                        entry.path().extension() == ".reg") {
+                        if (entry.path().filename() == "custom.reg")
+                            custom_reg = entry.path().string();
+                        else
+                            reg_files.push_back(entry.path().string());
+                    }
+                }
+                std::sort(reg_files.begin(), reg_files.end());
+                for (auto& reg_path : reg_files)
+                    ImportRegFile(reg_path);
+                /* custom.reg imports last to override all other values */
+                if (!custom_reg.empty())
+                    ImportRegFile(custom_reg);
+            }
             SaveRegistry(); /* persist imported data */
         }
-        goto post_load;
     }
 
-    {
-        std::wstring current_key;
-        std::string line;
-        while (std::getline(f, line)) {
-            /* Trim trailing \r */
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty()) continue;
+    /* All essential CLSIDs and MIME types are now provided by the .reg
+       files in import_registry/ (shell.reg, ie.reg, etc.). */
+}
 
-            /* Key header: [HKCU\Software\...] */
-            if (line[0] == '[' && line.back() == ']') {
-                current_key = ToLowerW(NarrowToWide(line.substr(1, line.size() - 2)));
-                registry[current_key]; /* ensure key exists */
-                EnsureParentKeys(current_key);
-                continue;
-            }
+/* Map internal abbreviated root to standard REGEDIT4 root name */
+static std::string MapRootToRegFormat(const std::string& path) {
+    /* Lowercase the prefix for case-insensitive matching */
+    std::string lp = path;
+    for (size_t i = 0; i < lp.size() && i < 5; i++)
+        lp[i] = (char)tolower((unsigned char)lp[i]);
+    if (lp.substr(0, 5) == "hkcr\\") return "HKEY_CLASSES_ROOT\\" + path.substr(5);
+    if (lp == "hkcr") return "HKEY_CLASSES_ROOT";
+    if (lp.substr(0, 5) == "hkcu\\") return "HKEY_CURRENT_USER\\" + path.substr(5);
+    if (lp == "hkcu") return "HKEY_CURRENT_USER";
+    if (lp.substr(0, 5) == "hklm\\") return "HKEY_LOCAL_MACHINE\\" + path.substr(5);
+    if (lp == "hklm") return "HKEY_LOCAL_MACHINE";
+    if (lp.substr(0, 4) == "hku\\") return "HKEY_USERS\\" + path.substr(4);
+    if (lp == "hku") return "HKEY_USERS";
+    return path;
+}
 
-            /* Value: "name"=type:data */
-            if (current_key.empty() || line[0] != '"') continue;
-            size_t eq = line.find("\"=");
-            if (eq == std::string::npos || eq < 1) continue;
-            std::wstring name = NarrowToWide(line.substr(1, eq - 1));
-            std::string rest = line.substr(eq + 2);
-
-            RegValue val = {};
-            if (rest.substr(0, 6) == "dword:") {
-                val.type = REG_DWORD;
-                uint32_t dw = (uint32_t)strtoul(rest.substr(6).c_str(), nullptr, 16);
-                val.data.resize(4);
-                memcpy(val.data.data(), &dw, 4);
-            } else if (rest.substr(0, 3) == "sz:") {
-                val.type = REG_SZ;
-                std::wstring ws = NarrowToWide(rest.substr(3));
-                val.data.resize((ws.size() + 1) * 2);
-                memcpy(val.data.data(), ws.c_str(), val.data.size());
-            } else if (rest.substr(0, 4) == "hex:") {
-                val.type = REG_BINARY;
-                std::string hex = rest.substr(4);
-                for (size_t i = 0; i < hex.size(); i += 3) {
-                    val.data.push_back((uint8_t)strtoul(hex.substr(i, 2).c_str(), nullptr, 16));
-                }
-            }
-            /* WinCE registry is case-insensitive for value names */
-            for (auto& c : name) c = towlower(c);
-            registry[current_key].values[name] = val;
-        }
-        LOG(REG, "[REG] Loaded %zu keys\n", registry.size());
+/* Escape backslashes in string for .reg format */
+static std::string EscapeRegString(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '\\') out += "\\\\";
+        else if (c == '"') out += "\\\"";
+        else out += c;
     }
-
-post_load:
-
-    /* Pre-populate essential WinCE shell COM CLSIDs if not already present.
-       The WinCE shell (ceshell.dll) uses registry lookups to find COM object
-       implementations (IShellFolder, etc.). Without these entries, the shell
-       namespace code fails and file dialogs call EndDialog immediately. */
-    auto ensureShellClsid = [&](const wchar_t* clsid, const wchar_t* dll) {
-        std::wstring key = std::wstring(L"HKCR\\CLSID\\") + clsid;
-        std::wstring ips32 = key + L"\\InProcServer32";
-        if (registry.find(key) == registry.end()) {
-            registry[key];
-            EnsureParentKeys(key);
-            registry[ips32];
-            EnsureParentKeys(ips32);
-            /* Default value = DLL name */
-            RegValue val;
-            val.type = REG_SZ;
-            std::wstring ws(dll);
-            val.data.resize((ws.size() + 1) * 2);
-            memcpy(val.data.data(), ws.c_str(), val.data.size());
-            registry[ips32].values[L""] = val;
-            LOG(REG, "[REG] Pre-populated CLSID %ls -> %ls\n", clsid, dll);
-        }
-    };
-    /* CAnimThread reads HKCU\...\Internet Explorer\Main\AnimationTicks.
-       If the key is missing, RegOpenKeyExW fails and _dwTimerInterval stays
-       at 0, causing SetTimer(elapse=0) → WM_TIMER flood. Ensure the key
-       exists so the code falls through to the 120ms default. */
-    {
-        std::wstring ie_main = L"hkcu\\software\\microsoft\\internet explorer\\main";
-        if (registry.find(ie_main) == registry.end()) {
-            registry[ie_main];
-            EnsureParentKeys(ie_main);
-        }
-    }
-
-    /* IShellFolder — shell desktop/folder namespace */
-    ensureShellClsid(L"{000214A0-0000-0000-C000-000000000046}", L"ceshell.dll");
-    /* ShellDesktop — CLSID_ShellDesktop */
-    ensureShellClsid(L"{00021400-0000-0000-C000-000000000046}", L"ceshell.dll");
-    /* WebBrowser — needed by explorer's Explore window to host shell view */
-    ensureShellClsid(L"{8856F961-340A-11D0-A96B-00C04FD705A2}", L"shdocvw.dll");
-    /* WebBrowser_V1 */
-    ensureShellClsid(L"{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}", L"shdocvw.dll");
+    return out;
 }
 
 void Win32Thunks::SaveRegistry() {
@@ -158,25 +114,32 @@ void Win32Thunks::SaveRegistry() {
         return;
     }
 
+    f << "REGEDIT4\n\n";
     for (auto& [path, key] : registry) {
-        f << "[" << WideToNarrow(path) << "]\n";
+        f << "[" << MapRootToRegFormat(WideToNarrow(path)) << "]\n";
         for (auto& [name, val] : key.values) {
-            f << "\"" << WideToNarrow(name) << "\"=";
+            /* Default value uses @= syntax */
+            if (name.empty())
+                f << "@=";
+            else
+                f << "\"" << WideToNarrow(name) << "\"=";
+
             if (val.type == REG_DWORD && val.data.size() >= 4) {
                 uint32_t dw;
                 memcpy(&dw, val.data.data(), 4);
                 char buf[16];
-                sprintf(buf, "dword:%08X", dw);
+                sprintf(buf, "dword:%08x", dw);
                 f << buf << "\n";
             } else if (val.type == REG_SZ || val.type == REG_EXPAND_SZ) {
-                std::wstring ws((const wchar_t*)val.data.data(), val.data.size() / 2);
+                std::wstring ws((const wchar_t*)val.data.data(),
+                                val.data.size() / 2);
                 if (!ws.empty() && ws.back() == L'\0') ws.pop_back();
-                f << "sz:" << WideToNarrow(ws) << "\n";
+                f << "\"" << EscapeRegString(WideToNarrow(ws)) << "\"\n";
             } else {
                 f << "hex:";
                 for (size_t i = 0; i < val.data.size(); i++) {
                     char buf[4];
-                    sprintf(buf, "%s%02X", i > 0 ? "," : "", val.data[i]);
+                    sprintf(buf, "%s%02x", i > 0 ? "," : "", val.data[i]);
                     f << buf;
                 }
                 f << "\n";
@@ -202,19 +165,18 @@ std::wstring Win32Thunks::ResolveHKey(uint32_t hkey, const std::wstring& subkey)
         else root = L"HKCU"; /* fallback */
     }
 
-    if (subkey.empty()) return ToLowerW(root);
+    if (subkey.empty()) return root;
 
     /* Strip leading backslash from subkey */
     std::wstring sk = subkey;
     while (!sk.empty() && (sk[0] == L'\\' || sk[0] == L'/')) sk.erase(sk.begin());
-    if (sk.empty()) return ToLowerW(root);
+    if (sk.empty()) return root;
 
     /* Normalize separators */
     std::wstring full = root + L"\\" + sk;
     /* Remove trailing backslash */
     while (!full.empty() && full.back() == L'\\') full.pop_back();
-    /* Case-insensitive: normalize to lowercase (Windows registry is case-insensitive) */
-    return ToLowerW(full);
+    return full;
 }
 
 void Win32Thunks::EnsureParentKeys(const std::wstring& path) {
@@ -234,9 +196,7 @@ bool Win32Thunks::RegGetValue(const std::wstring& key, const std::wstring& name,
     std::lock_guard<std::recursive_mutex> lock(registry_mutex);
     auto kit = registry.find(key);
     if (kit == registry.end()) return false;
-    std::wstring lower = name;
-    for (auto& c : lower) c = towlower(c);
-    auto vit = kit->second.values.find(lower);
+    auto vit = kit->second.values.find(name);
     if (vit == kit->second.values.end()) return false;
     out = vit->second;
     return true;
@@ -245,9 +205,52 @@ bool Win32Thunks::RegGetValue(const std::wstring& key, const std::wstring& name,
 void Win32Thunks::RegSetValue(const std::wstring& key, const std::wstring& name, const RegValue& val) {
     LoadRegistry();
     std::lock_guard<std::recursive_mutex> lock(registry_mutex);
-    std::wstring lower = name;
-    for (auto& c : lower) c = towlower(c);
-    registry[key].values[lower] = val;
+    registry[key].values[name] = val;
     EnsureParentKeys(key);
     SaveRegistry();
+}
+
+bool Win32Thunks::ResolveMuiString(const std::wstring& mui_ref, std::wstring& resolved) {
+    /* Parse MUI reference: "[\path\]dllname.dll,#resid" or "dllname,#resid" */
+    size_t comma = mui_ref.rfind(L',');
+    if (comma == std::wstring::npos || comma + 2 >= mui_ref.size()) return false;
+    if (mui_ref[comma + 1] != L'#') return false;
+    std::wstring dll_path = mui_ref.substr(0, comma);
+    int res_id = _wtoi(mui_ref.substr(comma + 2).c_str());
+    if (res_id <= 0) return false;
+
+    /* Extract just the DLL filename (case-insensitive match against loaded_dlls) */
+    size_t last_sep = dll_path.find_last_of(L"\\/");
+    std::wstring dll_name = (last_sep != std::wstring::npos) ? dll_path.substr(last_sep + 1) : dll_path;
+
+    /* Find the loaded ARM DLL */
+    uint32_t base = 0, rsrc_rva = 0, rsrc_size = 0;
+    for (auto& [name, info] : loaded_dlls) {
+        if (_wcsicmp(name.c_str(), dll_name.c_str()) == 0) {
+            base = info.base_addr;
+            rsrc_rva = info.pe_info.rsrc_rva;
+            rsrc_size = info.pe_info.rsrc_size;
+            break;
+        }
+    }
+    if (!base || !rsrc_rva) return false;
+
+    /* Load string resource (same logic as LoadStringW thunk) */
+    uint32_t bundle_id = (res_id / 16) + 1, string_idx = res_id % 16;
+    uint32_t data_rva = 0, data_size = 0;
+    if (!FindResourceInPE(base, rsrc_rva, rsrc_size, 6, bundle_id, data_rva, data_size))
+        return false;
+    uint8_t* data = mem.Translate(base + data_rva);
+    if (!data) return false;
+
+    uint16_t* p = (uint16_t*)data;
+    for (uint32_t i = 0; i < string_idx && (uint8_t*)p < data + data_size; i++) {
+        uint16_t len = *p++; p += len;
+    }
+    if ((uint8_t*)p >= data + data_size) return false;
+    uint16_t len = *p++;
+    if (len == 0) return false;
+
+    resolved.assign((const wchar_t*)p, len);
+    return true;
 }

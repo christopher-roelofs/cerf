@@ -187,9 +187,15 @@ private:
 public:
     /* Emulated registry (file-backed, text format) */
     struct RegValue { uint32_t type = 0; std::vector<uint8_t> data; };
-    struct RegKey { std::map<std::wstring, RegValue> values; std::set<std::wstring> subkeys; };
+    /* Case-insensitive comparator for registry value names (Windows registry is case-insensitive) */
+    struct WstrCILess {
+        bool operator()(const std::wstring& a, const std::wstring& b) const {
+            return _wcsicmp(a.c_str(), b.c_str()) < 0;
+        }
+    };
+    struct RegKey { std::map<std::wstring, RegValue, WstrCILess> values; std::set<std::wstring, WstrCILess> subkeys; };
 private:
-    std::map<std::wstring, RegKey> registry;
+    std::map<std::wstring, RegKey, WstrCILess> registry;
     std::map<uint32_t, std::wstring> hkey_map;
     uint32_t next_fake_hkey = 0xAE000000;
     bool registry_loaded = false;
@@ -203,6 +209,7 @@ private:
     /* Internal registry helpers — handle locking + LoadRegistry internally */
     bool RegGetValue(const std::wstring& key, const std::wstring& name, RegValue& out);
     void RegSetValue(const std::wstring& key, const std::wstring& name, const RegValue& val);
+    bool ResolveMuiString(const std::wstring& mui_ref, std::wstring& resolved);
     void WriteFindDataToEmu(EmulatedMemory& mem, uint32_t addr, const WIN32_FIND_DATAW& fd);
 
     /* Map-based thunk dispatch */
@@ -251,6 +258,9 @@ private:
     void RegisterStdioHandlers();
     void RegisterVfsHandlers();
     void RegisterShellExecHandler();
+    void RegisterWinsockHandlers();
+    void RegisterWinsockDnsHandlers();
+    void RegisterWininetDepsHandlers();
     bool LaunchArmChildProcess(const std::wstring& mapped_file, const std::wstring& params,
                                uint32_t sei_addr, uint32_t* regs, EmulatedMemory& mem);
 };

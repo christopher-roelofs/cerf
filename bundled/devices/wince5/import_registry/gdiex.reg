@@ -1,0 +1,26 @@
+;
+; Copyright (c) Microsoft Corporation.  All rights reserved.
+;
+;
+; Use of this source code is subject to the terms of the Microsoft end-user
+; license agreement (EULA) under which you licensed this SOFTWARE PRODUCT.
+; If you did not accept the terms of the EULA, you are not authorized to use
+; this source code. For a copy of the EULA, please see the LICENSE.RTF on your
+; install media.
+;
+;
+
+
+; @CESYSGEN IF GDIEX_MODULES_IMAGING
+[HKEY_CLASSES_ROOT\CLSID\{327ABDA8-072B-11D3-9D7B-0000F81EF32E}]
+@="ImagingFactory COM Component"
+[HKEY_CLASSES_ROOT\CLSID\{327ABDA8-072B-11D3-9D7B-0000F81EF32E}\InProcServer32]
+@="imaging.dll"
+[HKEY_CLASSES_ROOT\CLSID\{327ABDA8-072B-11D3-9D7B-0000F81EF32E}\ProgID]
+@="imaging.Factory"
+
+[HKEY_CLASSES_ROOT\imaging.Factory]
+@="ImagingFactory COM Component"
+[HKEY_CLASSES_ROOT\imaging.Factory\CLSID]
+@="{327ABDA8-072B-11D3-9D7B-0000F81EF32E}"
+; @CESYSGEN ENDIF GDIEX_MODULES_IMAGING

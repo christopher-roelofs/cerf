@@ -1,0 +1,521 @@
+;
+; Copyright (c) Microsoft Corporation.  All rights reserved.
+;
+;
+; Use of this source code is subject to the terms of the Microsoft end-user
+; license agreement (EULA) under which you licensed this SOFTWARE PRODUCT.
+; If you did not accept the terms of the EULA, you are not authorized to use
+; this source code. For a copy of the EULA, please see the LICENSE.RTF on your
+; install media.
+;
+
+[HKEY_LOCAL_MACHINE\init]
+; Choose only *one* of the taskman or explorer components in your cesysgen.bat
+; @CESYSGEN IF WCESHELLFE_MODULES_TASKMAN
+; @CESYSGEN ENDIF
+
+
+;---------------------------- TASKMAN ----------------------------------------
+; Set memory thresholds for Hibernate
+;
+; @CESYSGEN IF WCESHELLFE_MODULES_TASKMAN
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_TASKMAN
+
+
+;----------------------------start PIE ---------------------------------------
+;
+; @CESYSGEN IF WCESHELLFE_MODULES_BROWSER
+;
+; Default home page
+[HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\Main]
+"Start Page"=LOC_STARTPAGE
+"Search Page"=LOC_SEARCHPAGE
+
+; Default code page
+[HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\International]
+    "Default_CodePage"=dword:LOC_ACP
+
+[HKEY_CLASSES_ROOT\PROTOCOLS\Handler\res]
+"CLSID"="{3050F3BC-98B5-11CF-BB82-00AA00BDCE0B}"
+[HKEY_CLASSES_ROOT\CLSID\{3050F3BC-98B5-11CF-BB82-00AA00BDCE0B}]
+@=""
+[HKEY_CLASSES_ROOT\CLSID\{3050F3BC-98B5-11CF-BB82-00AA00BDCE0B}\InprocServer32]
+@="webview.dll"
+
+[HKEY_CLASSES_ROOT\PROTOCOLS\Handler\about]
+"CLSID"="{3050F406-98B5-11CF-BB82-00AA00BDCE0B}"
+[HKEY_CLASSES_ROOT\CLSID\{3050F406-98B5-11CF-BB82-00AA00BDCE0B}]
+@=""
+[HKEY_CLASSES_ROOT\CLSID\{3050F406-98B5-11CF-BB82-00AA00BDCE0B}\InprocServer32]
+@="webview.dll"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\AboutURLs]
+"blank"="res://webview.dll/blank.htm"
+"home"=LOC_STARTPAGE
+"search"=LOC_SEARCHPAGE
+
+; User Agent string
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Internet Settings\5.0\User Agent]
+@="Mozilla/4.0"
+"Compatible"="compatible"
+"Version"="MSIE 4.01"
+"Platform"="Windows CE"
+"UA-Language"="JavaScript"
+
+;[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Internet Settings\5.0\User Agent\Pre Platform]
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Internet Settings\5.0\User Agent\Post Platform]
+"PPC; 240x320"=""
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/bmp]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".bmp"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/gif]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".gif"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/jpeg]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".jpg"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/pjpeg]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".jpg"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\text/plain]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".txt"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\text/xml]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".xml"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\text/xsl]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".xsl"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/x-xbitmap]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".xbm"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/xbm]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".xbm"
+
+[HKEY_CLASSES_ROOT\MIME\Database\Content Type\image/x-png]
+"CLSID"="{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}"
+"Extension"=".png"
+
+[HKEY_CLASSES_ROOT\.htm]
+@="htmlfile"
+[HKEY_CLASSES_ROOT\.html]
+@="htmlfile"
+[HKEY_CLASSES_ROOT\htmlfile]
+@=mui_sz:"urlmon.dll,#9001"
+
+[HKEY_CLASSES_ROOT\.gif]
+@="gifimage"
+[HKEY_CLASSES_ROOT\gifimage]
+@=mui_sz:"urlmon.dll,#9006"
+
+[HKEY_CLASSES_ROOT\.jpg]
+@="jpegimage"
+[HKEY_CLASSES_ROOT\.jpeg]
+@="jpegimage"
+[HKEY_CLASSES_ROOT\jpegimage]
+@=mui_sz:"urlmon.dll,#9007"
+
+[HKEY_CLASSES_ROOT\.url]
+@="urlfile"
+[HKEY_CLASSES_ROOT\urlfile]
+@=mui_sz:"urlmon.dll,#9010"
+
+; Bitmap registry values
+[HKEY_CLASSES_ROOT\.2bp]
+@="bmpimage"
+[HKEY_CLASSES_ROOT\.bmp]
+@="bmpimage"
+[HKEY_CLASSES_ROOT\bmpimage]
+@=mui_sz:"urlmon.dll,#9009"
+
+[HKEY_CLASSES_ROOT\.png]
+@="pngimage"
+"Content Type"="image/x-png"
+
+[HKEY_CLASSES_ROOT\.xml]
+@="xmlfile"
+"Content Type"="text/xml"
+
+[HKEY_CLASSES_ROOT\.xsl]
+@="xslfile"
+"Content Type"="text/xml"
+
+; URL Protocols
+[HKEY_CLASSES_ROOT\http]
+@="URL:HyperText Transfer Protocol"
+"URL Protocol"=""
+
+[HKEY_CLASSES_ROOT\https]
+@="URL:HyperText Transfer Protocol"
+"URL Protocol"=""
+
+[HKEY_CLASSES_ROOT\ftp]
+@="URL:File Transfer Protocol"
+"URL Protocol"=""
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Internet Explorer\MediaTypeClass\{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}]
+"text/html"=""
+[HKEY_CLASSES_ROOT\CLSID\{6CFA19FA-E091-4d4f-BF7F-ADD3DC060A4F}\InprocServer32]
+@="browser.dll"
+[HKEY_CLASSES_ROOT\CLSID\{657FE5A4-C9DB-4AF1-B9C1-E4422F66AE22}]
+@="Download Request Manager"
+[HKEY_CLASSES_ROOT\CLSID\{657FE5A4-C9DB-4AF1-B9C1-E4422F66AE22}\InprocServer32]
+@="browser.dll"
+[HKEY_CLASSES_ROOT\CLSID\{43F14462-EBC1-421b-8F98-2DB81293AA77}\InprocServer32]
+@="browser.dll"
+
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_BROWSER
+
+; @CESYSGEN IF WCESHELLFE_MODULES_IEXPLORE
+;
+[HKEY_CLASSES_ROOT\htmlfile\DefaultIcon]
+@="iexplore.exe,-1003"
+[HKEY_CLASSES_ROOT\htmlfile\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+[HKEY_CLASSES_ROOT\gifimage\DefaultIcon]
+@="iexplore.exe,-1005"
+[HKEY_CLASSES_ROOT\gifimage\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+[HKEY_CLASSES_ROOT\jpegimage\DefaultIcon]
+@="iexplore.exe,-1004"
+[HKEY_CLASSES_ROOT\jpegimage\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+[HKEY_CLASSES_ROOT\urlfile\DefaultIcon]
+@="iexplore.exe,-1002"
+[HKEY_CLASSES_ROOT\urlfile\Shell\Open\Command]
+@="iexplore.exe -u%1"
+
+; Bitmap registry values
+[HKEY_CLASSES_ROOT\bmpimage\DefaultIcon]
+@="iexplore.exe,-1005"
+[HKEY_CLASSES_ROOT\bmpimage\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+[HKEY_CLASSES_ROOT\pngimage\DefaultIcon]
+@="iexplore.exe,-1005"
+[HKEY_CLASSES_ROOT\pngimage\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+[HKEY_CLASSES_ROOT\xmlfile\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+[HKEY_CLASSES_ROOT\xslfile\Shell\Open\Command]
+@="iexplore.exe file:%1"
+
+; URL Protocols
+[HKEY_CLASSES_ROOT\http\DefaultIcon]
+@="iexplore.exe,-1003"
+[HKEY_CLASSES_ROOT\http\Shell\Open\Command]
+@="iexplore.exe %1"
+
+[HKEY_CLASSES_ROOT\https\DefaultIcon]
+@="iexplore.exe,-1003"
+[HKEY_CLASSES_ROOT\https\Shell\Open\Command]
+@="iexplore.exe %1"
+
+[HKEY_CLASSES_ROOT\ftp\DefaultIcon]
+@="iexplore.exe,-1003"
+[HKEY_CLASSES_ROOT\ftp\Shell\Open\Command]
+@="iexplore.exe %1"
+
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_IEXPLORE
+
+
+; @CESYSGEN IF WCESHELLFE_MODULES_WEBVIEW
+;---------- begin Browser Object registry information -------
+;
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}]
+	@="Browser"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\ProgId]
+	@="Browser"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\InprocServer32]
+	@="webview.dll"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\Control]
+	@="True"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\Version]
+	@="1.0"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\TypeLib]
+	@="{698E3FBD-70C3-11D0-81E8-00A0C90AD20A}"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\DefaultIcon]
+	@="webview.dll,0"
+[HKEY_CLASSES_ROOT\CLSID\{698E3FCA-70C3-11D0-81E8-00A0C90AD20A}\MiscStatus]
+	@="131473"
+
+[HKEY_CLASSES_ROOT\TypeLib\{698E3FBD-70C3-11D0-81E8-00A0C90AD20A}\1.0]
+	@="Browser Module"
+[HKEY_CLASSES_ROOT\TypeLib\{698E3FBD-70C3-11D0-81E8-00A0C90AD20A}\1.0\0]
+	@="webview.dll"
+[HKEY_CLASSES_ROOT\TypeLib\{698E3FBD-70C3-11D0-81E8-00A0C90AD20A}\1.0\FLAGS]
+	@="2"
+[HKEY_CLASSES_ROOT\TypeLib\{698E3FBD-70C3-11D0-81E8-00A0C90AD20A}\1.0\HELPDIR]
+	@="\\Windows"
+;
+;---------- end Browser Object registry information -------
+;---------- begin Control-Wrap Object registry information -------
+;
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}]
+	@="ControlWrap"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\ProgId]
+	@="ControlWrap"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\InprocServer32]
+	@="webview.dll"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\Control]
+	@="True"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\Version]
+	@="1.0"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\TypeLib]
+	@="{698E3FBD-70C3-11D0-81E8-00A0C90AD20A}"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\DefaultIcon]
+	@="webview.dll,0"
+[HKEY_CLASSES_ROOT\CLSID\{555C7786-BA95-11D0-81F1-00A0C90AD20A}\MiscStatus]
+	@="131473"
+;
+;---------- end Control-Wrap Object registry information -------
+;
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_WEBVIEW
+
+; @CESYSGEN IF WCESHELLFE_MODULES_MSSCRIPT
+[HKEY_CLASSES_ROOT\CLSID\{0E59F1D5-1FBE-11D0-8FF2-00A0D10038BC}]
+@="Microsoft Script Host Control"
+[HKEY_CLASSES_ROOT\CLSID\{0E59F1D5-1FBE-11D0-8FF2-00A0D10038BC}\InProcServer32]
+@="msscript.dll"
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_MSSCRIPT
+
+;
+;---------------------------- end PIE ---------------------------------------
+
+
+;---------------------------- start PEGHELP ---------------------------------
+;
+; @CESYSGEN IF WCESHELLFE_MODULES_PEGHELP
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_PEGHELP
+;
+;---------------------------- end PEGHELP ---------------------------------
+
+;----------------------------start CONTROL PANEL ---------------------------------------
+;
+
+; @CESYSGEN IF WCESHELLFE_MODULES_CPLMAIN
+;
+
+; @CESYSGEN IF CPLMAIN_COLORSCHEME
+; @CESYSGEN ENDIF CPLMAIN_COLORSCHEME
+
+; @CESYSGEN IF CPLMAIN_SOUNDS
+;
+; Sound CPL registry values
+[HKEY_CURRENT_USER\ControlPanel\Volume]
+	"Key"=dword:10002		; Keyclicks: 1=soft, 0x10002=loud
+	"Screen"=dword:10002	; ScreenTaps: 1=soft, 0x10002=loud
+	"Mute"=dword:7			; 7=Enable all sounds (1=Notifications, 2=Apps, 4=Events.)
+	"Volume"=dword:99999999	; 0=off, 0xFFFFFFFF=maximum
+
+[HKEY_LOCAL_MACHINE\Snd\Scheme]
+	".DefaultSounds"=mui_sz:"cplmain.cpl,#33123"
+	".AllSounds"=mui_sz:"cplmain.cpl,#33124"
+	".NoSounds"=mui_sz:"cplmain.cpl,#33127"
+	
+[HKEY_LOCAL_MACHINE\Snd\Event]
+	".Scheme"=".DefaultSounds"		; Current scheme
+		; This mask allows a device to hide some events	that are N/A to that device
+		; (e.g. 1FFFF hides window-min & max, by enabling only the bottom 17 events)
+	"EventMask"=dword:FFFFFF
+	; Cache menu popup and menu select.
+	"EventCache"=dword:300
+; Scheme descriptions	
+	".NoSounds"=multi_sz:"","","","","","","","","","","","","","","","","","","","",""
+	".DefaultSounds"=multi_sz:"Asterisk","","critical","default","","exclam",
+			"infbeg","infend","infintr","","","","question",
+			"Infbeg","Infend","Infintr","startup","","","",""
+	".AllSounds"=multi_sz:"Asterisk","Close","critical","default","Empty","exclam",
+			"infbeg","infend","infintr","MenuPop","MenuSel","OpenProg","question",
+			"Infbeg","Infend","Infintr","startup","WindMax","WindMin","RecStart","RecEnd"
+;
+; @CESYSGEN ENDIF CPLMAIN_SOUNDS
+
+; @CESYSGEN IF CPLMAIN_POWER
+; @CESYSGEN ENDIF CPLMAIN_POWER
+
+; @CESYSGEN IF CPLMAIN_BACKLIGHT
+;
+; Backlight tab of Display control panel (timeouts in seconds)
+[HKEY_CURRENT_USER\ControlPanel\BackLight]
+	"BatteryTimeout"=dword:3c
+	"ACTimeout"=dword:258
+;
+; @CESYSGEN ENDIF CPLMAIN_BACKLIGHT
+
+; @CESYSGEN IF CPLMAIN_COMM
+;
+; Comm control panel settings
+[HKEY_CURRENT_USER\ControlPanel\Comm]
+	"AutoCnct"=dword:1
+	"Cnct"=mui_sz:"cplmain.cpl,#32793"
+;
+; @CESYSGEN ENDIF CPLMAIN_COMM
+
+; @CESYSGEN IF CPLMAIN_DISPLAY
+;
+; initial value for background bitmap, if any
+[HKEY_CURRENT_USER\ControlPanel\Desktop]
+	"wallpaper"="\\Windows\\WindowsCE.bmp"
+;
+; @CESYSGEN ENDIF CPLMAIN_DISPLAY
+
+; @CESYSGEN IF CPLMAIN_OWNER
+;
+; power up flag for Owner applet to save Area code
+[HKEY_CURRENT_USER\Start]
+	"dummy"=dword:1
+;
+; @CESYSGEN ENDIF CPLMAIN_OWNER
+
+; @CESYSGEN IF CPLMAIN_CERTS
+; This registry key is used to register the RootStorePrompt message box
+; This message box is invoked by CAPI2 whenever a certificate is added
+; or removed from the Root certificate store
+[HKEY_LOCAL_MACHINE\Comm\Security\Crypto\UI]
+	"Dll"="\\Windows\\cplmain.cpl"
+	
+; @CESYSGEN ENDIF CPLMAIN_CERTS
+
+;
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_CPLMAIN
+
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL || WCESHELLFE_MODULES_INTLP
+;
+; Add an extra locale-specific currency symbol (e.g. Euro)
+[HKEY_LOCAL_MACHINE\nls]
+	"ExtraCurrency"=dword:LOC_EXTRACURRENCY
+;
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_INTLL || WCESHELLFE_MODULES_INTLP
+
+
+
+;
+;----------------------------end CONTROL PANEL ---------------------------------------
+
+; @CESYSGEN IF WCESHELLFE_MODULES_MSTRANSCRIBER
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_MSTRANSCRIBER
+
+; register the language dependent portions of transcriber
+IF LOCALE=0409    ;English (US)
+; @CESYSGEN IF WCESHELLFE_MODULES_MSTRANSCRIBER
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_MSTRANSCRIBER
+ENDIF
+
+IF LOCALE=040c    ;French (France)
+; @CESYSGEN IF WCESHELLFE_MODULES_MSTRANSCRIBER
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_MSTRANSCRIBER
+ENDIF
+
+IF LOCALE=0407    ;German (Germany)
+; @CESYSGEN IF WCESHELLFE_MODULES_MSTRANSCRIBER
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_MSTRANSCRIBER
+ENDIF
+
+
+; @CESYSGEN IF WCESHELLFE_MODULES_MSHIME97
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLP
+; @CESYSGEN ENDIF
+; @CESYSGEN ENDIF
+
+; @CESYSGEN IF WCESHELLFE_MODULES_KIMEUI
+; @CESYSGEN ENDIF
+
+; @CESYSGEN IF WCESHELLFE_MODULES_MSIMK
+; @CESYSGEN ENDIF
+
+
+;	Tell edit controls to use level 3 processing for Chinese Ime's.
+
+; @CESYSGEN IF WCESHELLFE_MODULES_CHSIME03
+; @CESYSGEN ENDIF
+
+
+;	"DefaultIm"="LOC_MSIM_CLSID"
+;	@=LOC_SPIMNAME
+;	@=LOC_PHONIMNAME
+;	@=LOC_CHAJEIIMNAME
+
+
+;	CHS Input Methods (IM's)
+; @CESYSGEN IF WCESHELLFE_MODULES_SPIM
+; @CESYSGEN ENDIF
+
+;	Shuangpin Chinese Input Methods (IM's)
+; @CESYSGEN IF WCESHELLFE_MODULES_SSKIM
+; @CESYSGEN ENDIF
+
+;	Shuangpin Chinese Large Input Methods (IM's)
+; @CESYSGEN IF WCESHELLFE_MODULES_SSK3DIM
+; @CESYSGEN ENDIF
+
+; CHT IMs are in COMMON.REG
+
+
+; @CESYSGEN IF WCESHELLFE_MODULES_MSIMESP
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLP
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLP
+; @CESYSGEN ENDIF
+; @CESYSGEN ENDIF
+
+; @CESYSGEN IF WCESHELLFE_MODULES_CHSIME03
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLP
+; @CESYSGEN ENDIF
+; @CESYSGEN ENDIF
+
+
+; @CESYSGEN IF WCESHELLFE_MODULES_MSIMEPH
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLP
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLL
+; @CESYSGEN ENDIF
+; @CESYSGEN IF WCESHELLFE_MODULES_INTLP
+; @CESYSGEN ENDIF
+; @CESYSGEN ENDIF
+
+;---------------------------- start WATSON ---------------------------------
+;
+
+
+; @CESYSGEN IF WCESHELLFE_MODULES_DWXFER
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_DWXFER
+   
+; @CESYSGEN IF WCESHELLFE_MODULES_DWXFER || WCESHELLFE_MODULES_DW
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_DWXFER || WCESHELLFE_MODULES_DW
+
+; @CESYSGEN IF WCESHELLFE_MODULES_DW
+; @CESYSGEN IF WCESHELLFE_MODULES_DWUI
+; @CESYSGEN ELSE
+; @CESYSGEN ENDIF 
+; @CESYSGEN ENDIF WCESHELLFE_MODULES_DW
+
+;
+;---------------------------- end WATSON ---------------------------------
+

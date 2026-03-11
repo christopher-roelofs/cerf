@@ -3,23 +3,15 @@
 #include "../../log.h"
 #include <cstdio>
 
-/* WinCE registry value names are case-insensitive. Normalize to lowercase
-   so std::map lookups match regardless of caller casing. */
-static std::wstring NormalizeValueName(const std::wstring& name) {
-    std::wstring lower = name;
-    for (auto& c : lower) c = towlower(c);
-    return lower;
-}
-
 void Win32Thunks::RegisterRegistryHandlers() {
     /* Helper: resolve an HKEY to its registry path.  Handles both predefined
        constants (HKLM, HKCU, etc.) and allocated fake keys from hkey_map.
        Returns empty string if the handle is unknown. */
     auto resolveKey = [this](uint32_t hkey) -> std::wstring {
-        if (hkey == (uint32_t)(uintptr_t)HKEY_CLASSES_ROOT)  return L"hkcr";
-        if (hkey == (uint32_t)(uintptr_t)HKEY_CURRENT_USER)  return L"hkcu";
-        if (hkey == (uint32_t)(uintptr_t)HKEY_LOCAL_MACHINE) return L"hklm";
-        if (hkey == (uint32_t)(uintptr_t)HKEY_USERS)         return L"hku";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_CLASSES_ROOT)  return L"HKCR";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_CURRENT_USER)  return L"HKCU";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_LOCAL_MACHINE) return L"HKLM";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_USERS)         return L"HKU";
         auto it = hkey_map.find(hkey);
         return (it != hkey_map.end()) ? it->second : L"";
     };
@@ -91,20 +83,34 @@ void Win32Thunks::RegisterRegistryHandlers() {
             LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> KEY NOT FOUND\n", key_path.c_str(), value_name.c_str());
             regs[0] = ERROR_FILE_NOT_FOUND; return true;
         }
-        auto vit = rit->second.values.find(NormalizeValueName(value_name));
+        auto vit = rit->second.values.find(value_name);
         if (vit == rit->second.values.end()) {
             LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> VALUE NOT FOUND\n", key_path.c_str(), value_name.c_str());
             regs[0] = ERROR_FILE_NOT_FOUND; return true;
         }
-        LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> type=%d size=%zu\n", key_path.c_str(), value_name.c_str(), vit->second.type, vit->second.data.size());
         const RegValue& val = vit->second;
+        /* Resolve MUI strings: mui_sz values stored as REG_SZ with "dll,#resid" format.
+           In real WinCE, the OS resolves these transparently before returning to the caller. */
+        const std::vector<uint8_t>* data_ptr = &val.data;
+        std::vector<uint8_t> resolved_data;
+        if (val.type == REG_SZ && val.data.size() >= 4) {
+            std::wstring str_val((const wchar_t*)val.data.data(), val.data.size() / 2);
+            if (!str_val.empty() && str_val.back() == L'\0') str_val.pop_back();
+            std::wstring resolved;
+            if (str_val.find(L",#") != std::wstring::npos && ResolveMuiString(str_val, resolved)) {
+                resolved_data.resize((resolved.size() + 1) * 2);
+                memcpy(resolved_data.data(), resolved.c_str(), resolved_data.size());
+                data_ptr = &resolved_data;
+            }
+        }
+        LOG(REG, "[REG] RegQueryValueExW('%ls', '%ls') -> type=%d size=%zu\n", key_path.c_str(), value_name.c_str(), val.type, data_ptr->size());
         if (pType) mem.Write32(pType, val.type);
-        uint32_t data_size = (uint32_t)val.data.size();
+        uint32_t data_size = (uint32_t)data_ptr->size();
         if (pcbData) {
             uint32_t buf_size = mem.Read32(pcbData);
             mem.Write32(pcbData, data_size);
             if (pData && buf_size >= data_size) {
-                for (uint32_t i = 0; i < data_size; i++) mem.Write8(pData + i, val.data[i]);
+                for (uint32_t i = 0; i < data_size; i++) mem.Write8(pData + i, (*data_ptr)[i]);
             } else if (pData) { regs[0] = ERROR_MORE_DATA; return true; }
         }
         regs[0] = ERROR_SUCCESS; return true;
@@ -125,7 +131,7 @@ void Win32Thunks::RegisterRegistryHandlers() {
             val.data.resize(cbData);
             for (uint32_t i = 0; i < cbData; i++) val.data[i] = mem.Read8(pData + i);
         }
-        registry[key_path].values[NormalizeValueName(value_name)] = val;
+        registry[key_path].values[value_name] = val;
         regs[0] = ERROR_SUCCESS; return true;
     });
     Thunk("RegDeleteKeyW", 457, [this, resolveKey](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -146,7 +152,7 @@ void Win32Thunks::RegisterRegistryHandlers() {
         std::wstring key_path = resolveKey(hkey);
         if (!key_path.empty()) {
             auto rit = registry.find(key_path);
-            if (rit != registry.end()) rit->second.values.erase(NormalizeValueName(value_name));
+            if (rit != registry.end()) rit->second.values.erase(value_name);
         }
         regs[0] = ERROR_SUCCESS; return true;
     });
