@@ -190,11 +190,11 @@ void Win32Thunks::SaveRegistry() {
 std::wstring Win32Thunks::ResolveHKey(uint32_t hkey, const std::wstring& subkey) {
     std::wstring root;
 
-    /* Predefined HKEY constants (WinCE uses the same values) */
-    if (hkey == 0x80000000) root = L"HKCR";
-    else if (hkey == 0x80000001) root = L"HKCU";
-    else if (hkey == 0x80000002) root = L"HKLM";
-    else if (hkey == 0x80000003) root = L"HKU";
+    /* Predefined HKEY constants (WinCE uses the same 32-bit values) */
+    if (hkey == (uint32_t)(uintptr_t)HKEY_CLASSES_ROOT)  root = L"HKCR";
+    else if (hkey == (uint32_t)(uintptr_t)HKEY_CURRENT_USER)  root = L"HKCU";
+    else if (hkey == (uint32_t)(uintptr_t)HKEY_LOCAL_MACHINE) root = L"HKLM";
+    else if (hkey == (uint32_t)(uintptr_t)HKEY_USERS)         root = L"HKU";
     else {
         /* Look up fake HKEY */
         auto it = hkey_map.find(hkey);

@@ -231,7 +231,36 @@ void Win32Thunks::RegisterShellHandlers() {
     Thunk("SHBrowseForFolder", forwardToArm("ceshell.dll", "SHBrowseForFolder", 1));
     /* SHFileOperation(lpFileOp) — forward to ceshell.dll (exported as SHFileOperationW) */
     Thunk("SHFileOperation", forwardToArm("ceshell.dll", "SHFileOperationW", 1));
-    Thunk("ExtractIconExW", stub0("ExtractIconExW"));
+    /* ExtractIconExW(lpszFile, nIconIndex, phiconLarge, phiconSmall, nIcons)
+       Extract icon resources from ARM PE files. Native ExtractIconExW can read
+       icons from ARM PEs since the resource section is architecture-independent. */
+    Thunk("ExtractIconExW", 727, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
+        int nIconIndex = (int32_t)regs[1];
+        uint32_t pLarge = regs[2], pSmall = regs[3];
+        uint32_t nIcons = ReadStackArg(regs, mem, 0);
+        std::wstring host_path = MapWinCEPath(wce_path);
+        if (pLarge == 0 && pSmall == 0) {
+            /* Query mode: return total number of icons */
+            UINT count = ExtractIconExW(host_path.c_str(), -1, NULL, NULL, 0);
+            LOG(API, "[API] ExtractIconExW('%ls', query) -> %u icons\n", wce_path.c_str(), count);
+            regs[0] = count;
+            return true;
+        }
+        HICON hiconLarge = NULL, hiconSmall = NULL;
+        UINT extracted = ExtractIconExW(host_path.c_str(), nIconIndex,
+            pLarge ? &hiconLarge : NULL, pSmall ? &hiconSmall : NULL, 1);
+        if (pLarge && hiconLarge)
+            mem.Write32(pLarge, (uint32_t)(uintptr_t)hiconLarge);
+        if (pSmall && hiconSmall)
+            mem.Write32(pSmall, (uint32_t)(uintptr_t)hiconSmall);
+        LOG(API, "[API] ExtractIconExW('%ls', idx=%d) -> %u (large=0x%X, small=0x%X)\n",
+            wce_path.c_str(), nIconIndex, extracted,
+            hiconLarge ? (uint32_t)(uintptr_t)hiconLarge : 0,
+            hiconSmall ? (uint32_t)(uintptr_t)hiconSmall : 0);
+        regs[0] = extracted;
+        return true;
+    });
     Thunk("DragAcceptFiles", [](uint32_t* regs, EmulatedMemory&) -> bool {
         return true; /* void */
     });

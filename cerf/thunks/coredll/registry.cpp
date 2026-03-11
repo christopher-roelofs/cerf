@@ -13,13 +13,13 @@ static std::wstring NormalizeValueName(const std::wstring& name) {
 
 void Win32Thunks::RegisterRegistryHandlers() {
     /* Helper: resolve an HKEY to its registry path.  Handles both predefined
-       constants (HKLM=0x80000002, etc.) and allocated fake keys from hkey_map.
+       constants (HKLM, HKCU, etc.) and allocated fake keys from hkey_map.
        Returns empty string if the handle is unknown. */
     auto resolveKey = [this](uint32_t hkey) -> std::wstring {
-        if (hkey == 0x80000000) return L"hkcr";
-        if (hkey == 0x80000001) return L"hkcu";
-        if (hkey == 0x80000002) return L"hklm";
-        if (hkey == 0x80000003) return L"hku";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_CLASSES_ROOT)  return L"hkcr";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_CURRENT_USER)  return L"hkcu";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_LOCAL_MACHINE) return L"hklm";
+        if (hkey == (uint32_t)(uintptr_t)HKEY_USERS)         return L"hku";
         auto it = hkey_map.find(hkey);
         return (it != hkey_map.end()) ? it->second : L"";
     };

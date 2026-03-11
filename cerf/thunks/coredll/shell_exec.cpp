@@ -78,8 +78,10 @@ void Win32Thunks::RegisterShellExecHandler() {
                     ReadFile(hf, buf, sizeof(buf) - 1, &n, NULL);
                     CloseHandle(hf);
                     buf[n] = 0;
-                    if (n > 0 && buf[0] == '#') {
-                        char* p = buf + 1;
+                    /* WinCE .lnk format: "<decimal_length>#<path>" (e.g. "16#\windows\xls.exe") */
+                    char* hash = strchr(buf, '#');
+                    if (hash) {
+                        char* p = hash + 1;
                         char* end = p;
                         while (*end && *end != '\r' && *end != '\n') end++;
                         *end = 0;
