@@ -111,6 +111,13 @@ public:
     bool fake_screen_resolution = true;
     uint32_t screen_width  = WINCE_SCREEN_WIDTH_DEFAULT;
     uint32_t screen_height = WINCE_SCREEN_HEIGHT_DEFAULT;
+    /* Emulated work area — initially full screen, reduced by SPI_SETWORKAREA
+       when the shell (taskbar) reserves space.  {0,0,0,0} = use full screen. */
+    RECT work_area = {};
+    RECT GetWorkArea() const {
+        if (work_area.right > 0 || work_area.bottom > 0) return work_area;
+        return {0, 0, (LONG)screen_width, (LONG)screen_height};
+    }
     /* Emulated WinCE OS version */
     uint32_t os_major = 5;
     uint32_t os_minor = 0;

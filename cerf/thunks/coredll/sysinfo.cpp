@@ -57,14 +57,30 @@ void Win32Thunks::RegisterSysInfoHandlers() {
         UINT uiAction = regs[0], uiParam = regs[1];
         uint32_t pvParam = regs[2];
         UINT fWinIni = regs[3];
-        if (uiAction == SPI_GETWORKAREA && pvParam) {
-            uint32_t w = fake_screen_resolution ? screen_width : (uint32_t)GetSystemMetrics(SM_CXSCREEN);
-            uint32_t h = fake_screen_resolution ? screen_height : (uint32_t)GetSystemMetrics(SM_CYSCREEN);
-            mem.Write32(pvParam + 0,  0);    /* left */
-            mem.Write32(pvParam + 4,  0);    /* top */
-            mem.Write32(pvParam + 8,  w);    /* right */
-            mem.Write32(pvParam + 12, h);    /* bottom */
-            LOG(API, "[API] SystemParametersInfoW(SPI_GETWORKAREA) -> {0,0,%d,%d}\n", w, h);
+        if (uiAction == SPI_SETWORKAREA && pvParam) {
+            /* Shell (taskbar) calls this to reserve screen space.
+               Store the work area so SPI_GETWORKAREA, GetSystemMetrics,
+               and CreateWindowExW return correct dimensions. */
+            work_area.left   = (LONG)mem.Read32(pvParam);
+            work_area.top    = (LONG)mem.Read32(pvParam + 4);
+            work_area.right  = (LONG)mem.Read32(pvParam + 8);
+            work_area.bottom = (LONG)mem.Read32(pvParam + 12);
+            LOG(API, "[API] SystemParametersInfoW(SPI_SETWORKAREA) -> {%ld,%ld,%ld,%ld}\n",
+                work_area.left, work_area.top, work_area.right, work_area.bottom);
+            /* Use PostMessage — SendMessage(HWND_BROADCAST) is synchronous to ALL
+               desktop windows (including native apps) and can deadlock if any native
+               window blocks or sends messages back to our threads. */
+            if (fWinIni & SPIF_SENDCHANGE)
+                PostMessageW(HWND_BROADCAST, WM_SETTINGCHANGE, SPI_SETWORKAREA, 0);
+            regs[0] = 1;
+        } else if (uiAction == SPI_GETWORKAREA && pvParam) {
+            RECT wa = GetWorkArea();
+            mem.Write32(pvParam + 0,  (uint32_t)wa.left);
+            mem.Write32(pvParam + 4,  (uint32_t)wa.top);
+            mem.Write32(pvParam + 8,  (uint32_t)wa.right);
+            mem.Write32(pvParam + 12, (uint32_t)wa.bottom);
+            LOG(API, "[API] SystemParametersInfoW(SPI_GETWORKAREA) -> {%ld,%ld,%ld,%ld}\n",
+                wa.left, wa.top, wa.right, wa.bottom);
             regs[0] = 1;
         } else if (uiAction == 0xE1 /* WinCE 7 SPI_GETSIPINFO via aygshell */ && pvParam) {
             /* WinCE Soft Input Panel info. Fill SIPINFO struct:
@@ -73,13 +89,12 @@ void Win32Thunks::RegisterSysInfoHandlers() {
                Report SIP as hidden, visible desktop = full work area. */
             mem.Write32(pvParam + 0,  48);    /* cbSize */
             mem.Write32(pvParam + 4,  0x2);   /* fdwFlags = SIPF_DOCKED (not SIPF_ON) */
-            /* rcVisibleDesktop */
-            uint32_t sw = fake_screen_resolution ? screen_width : (uint32_t)GetSystemMetrics(SM_CXSCREEN);
-            uint32_t sh = fake_screen_resolution ? screen_height : (uint32_t)GetSystemMetrics(SM_CYSCREEN);
-            mem.Write32(pvParam + 8,  0);     /* left */
-            mem.Write32(pvParam + 12, 0);     /* top */
-            mem.Write32(pvParam + 16, sw);    /* right */
-            mem.Write32(pvParam + 20, sh);    /* bottom */
+            /* rcVisibleDesktop = work area (excludes taskbar/SIP) */
+            RECT wa = GetWorkArea();
+            mem.Write32(pvParam + 8,  (uint32_t)wa.left);
+            mem.Write32(pvParam + 12, (uint32_t)wa.top);
+            mem.Write32(pvParam + 16, (uint32_t)wa.right);
+            mem.Write32(pvParam + 20, (uint32_t)wa.bottom);
             /* rcSipRect = empty (SIP hidden) */
             mem.Write32(pvParam + 24, 0);
             mem.Write32(pvParam + 28, 0);
@@ -87,8 +102,8 @@ void Win32Thunks::RegisterSysInfoHandlers() {
             mem.Write32(pvParam + 36, 0);
             mem.Write32(pvParam + 40, 0);  /* dwImDataSize */
             mem.Write32(pvParam + 44, 0);  /* pvImData */
-            LOG(API, "[API] SystemParametersInfoW(0x%X/SPI_GETSIPINFO) -> vis={0,0,%d,%d}\n",
-                uiAction, screen_width, screen_height);
+            LOG(API, "[API] SystemParametersInfoW(0x%X/SPI_GETSIPINFO) -> vis={%ld,%ld,%ld,%ld}\n",
+                uiAction, wa.left, wa.top, wa.right, wa.bottom);
             regs[0] = 1;
         } else if (uiAction == SPI_SETDESKWALLPAPER) {
             /* WinCE apps set wallpaper via SPI and expect WM_SETTINGCHANGE broadcast.

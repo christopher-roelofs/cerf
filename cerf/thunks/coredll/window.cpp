@@ -110,8 +110,6 @@ void Win32Thunks::RegisterWindowHandlers() {
             className.c_str(), wce_style, wce_exstyle, is_toplevel, w, h);
 
         if (is_toplevel) {
-            bool has_caption = (wce_style & WS_CAPTION) == WS_CAPTION;
-
             /* Convert all top-level WinCE windows to WS_POPUP on desktop.
                This eliminates the native thick frame entirely — no inflate/deflate.
                Our WM_NCCALCSIZE handler in EmuWndProc provides WinCE NC area. */
@@ -120,36 +118,30 @@ void Win32Thunks::RegisterWindowHandlers() {
             style |= WS_POPUP;
             exStyle |= WS_EX_APPWINDOW;
 
-            /* CW_USEDEFAULT (0x80000000) → WinCE defaults to fullscreen at (0,0) */
-            if (x == (int)0x80000000) x = 0;
-            if (y == (int)0x80000000) y = 0;
+            /* CW_USEDEFAULT → fill the work area (screen minus taskbar/shell panels).
+               On real WinCE the shell calls SPI_SETWORKAREA to reserve taskbar space;
+               apps size themselves to the work area, not the full screen. */
+            RECT wa = GetWorkArea();
+            if (x == (int)0x80000000) x = (int)wa.left;
+            if (y == (int)0x80000000) y = (int)wa.top;
 
             if (w == (int)0x80000000 || w == 0) {
-                /* CW_USEDEFAULT or zero size → fullscreen */
-                if (has_caption) {
-                    int cyCaption = GetSystemMetrics(SM_CYCAPTION);
-                    w = (int)screen_width + 2;              /* 1px border each side */
-                    h = (int)screen_height + 2 + cyCaption; /* + caption bar */
-                } else {
-                    w = (int)screen_width;
-                    h = (int)screen_height;
-                }
+                w = (int)(wa.right - wa.left);
+                h = (int)(wa.bottom - wa.top);
             } else if (h == (int)0x80000000 || h == 0) {
-                h = has_caption ? (int)screen_height + 2 + GetSystemMetrics(SM_CYCAPTION)
-                                : (int)screen_height;
+                h = (int)(wa.bottom - wa.top);
             }
-            /* Dimensions pass through as-is — ARM code already computed them
-               using our WinCE-compatible GetSystemMetrics/AdjustWindowRectEx. */
         } else if (!is_child) {
             /* Owned popup (has parent but not WS_CHILD) — convert to WS_POPUP
                just like top-level windows for consistent WinCE NC area handling. */
             style &= ~(uint32_t)(WS_OVERLAPPED | WS_THICKFRAME |
                                   WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CAPTION);
             style |= WS_POPUP;
-            if (x == (int)0x80000000) x = 0;
-            if (y == (int)0x80000000) y = 0;
-            if (w == (int)0x80000000) w = (int)screen_width;
-            if (h == (int)0x80000000) h = (int)screen_height;
+            RECT wa = GetWorkArea();
+            if (x == (int)0x80000000) x = (int)wa.left;
+            if (y == (int)0x80000000) y = (int)wa.top;
+            if (w == (int)0x80000000) w = (int)(wa.right - wa.left);
+            if (h == (int)0x80000000) h = (int)(wa.bottom - wa.top);
         } else {
             /* Child window — pass through, minimal fixups */
             if (x == (int)0x80000000) x = 0;

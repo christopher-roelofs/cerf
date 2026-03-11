@@ -101,8 +101,18 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     }
 
     switch (msg) {
+    /* WM_GETMINMAXINFO: constrain maximized windows to the WinCE work area.
+       DefWindowProcW would use the native desktop work area instead. */
+    case WM_GETMINMAXINFO: {
+        RECT wa = s_instance->GetWorkArea();
+        MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+        mmi->ptMaxPosition.x = wa.left;
+        mmi->ptMaxPosition.y = wa.top;
+        mmi->ptMaxSize.x = wa.right - wa.left;
+        mmi->ptMaxSize.y = wa.bottom - wa.top;
+        return 0;
+    }
     /* Messages with native 64-bit pointers — route to DefWindowProcW */
-    case WM_GETMINMAXINFO:
     case WM_NCDESTROY:
     case WM_SETICON:
     case WM_GETICON:

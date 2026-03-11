@@ -37,16 +37,29 @@ void Win32Thunks::RegisterSystemHandlers() {
            reasonable screen size rather than the desktop's full resolution.
            Only override when fake_screen_resolution is enabled. */
         if (fake_screen_resolution) {
-            if (idx == SM_CXSCREEN || idx == SM_CXFULLSCREEN || idx == SM_CXMAXIMIZED ||
-                idx == SM_CXVIRTUALSCREEN /* 78 */) {
+            /* SM_CXSCREEN/SM_CYSCREEN = physical screen size (always full) */
+            if (idx == SM_CXSCREEN || idx == SM_CXVIRTUALSCREEN /* 78 */) {
                 regs[0] = screen_width;
                 LOG(API, "[API] GetSystemMetrics(%d) -> %d (screen_width)\n", idx, regs[0]);
                 return true;
             }
-            if (idx == SM_CYSCREEN || idx == SM_CYFULLSCREEN || idx == SM_CYMAXIMIZED ||
-                idx == SM_CYVIRTUALSCREEN /* 79 */) {
+            if (idx == SM_CYSCREEN || idx == SM_CYVIRTUALSCREEN /* 79 */) {
                 regs[0] = screen_height;
                 LOG(API, "[API] GetSystemMetrics(%d) -> %d (screen_height)\n", idx, regs[0]);
+                return true;
+            }
+            /* SM_CXFULLSCREEN/SM_CYFULLSCREEN and SM_CXMAXIMIZED/SM_CYMAXIMIZED
+               reflect the work area (screen minus taskbar/shell panels). */
+            if (idx == SM_CXFULLSCREEN || idx == SM_CXMAXIMIZED) {
+                RECT wa = GetWorkArea();
+                regs[0] = (uint32_t)(wa.right - wa.left);
+                LOG(API, "[API] GetSystemMetrics(%d) -> %d (work_area width)\n", idx, regs[0]);
+                return true;
+            }
+            if (idx == SM_CYFULLSCREEN || idx == SM_CYMAXIMIZED) {
+                RECT wa = GetWorkArea();
+                regs[0] = (uint32_t)(wa.bottom - wa.top);
+                LOG(API, "[API] GetSystemMetrics(%d) -> %d (work_area height)\n", idx, regs[0]);
                 return true;
             }
             /* Virtual screen origin — WinCE has a single monitor at (0,0) */
