@@ -52,7 +52,7 @@ public:
     void SetHInstance(uint32_t hinst) { emu_hinstance = hinst; }
     void SetExePath(const std::wstring& path) { exe_path = path; }
     void SetExeDir(const std::string& dir) { exe_dir = dir; }
-    void SetWinceSysDir(const std::string& dir) { wince_sys_dir = dir; }
+
     void InitVFS(const std::string& device_override = "");
 
     /* Callback executor: trampoline to t_ctx->callback_executor (per-thread) */
@@ -161,9 +161,7 @@ private:
 
     /* Ordinal to function name mapping */
     static std::map<uint16_t, std::string> ordinal_map;
-    static std::map<std::string, std::map<uint16_t, std::string>> dll_ordinal_map;
-    std::string current_dll_context;
-    std::string ResolveOrdinal(uint16_t ordinal, const std::string& dll_name = "coredll.dll");
+    std::string ResolveOrdinal(uint16_t ordinal);
 
     uint32_t AllocThunk(const std::string& dll, const std::string& func, uint16_t ordinal, bool by_ordinal);
     bool ExecuteThunk(ThunkEntry& entry, uint32_t* regs, EmulatedMemory& mem);

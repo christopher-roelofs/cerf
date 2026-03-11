@@ -74,12 +74,8 @@ std::map<uint16_t, std::string> Win32Thunks::ordinal_map;
 
 void Win32Thunks::Thunk(const std::string& name, uint16_t ordinal, ThunkHandler handler) {
     thunk_handlers[name] = std::move(handler);
-    if (ordinal > 0) {
-        if (current_dll_context.empty() || current_dll_context == "coredll.dll")
-            ordinal_map[ordinal] = name;
-        else
-            dll_ordinal_map[current_dll_context][ordinal] = name;
-    }
+    if (ordinal > 0)
+        ordinal_map[ordinal] = name;
 }
 
 void Win32Thunks::Thunk(const std::string& name, ThunkHandler handler) {
@@ -87,22 +83,10 @@ void Win32Thunks::Thunk(const std::string& name, ThunkHandler handler) {
 }
 
 void Win32Thunks::ThunkOrdinal(const std::string& name, uint16_t ordinal) {
-    if (current_dll_context.empty() || current_dll_context == "coredll.dll")
-        ordinal_map[ordinal] = name;
-    else
-        dll_ordinal_map[current_dll_context][ordinal] = name;
+    ordinal_map[ordinal] = name;
 }
 
-std::map<std::string, std::map<uint16_t, std::string>> Win32Thunks::dll_ordinal_map;
-
-std::string Win32Thunks::ResolveOrdinal(uint16_t ordinal, const std::string& dll_name) {
-    /* Check DLL-specific ordinal map first (for DLLs with conflicting ordinals) */
-    auto dll_it = dll_ordinal_map.find(dll_name);
-    if (dll_it != dll_ordinal_map.end()) {
-        auto ord_it = dll_it->second.find(ordinal);
-        if (ord_it != dll_it->second.end()) return ord_it->second;
-    }
-    /* Fall back to global ordinal map (coredll) */
+std::string Win32Thunks::ResolveOrdinal(uint16_t ordinal) {
     auto it = ordinal_map.find(ordinal);
     if (it != ordinal_map.end()) return it->second;
     char buf[32];
@@ -118,8 +102,7 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     /* Allocate a memory region for thunk return stubs */
     mem.Alloc(THUNK_BASE, 0x100000);
     /* Register all thunk handlers (map-based dispatch).
-       current_dll_context routes ordinals to per-DLL ordinal maps. */
-    current_dll_context = "coredll.dll";
+       All ordinals go into a single ordinal_map — coredll.dll is the only thunked DLL. */
     RegisterArmRuntimeHandlers();
     RegisterMemoryHandlers();
     RegisterCrtHandlers();
@@ -157,8 +140,6 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterVfsHandlers();
     RegisterShellHandlers();
     RegisterShellExecHandler();
-    current_dll_context.clear();
-
     /* WinCE UserKData page at fixed address 0xFFFFC800.
        ARM code reads GetCurrentThreadId/GetCurrentProcessId directly from here
        (PUserKData[SH_CURTHREAD] at offset +4, PUserKData[SH_CURPROC] at offset +8).

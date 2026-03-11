@@ -20,9 +20,7 @@ EXE import: coredll.dll!CreateWindowExW (ordinal 246)
 
 ### Ordinal Resolution
 
-WinCE imports are almost always by ordinal (not by name). CERF maintains an ordinal map built from `references/coredll.def` that maps ordinal numbers to function names. The thunk dispatcher uses this to find the right handler.
-
-Per-DLL ordinal overrides are supported via `dll_ordinal_map` — for example, WinCE 7's aygshell.dll uses coredll ordinal 5403 for `SystemParametersInfoW`.
+WinCE imports are almost always by ordinal (not by name). CERF maintains a single ordinal map built from `references/coredll.def` that maps ordinal numbers to function names. The thunk dispatcher uses this to find the right handler. All thunked APIs go through coredll.dll — the only system DLL we mock.
 
 ### WinCE Trap Calls
 

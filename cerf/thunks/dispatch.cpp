@@ -99,7 +99,7 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
 
 bool Win32Thunks::ExecuteThunk(ThunkEntry& entry, uint32_t* regs, EmulatedMemory& mem) {
     if (entry.func_name.empty() && entry.by_ordinal) {
-        entry.func_name = ResolveOrdinal(entry.ordinal, entry.dll_name);
+        entry.func_name = ResolveOrdinal(entry.ordinal);
         if (!entry.func_name.empty()) {
             LOG(API, "[API] Resolved ordinal %d -> %s\n", entry.ordinal, entry.func_name.c_str());
         }
