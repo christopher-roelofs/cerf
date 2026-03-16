@@ -156,7 +156,11 @@ void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,
             if (pc == sentinel || pc == (sentinel & ~1u)) break;
             if (pc < 0x1000) {
                 LOG(API, "[API] callback_executor: NULL function pointer "
-                    "(PC=0x%08X) at depth=%d, aborting\n", pc, cb_depth);
+                    "(PC=0x%08X) at depth=%d, aborting. "
+                    "LR=0x%08X R0=0x%08X R1=0x%08X SP=0x%08X "
+                    "steps=%u\n",
+                    pc, cb_depth, cpu.r[REG_LR], cpu.r[0], cpu.r[1],
+                    cpu.r[REG_SP], step_count);
                 cpu.r[0] = 0;
                 break;
             }

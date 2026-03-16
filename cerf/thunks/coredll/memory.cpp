@@ -212,6 +212,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t size = regs[0];
         regs[0] = BumpAlloc(next_malloc, mem, size);
         TrackAlloc(regs[0], size);
+        if (size <= 0x20) LOG(API, "[API] malloc(%u) -> 0x%08X\n", size, regs[0]);
         return true;
     });
     Thunk("calloc", 1346, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

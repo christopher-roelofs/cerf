@@ -62,17 +62,22 @@ static uint32_t AllocObj(EmulatedMemory& mem, uint32_t vtable_addr) {
 }
 
 void Win32Thunks::RegisterDirectDrawHandlers() {
-    /* --- DirectDrawCreate thunk --- */
+    /* --- DirectDrawCreate DDI handler ---
+       The ARM ddraw.dll wraps DDI output in a PSL (Protected Server Library)
+       proxy for cross-process COM. Our emulator doesn't support the WinCE PSL
+       mechanism, so the proxy creation fails and produces a NULL interface pointer.
+       When mshtml's InitSurface calls DirectDrawCreate and gets a broken proxy,
+       it crashes on NULL->QueryInterface.
+
+       Fix: return DDERR_UNSUPPORTED from the DDI. This tells ddraw.dll the
+       display driver can't create DirectDraw. ddraw.dll propagates the error.
+       mshtml's InitSurface caches the error in g_hrDirectDraw. Future calls
+       to GetSurfaceFromDC skip the DirectDraw path and use GDI instead.
+       GDI rendering works correctly with our CS_OWNDC and GDI handle fixes. */
     Thunk("ddraw_DirectDrawCreate", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t lpGUID = regs[0];
-        uint32_t lplpDD = regs[1];
-        uint32_t pUnk   = regs[2];
-        LOG(API, "[API] DirectDrawCreate(guid=0x%08X, out=0x%08X) [native impl]\n",
-            lpGUID, lplpDD);
-        uint32_t obj = AllocObj(mem, DD4_VTABLE_ADDR);
-        mem.Write32(lplpDD, obj);
-        LOG(API, "[API]   -> IDirectDraw4 at 0x%08X\n", obj);
-        regs[0] = DD_OK;
+        LOG(API, "[API] DirectDrawCreate(guid=0x%08X, out=0x%08X) -> DDERR_UNSUPPORTED (no DDI)\n",
+            regs[0], regs[1]);
+        regs[0] = DDERR_UNSUPPORTED;
         return true;
     });
 
