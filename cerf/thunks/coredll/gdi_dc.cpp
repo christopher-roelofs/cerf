@@ -19,7 +19,10 @@ void Win32Thunks::RegisterGdiDcHandlers() {
         regs[0] = DeleteDC((HDC)(intptr_t)(int32_t)regs[0]); return true;
     });
     Thunk("GetDC", 262, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)GetDC((HWND)(intptr_t)(int32_t)regs[0]); return true;
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        HDC hdc = GetDC(hw);
+        LOG(API, "[API] GetDC(0x%p) -> 0x%08X\n", hw, (uint32_t)(uintptr_t)hdc);
+        regs[0] = (uint32_t)(uintptr_t)hdc; return true;
     });
     Thunk("ReleaseDC", 263, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = ReleaseDC((HWND)(intptr_t)(int32_t)regs[0], (HDC)(intptr_t)(int32_t)regs[1]); return true;
@@ -122,5 +125,32 @@ void Win32Thunks::RegisterGdiDcHandlers() {
     });
     Thunk("SetViewportOrgEx", 983, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = SetViewportOrgEx((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2], NULL); return true;
+    });
+    Thunk("GetObjectType", 917, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = GetObjectType((HGDIOBJ)(intptr_t)(int32_t)regs[0]); return true;
+    });
+    Thunk("CreateDIBPatternBrushPt", 929, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* lpPackedDIB points to a BITMAPINFO + bits in emulated memory.
+           Copy it to host memory and create the brush natively. */
+        uint32_t dib_addr = regs[0], usage = regs[1];
+        uint8_t* host = mem.Translate(dib_addr);
+        if (host) {
+            regs[0] = (uint32_t)(uintptr_t)CreateDIBPatternBrushPt(host, usage);
+        } else {
+            regs[0] = 0;
+        }
+        return true;
+    });
+    Thunk("DrawEdge", 932, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        RECT rc={mem.Read32(regs[1]),mem.Read32(regs[1]+4),mem.Read32(regs[1]+8),mem.Read32(regs[1]+12)};
+        regs[0] = DrawEdge((HDC)(intptr_t)(int32_t)regs[0], &rc, regs[2], regs[3]);
+        /* Write back modified rect when BF_ADJUST (0x2000) is set */
+        if (regs[3]&0x2000) { mem.Write32(regs[1],rc.left); mem.Write32(regs[1]+4,rc.top); mem.Write32(regs[1]+8,rc.right); mem.Write32(regs[1]+12,rc.bottom); }
+        return true;
+    });
+    Thunk("DrawFrameControl", 987, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        RECT rc={(LONG)mem.Read32(regs[1]),(LONG)mem.Read32(regs[1]+4),(LONG)mem.Read32(regs[1]+8),(LONG)mem.Read32(regs[1]+12)};
+        regs[0] = DrawFrameControl((HDC)(intptr_t)(int32_t)regs[0], &rc, regs[2], regs[3]);
+        return true;
     });
 }

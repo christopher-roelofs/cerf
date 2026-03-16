@@ -35,6 +35,7 @@ int main(int argc, char* argv[]) {
     Log::Init();
 
     for (int i = 1; i < argc; i++) {
+        if (exe_path) break; /* Everything after exe_path belongs to the ARM app */
         if (strcmp(argv[i], "--trace") == 0) {
             trace = true;
             Log::EnableCategory(Log::TRACE);
@@ -72,10 +73,9 @@ int main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             PrintUsage(argv[0]);
             return 0;
-        } else if (!exe_path) {
+        } else {
             exe_path = argv[i];
         }
-        /* Arguments after exe_path are for the ARM app (visible via GetCommandLineW) */
     }
 
     /* Apply --no-log after everything else */
@@ -266,11 +266,13 @@ int main(int argc, char* argv[]) {
     /* Run the emulator */
     cpu.Run();
 
-    /* If we get here, main CPU halted. If WinMain returned 0 (success),
-       child threads may still be running (e.g. explorer.exe shell threads).
-       Keep the process alive with a message pump so child threads can work. */
+    /* If we get here, main CPU halted. Child threads may still be running
+       (e.g. iexplore.exe stub launches explorer.exe as a child process).
+       Wait for all child threads with a message pump. */
     LOG(EMU, "\n[EMU] CPU halted (code=%d) after %llu instructions\n", cpu.halt_code, cpu.insn_count);
-    if (cpu.halt_code == 0) {
+    if (HasChildThreads()) {
+        WaitForChildThreads();
+    } else if (cpu.halt_code == 0) {
         LOG(EMU, "[EMU] Main entry returned 0 — pumping messages for child threads\n");
         MSG msg;
         while (GetMessage(&msg, NULL, 0, 0) > 0) {

@@ -53,6 +53,9 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     LOG(API, "[API] Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
            dll_name.c_str(), dll_info.image_base, dll_info.export_rva, dll_info.export_size);
 
+    /* Register slot-0 alias so WinCE slot-masked addresses resolve to this DLL */
+    mem.AddDllAlias(dll_info.image_base, dll_info.size_of_image);
+
     LoadedDll loaded;
     loaded.path = dll_path;
     loaded.base_addr = dll_info.image_base;

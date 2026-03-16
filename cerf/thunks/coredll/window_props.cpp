@@ -4,63 +4,6 @@
 #include <cstdio>
 
 void Win32Thunks::RegisterWindowPropsHandlers() {
-    Thunk("SetRect", 103, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        mem.Write32(regs[0], regs[1]); mem.Write32(regs[0]+4, regs[2]);
-        mem.Write32(regs[0]+8, regs[3]); mem.Write32(regs[0]+12, ReadStackArg(regs,mem,0));
-        regs[0] = 1; return true;
-    });
-    Thunk("CopyRect", 96, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        for (int i=0;i<4;i++) mem.Write32(regs[0]+i*4, mem.Read32(regs[1]+i*4));
-        regs[0] = 1; return true;
-    });
-    Thunk("SetRectEmpty", 104, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        for (int i=0;i<4;i++) mem.Write32(regs[0]+i*4, 0); regs[0] = 1; return true;
-    });
-    Thunk("InflateRect", 98, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        int32_t l=mem.Read32(regs[0]),t=mem.Read32(regs[0]+4),r=mem.Read32(regs[0]+8),b=mem.Read32(regs[0]+12);
-        int32_t dx=(int32_t)regs[1],dy=(int32_t)regs[2];
-        mem.Write32(regs[0],l-dx); mem.Write32(regs[0]+4,t-dy); mem.Write32(regs[0]+8,r+dx); mem.Write32(regs[0]+12,b+dy);
-        regs[0]=1; return true;
-    });
-    Thunk("OffsetRect", 101, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT rc; rc.left=mem.Read32(regs[0]); rc.top=mem.Read32(regs[0]+4);
-        rc.right=mem.Read32(regs[0]+8); rc.bottom=mem.Read32(regs[0]+12);
-        OffsetRect(&rc,(int)regs[1],(int)regs[2]);
-        mem.Write32(regs[0],rc.left); mem.Write32(regs[0]+4,rc.top);
-        mem.Write32(regs[0]+8,rc.right); mem.Write32(regs[0]+12,rc.bottom);
-        regs[0]=1; return true;
-    });
-    Thunk("IntersectRect", 99, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT a,b,out;
-        a.left=mem.Read32(regs[1]); a.top=mem.Read32(regs[1]+4); a.right=mem.Read32(regs[1]+8); a.bottom=mem.Read32(regs[1]+12);
-        b.left=mem.Read32(regs[2]); b.top=mem.Read32(regs[2]+4); b.right=mem.Read32(regs[2]+8); b.bottom=mem.Read32(regs[2]+12);
-        BOOL ret = IntersectRect(&out,&a,&b);
-        mem.Write32(regs[0],out.left); mem.Write32(regs[0]+4,out.top);
-        mem.Write32(regs[0]+8,out.right); mem.Write32(regs[0]+12,out.bottom);
-        regs[0]=ret; return true;
-    });
-    Thunk("UnionRect", 106, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT a,b,out;
-        a.left=mem.Read32(regs[1]); a.top=mem.Read32(regs[1]+4); a.right=mem.Read32(regs[1]+8); a.bottom=mem.Read32(regs[1]+12);
-        b.left=mem.Read32(regs[2]); b.top=mem.Read32(regs[2]+4); b.right=mem.Read32(regs[2]+8); b.bottom=mem.Read32(regs[2]+12);
-        BOOL ret = UnionRect(&out,&a,&b);
-        mem.Write32(regs[0],out.left); mem.Write32(regs[0]+4,out.top); mem.Write32(regs[0]+8,out.right); mem.Write32(regs[0]+12,out.bottom);
-        regs[0]=ret; return true;
-    });
-    Thunk("PtInRect", 102, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT rc; rc.left=mem.Read32(regs[0]); rc.top=mem.Read32(regs[0]+4);
-        rc.right=mem.Read32(regs[0]+8); rc.bottom=mem.Read32(regs[0]+12);
-        POINT pt={(LONG)regs[1],(LONG)regs[2]}; regs[0]=PtInRect(&rc,pt); return true;
-    });
-    Thunk("IsRectEmpty", 100, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        int32_t l=mem.Read32(regs[0]),t=mem.Read32(regs[0]+4),r=mem.Read32(regs[0]+8),b=mem.Read32(regs[0]+12);
-        regs[0]=(r<=l||b<=t)?1:0; return true;
-    });
-    Thunk("EqualRect", 97, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        bool eq=true; for(int i=0;i<4;i++) if(mem.Read32(regs[0]+i*4)!=mem.Read32(regs[1]+i*4)) eq=false;
-        regs[0]=eq?1:0; return true;
-    });
-    Thunk("SubtractRect", 105, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=0; return true; });
     Thunk("GetWindowRect", 248, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
         RECT rc; BOOL ret=GetWindowRect(hw,&rc);
@@ -73,6 +16,8 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
     Thunk("GetClientRect", 249, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
         RECT rc; BOOL ret=GetClientRect(hw,&rc);
+        LOG(API, "[API] GetClientRect(0x%p) -> {%d,%d,%d,%d} ret=%d\n",
+            hw, rc.left, rc.top, rc.right, rc.bottom, ret);
         mem.Write32(regs[1],rc.left); mem.Write32(regs[1]+4,rc.top);
         mem.Write32(regs[1]+8,rc.right); mem.Write32(regs[1]+12,rc.bottom);
         regs[0]=ret; return true;
@@ -92,6 +37,66 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
         RECT rc; BOOL ret=GetUpdateRect((HWND)(intptr_t)(int32_t)regs[0],&rc,regs[2]);
         if(regs[1]){mem.Write32(regs[1],rc.left);mem.Write32(regs[1]+4,rc.top);mem.Write32(regs[1]+8,rc.right);mem.Write32(regs[1]+12,rc.bottom);}
         regs[0]=ret; return true;
+    });
+    Thunk("GetUpdateRgn", 273, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = GetUpdateRgn((HWND)(intptr_t)(int32_t)regs[0],
+            (HRGN)(intptr_t)(int32_t)regs[1], regs[2]);
+        return true;
+    });
+    Thunk("ValidateRgn", 1616, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ValidateRgn((HWND)(intptr_t)(int32_t)regs[0],
+            (HRGN)(intptr_t)(int32_t)regs[1]);
+        return true;
+    });
+    Thunk("InvalidateRgn", 1615, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        HRGN hRgn = (HRGN)(intptr_t)(int32_t)regs[1];
+        BOOL bErase = regs[2];
+        RECT rgnBox = {};
+        if (hRgn) GetRgnBox(hRgn, &rgnBox);
+        wchar_t cls[64] = {};
+        GetClassNameW(hw, cls, 64);
+        LOG(API, "[API] InvalidateRgn(0x%p '%ls', rgn=0x%p {%d,%d,%d,%d}, erase=%d)\n",
+            hw, cls, hRgn, rgnBox.left, rgnBox.top, rgnBox.right, rgnBox.bottom, bErase);
+        regs[0] = InvalidateRgn(hw, hRgn, bErase);
+        return true;
+    });
+    /* WinCE window properties — use ATOM-based names (16-bit).
+       HIWORD(regs[1])==0 means it's an atom, else it's a string pointer. */
+    Thunk("SetProp", 1497, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        HANDLE val = (HANDLE)(uintptr_t)regs[2];
+        if ((regs[1] & 0xFFFF0000) == 0) {
+            regs[0] = SetPropW(hw, MAKEINTRESOURCEW(regs[1]), val);
+        } else {
+            std::wstring name = ReadWStringFromEmu(mem, regs[1]);
+            regs[0] = SetPropW(hw, name.c_str(), val);
+        }
+        return true;
+    });
+    Thunk("GetProp", 1498, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        HANDLE val;
+        if ((regs[1] & 0xFFFF0000) == 0) {
+            val = GetPropW(hw, MAKEINTRESOURCEW(regs[1]));
+        } else {
+            std::wstring name = ReadWStringFromEmu(mem, regs[1]);
+            val = GetPropW(hw, name.c_str());
+        }
+        regs[0] = (uint32_t)(uintptr_t)val;
+        return true;
+    });
+    Thunk("RemoveProp", 1499, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        HANDLE val;
+        if ((regs[1] & 0xFFFF0000) == 0) {
+            val = RemovePropW(hw, MAKEINTRESOURCEW(regs[1]));
+        } else {
+            std::wstring name = ReadWStringFromEmu(mem, regs[1]);
+            val = RemovePropW(hw, name.c_str());
+        }
+        regs[0] = (uint32_t)(uintptr_t)val;
+        return true;
     });
     Thunk("GetParent", 269, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=(uint32_t)(uintptr_t)GetParent((HWND)(intptr_t)(int32_t)regs[0]); return true; });
     Thunk("IsWindow", 271, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=IsWindow((HWND)(intptr_t)(int32_t)regs[0]); return true; });

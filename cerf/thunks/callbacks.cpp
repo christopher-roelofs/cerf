@@ -25,8 +25,22 @@ std::set<HWND> Win32Thunks::captionok_hwnds;
 thread_local HWND Win32Thunks::tls_paint_hwnd = NULL;
 
 LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (!s_instance || !t_ctx || !t_ctx->callback_executor) {
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    if (!s_instance) return DefWindowProcW(hwnd, msg, wParam, lParam);
+
+    if (!t_ctx || !t_ctx->callback_executor) {
+        /* Non-ARM thread: check if this window has an ARM WndProc.
+           COM/OLE threads may own ARM-class windows (e.g. MS_WebcheckMonitor).
+           Create a lazy ARM context so the WndProc can execute. */
+        bool has_arm_proc = (hwnd_wndproc_map.count(hwnd) > 0);
+        if (!has_arm_proc) {
+            wchar_t cls_name[256] = {};
+            GetClassNameW(hwnd, cls_name, 256);
+            has_arm_proc = (s_instance->arm_wndprocs.count(cls_name) > 0);
+        }
+        if (has_arm_proc)
+            EnsureLazyArmContext(s_instance->mem, s_instance);
+        if (!t_ctx || !t_ctx->callback_executor)
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
     auto it = hwnd_wndproc_map.find(hwnd);

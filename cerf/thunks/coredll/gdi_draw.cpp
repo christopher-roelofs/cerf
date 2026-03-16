@@ -24,8 +24,14 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("PatBlt", 938, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = PatBlt((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2], regs[3], ReadStackArg(regs,mem,0), ReadStackArg(regs,mem,1));
-        return true;
+        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        int x = (int)regs[1], y = (int)regs[2], w = (int)regs[3];
+        int h = (int)ReadStackArg(regs,mem,0);
+        DWORD rop = ReadStackArg(regs,mem,1);
+        BOOL ret = PatBlt(hdc, x, y, w, h, rop);
+        LOG(API, "[API] PatBlt(hdc=0x%08X, %d,%d,%dx%d, rop=0x%08X) -> %d\n",
+            regs[0], x, y, w, h, rop, ret);
+        regs[0] = ret; return true;
     });
     Thunk("SetBkColor", 922, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetBkColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
     Thunk("GetBkColor", 913, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetBkColor((HDC)(intptr_t)(int32_t)regs[0]); return true; });
@@ -256,6 +262,15 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     });
     Thunk("Polygon", 939, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=1; return true; });
     Thunk("Polyline", 940, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=1; return true; });
+    /* RoundRect(hdc, left, top, right, bottom, width, height) — 7 args */
+    Thunk("RoundRect", 942, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        regs[0] = ::RoundRect((HDC)(intptr_t)(int32_t)regs[0],
+            (int)regs[1], (int)regs[2], (int)regs[3],
+            (int)ReadStackArg(regs, mem, 0),
+            (int)ReadStackArg(regs, mem, 1),
+            (int)ReadStackArg(regs, mem, 2));
+        return true;
+    });
     Thunk("CreatePen", 926, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)CreatePen(regs[0], regs[1], regs[2]); return true;
     });
@@ -271,29 +286,5 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     });
     Thunk("CreateSolidBrush", 931, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)CreateSolidBrush(regs[0]); return true;
-    });
-    Thunk("CreateDIBPatternBrushPt", 929, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        /* lpPackedDIB points to a BITMAPINFO + bits in emulated memory.
-           Copy it to host memory and create the brush natively. */
-        uint32_t dib_addr = regs[0], usage = regs[1];
-        uint8_t* host = mem.Translate(dib_addr);
-        if (host) {
-            regs[0] = (uint32_t)(uintptr_t)CreateDIBPatternBrushPt(host, usage);
-        } else {
-            regs[0] = 0;
-        }
-        return true;
-    });
-    Thunk("DrawEdge", 932, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT rc={mem.Read32(regs[1]),mem.Read32(regs[1]+4),mem.Read32(regs[1]+8),mem.Read32(regs[1]+12)};
-        regs[0] = DrawEdge((HDC)(intptr_t)(int32_t)regs[0], &rc, regs[2], regs[3]);
-        /* Write back modified rect when BF_ADJUST (0x2000) is set */
-        if (regs[3]&0x2000) { mem.Write32(regs[1],rc.left); mem.Write32(regs[1]+4,rc.top); mem.Write32(regs[1]+8,rc.right); mem.Write32(regs[1]+12,rc.bottom); }
-        return true;
-    });
-    Thunk("DrawFrameControl", 987, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT rc={(LONG)mem.Read32(regs[1]),(LONG)mem.Read32(regs[1]+4),(LONG)mem.Read32(regs[1]+8),(LONG)mem.Read32(regs[1]+12)};
-        regs[0] = DrawFrameControl((HDC)(intptr_t)(int32_t)regs[0], &rc, regs[2], regs[3]);
-        return true;
     });
 }

@@ -12,7 +12,13 @@ void Win32Thunks::RegisterMessageHandlers() {
            Use blocking GetMessageW — no pseudo-thread hacks needed. */
         while (true) {
             ret = GetMessageW(&msg, (HWND)(intptr_t)(int32_t)regs[1], regs[2], regs[3]);
-            if (ret <= 0) break; /* WM_QUIT or error */
+            if (ret == 0) break; /* WM_QUIT */
+            if (ret == -1) { /* Error — avoid infinite loop in ARM code */
+                LOG(API, "[API] GetMessageW error %lu (hwnd=0x%p)\n",
+                    GetLastError(), (HWND)(intptr_t)(int32_t)regs[1]);
+                Sleep(1);
+                continue;
+            }
             /* Filter native timer callbacks: if the timer ID isn't registered
                as an ARM callback, dispatch it natively and get next message. */
             if (msg.message == WM_TIMER && msg.hwnd == NULL && msg.lParam != 0) {
@@ -86,7 +92,9 @@ void Win32Thunks::RegisterMessageHandlers() {
                Don't try to dispatch it natively (would call corrupt address). */
             if (hwnd == NULL) { regs[0] = 0; return true; }
         }
-        if (message == WM_PAINT) tls_paint_hwnd = hwnd;
+        if (message == WM_PAINT) {
+            tls_paint_hwnd = hwnd;
+        }
         auto it = hwnd_wndproc_map.find(hwnd);
         if (it != hwnd_wndproc_map.end() && callback_executor) {
             if (message == WM_CHAR || message == WM_KEYDOWN || message == WM_LBUTTONDOWN) {
@@ -108,7 +116,7 @@ void Win32Thunks::RegisterMessageHandlers() {
         }
         return true;
     });
-    Thunk("PostMessageW", 865, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("PostMessageW", 865, [this](uint32_t* regs, EmulatedMemory& emem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
         UINT msg = regs[1]; WPARAM wp = regs[2]; LPARAM lp = regs[3];
         LOG(API, "[API] PostMessageW(hwnd=0x%p, msg=0x%04X, wP=0x%X, lP=0x%X)\n",
@@ -213,20 +221,9 @@ void Win32Thunks::RegisterMessageHandlers() {
                 LOG(API, "[API] SendMessageW LVM_0x%04X -> result=%d (0x%X)\n",
                     umsg, (int32_t)regs[0], regs[0]);
             }
-            /* After LVM_SORTITEMS, query item positions for debugging. */
-            if (umsg == 0x1030 /* LVM_SORTITEMS */) {
-                int count = (int)SendMessageW(hw, 0x1004, 0, 0);
-                RECT rc; GetWindowRect(hw, &rc);
-                LOG(API, "[API] After LVM_SORTITEMS: hwnd=%p count=%d winRect=%ldx%ld\n",
-                    hw, count, rc.right-rc.left, rc.bottom-rc.top);
-                for (int i = 0; i < count && i < 5; i++) {
-                    DWORD pos = (DWORD)SendMessageW(hw, 0x1010 /* LVM_GETITEMPOSITION */, i, 0);
-                    /* LVM_GETITEMPOSITION with lParam=0 doesn't work. Need a POINT buffer.
-                       Use alternative: check via ARM thunk. Skip for now. */
-                }
-                /* Post deferred arrange for after resize completes */
+            /* After LVM_SORTITEMS, post deferred arrange */
+            if (umsg == 0x1030 /* LVM_SORTITEMS */)
                 PostMessageW(hw, 0x1016 /* LVM_ARRANGE */, 0, 0);
-            }
             if (umsg == WM_NOTIFY) {
                 LOG(API, "[API] SendMessageW WM_NOTIFY hwnd=%p wP=%d lP=0x%X -> ret=0x%X\n",
                     hw, (int)wp, (uint32_t)lp, regs[0]);

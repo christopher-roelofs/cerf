@@ -6,6 +6,27 @@
 #include <cstring>
 #include <algorithm>
 #include <atomic>
+#include <mutex>
+#include <unordered_map>
+
+/* Track allocation sizes so LocalSize/HeapSize/_msize return correct values
+   and realloc variants copy the correct number of bytes. */
+static std::mutex g_alloc_mutex;
+static std::unordered_map<uint32_t, uint32_t> g_alloc_sizes;
+
+static void TrackAlloc(uint32_t addr, uint32_t size) {
+    std::lock_guard<std::mutex> lk(g_alloc_mutex);
+    g_alloc_sizes[addr] = size;
+}
+static uint32_t GetAllocSize(uint32_t addr) {
+    std::lock_guard<std::mutex> lk(g_alloc_mutex);
+    auto it = g_alloc_sizes.find(addr);
+    return (it != g_alloc_sizes.end()) ? it->second : 0;
+}
+static void FreeAlloc(uint32_t addr) {
+    std::lock_guard<std::mutex> lk(g_alloc_mutex);
+    g_alloc_sizes.erase(addr);
+}
 
 /* All allocator bases MUST be below 0x02000000 (32MB slot boundary).
    WinCE ARM code applies slot masking (AND addr, #0x01FFFFFF) to pointers.
@@ -69,6 +90,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t base = addr_arg ? addr_arg : next_valloc.fetch_add(aligned);
         uint8_t* ptr = mem.Alloc(base, size, regs[3]);
         regs[0] = ptr ? base : 0;
+        if (regs[0]) TrackAlloc(regs[0], size);
         LOG(API, "[API] VirtualAlloc(0x%08X, 0x%X) -> 0x%08X\n", addr_arg, size, regs[0]);
         return true;
     });
@@ -78,7 +100,9 @@ void Win32Thunks::RegisterMemoryHandlers() {
     });
     Thunk("LocalAlloc", 33, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         static std::atomic<uint32_t> next_local{0x00800000};
-        uint32_t addr = BumpAlloc(next_local, mem, regs[1]);
+        uint32_t size = regs[1];
+        uint32_t addr = BumpAlloc(next_local, mem, size);
+        TrackAlloc(addr, size);
         regs[0] = addr;
         return true;
     });
@@ -89,23 +113,33 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t addr = BumpAlloc(next_lrealloc, mem, new_size);
         uint8_t* old_host = mem.Translate(old_ptr);
         uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) memcpy(new_host, old_host, new_size);
+        if (old_host && new_host) {
+            uint32_t old_size = GetAllocSize(old_ptr);
+            uint32_t copy_size = old_size ? std::min(old_size, new_size) : new_size;
+            memcpy(new_host, old_host, copy_size);
+        }
+        TrackAlloc(addr, new_size);
         regs[0] = addr;
         return true;
     });
     Thunk("LocalFree", 36, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        FreeAlloc(regs[0]);
         regs[0] = 0; return true;
     });
     Thunk("LocalSize", 35, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[STUB] LocalSize(0x%08X) -> 0x1000\n", regs[0]);
-        regs[0] = 0x1000; return true;
+        uint32_t size = GetAllocSize(regs[0]);
+        if (!size) size = 0x1000; /* fallback for untracked allocations */
+        regs[0] = size;
+        return true;
     });
     Thunk("GetProcessHeap", 50, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0xDEAD0001; return true;
     });
     auto heapAllocImpl = [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         static std::atomic<uint32_t> next_heap{0x00C00000};
-        regs[0] = BumpAlloc(next_heap, mem, regs[2]);
+        uint32_t size = regs[2];
+        regs[0] = BumpAlloc(next_heap, mem, size);
+        TrackAlloc(regs[0], size);
         return true;
     };
     Thunk("HeapAlloc", 46, heapAllocImpl);
@@ -116,6 +150,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
         return true;
     });
     Thunk("HeapFree", 49, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        FreeAlloc(regs[2]); /* regs[2] = lpMem (after hHeap, dwFlags) */
         regs[0] = 1; return true;
     });
     thunk_handlers["HeapDestroy"] = thunk_handlers["HeapFree"];
@@ -125,12 +160,20 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t addr = BumpAlloc(next_hrealloc, mem, new_size);
         uint8_t* old_host = mem.Translate(old_ptr);
         uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) memcpy(new_host, old_host, new_size);
+        if (old_host && new_host) {
+            uint32_t old_size = GetAllocSize(old_ptr);
+            uint32_t copy_size = old_size ? std::min(old_size, new_size) : new_size;
+            memcpy(new_host, old_host, copy_size);
+        }
+        TrackAlloc(addr, new_size);
         regs[0] = addr;
         return true;
     });
     Thunk("HeapSize", 48, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0x1000; return true;
+        uint32_t size = GetAllocSize(regs[2]); /* regs[2] = lpMem */
+        if (!size) size = 0x1000; /* fallback for untracked */
+        regs[0] = size;
+        return true;
     });
     Thunk("HeapValidate", 51, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 1; return true;
@@ -138,12 +181,15 @@ void Win32Thunks::RegisterMemoryHandlers() {
     /* Shared atomic counter for malloc/calloc/realloc/new to prevent overlap */
     static std::atomic<uint32_t> next_malloc{0x01100000};
     Thunk("malloc", 1041, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = BumpAlloc(next_malloc, mem, regs[0]);
+        uint32_t size = regs[0];
+        regs[0] = BumpAlloc(next_malloc, mem, size);
+        TrackAlloc(regs[0], size);
         return true;
     });
     Thunk("calloc", 1346, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size = regs[0] * regs[1];
         regs[0] = BumpAlloc(next_malloc, mem, size);
+        TrackAlloc(regs[0], size);
         return true;
     });
     Thunk("new", 1095, thunk_handlers["malloc"]);
@@ -152,15 +198,39 @@ void Win32Thunks::RegisterMemoryHandlers() {
         uint32_t addr = BumpAlloc(next_malloc, mem, size);
         uint8_t* old_host = old_ptr ? mem.Translate(old_ptr) : nullptr;
         uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) memcpy(new_host, old_host, size);
+        if (old_host && new_host) {
+            uint32_t old_size = GetAllocSize(old_ptr);
+            uint32_t copy_size = old_size ? std::min(old_size, size) : size;
+            memcpy(new_host, old_host, copy_size);
+        }
+        TrackAlloc(addr, size);
         regs[0] = addr;
         return true;
     });
     Thunk("free", 1018, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        FreeAlloc(regs[0]);
         regs[0] = 0; return true;
     });
     Thunk("delete", 1094, thunk_handlers["free"]);
+    /* operator new[] (??_U@YAPAXI@Z) and operator delete[] (??_V@YAXPAX@Z) */
+    Thunk("new[]", 1456, thunk_handlers["malloc"]);
+    Thunk("delete[]", 1457, thunk_handlers["free"]);
     Thunk("_msize", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0x1000; return true;
+        uint32_t size = GetAllocSize(regs[0]);
+        if (!size) size = 0x1000; /* fallback for untracked */
+        regs[0] = size;
+        return true;
+    });
+    /* Memory validation — check EmulatedMemory regions.  Native IsBadReadPtr
+       rejects WinCE kernel-mapped regions (0x20000000+) that don't exist
+       natively, but always returning 0 crashes on garbage pointers.  Check
+       the base address against our region table for correct behavior. */
+    Thunk("IsBadReadPtr", 522, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
+        return true;
+    });
+    Thunk("IsBadWritePtr", 523, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
+        return true;
     });
 }

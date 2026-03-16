@@ -233,4 +233,31 @@ void Win32Thunks::RegisterSysInfoHandlers() {
         }
         return true;
     });
+    /* Monitor */
+    Thunk("MonitorFromWindow", 1524, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] MonitorFromWindow(hwnd=0x%08X, flags=0x%X) -> stub\n", regs[0], regs[1]);
+        regs[0] = 1; /* fake monitor handle */
+        return true;
+    });
+    Thunk("GetMonitorInfo", 1525, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] GetMonitorInfo(hMonitor=0x%08X, lpmi=0x%08X) -> stub\n", regs[0], regs[1]);
+        if (regs[1]) {
+            /* Fill MONITORINFO with emulated screen resolution */
+            uint32_t addr = regs[1];
+            /* cbSize already set by caller; rcMonitor */
+            mem.Write32(addr + 4, 0); mem.Write32(addr + 8, 0);
+            mem.Write32(addr + 12, screen_width); mem.Write32(addr + 16, screen_height);
+            /* rcWork */
+            mem.Write32(addr + 20, 0); mem.Write32(addr + 24, 0);
+            mem.Write32(addr + 28, screen_width); mem.Write32(addr + 32, screen_height);
+            /* dwFlags = MONITORINFOF_PRIMARY */
+            mem.Write32(addr + 36, 1);
+        }
+        regs[0] = 1;
+        return true;
+    });
+    Thunk("MonitorFromPoint", 1522, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = 1; /* fake monitor handle */
+        return true;
+    });
 }

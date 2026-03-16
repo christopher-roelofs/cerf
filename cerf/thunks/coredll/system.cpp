@@ -213,4 +213,17 @@ void Win32Thunks::RegisterSystemHandlers() {
     ThunkOrdinal("FlushInstructionCache", 508);
     ThunkOrdinal("MapViewOfFile", 549);
     ThunkOrdinal("UnmapViewOfFile", 550);
+    /* Power management: reset idle timer to prevent device sleep. No-op on desktop. */
+    Thunk("SystemIdleTimerReset", 837, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SystemIdleTimerReset() -> stub\n");
+        return true;
+    });
+    Thunk("GetDesktopWindow", 1397, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=(uint32_t)(uintptr_t)GetDesktopWindow(); return true; });
+    Thunk("SetFileAttributesW", 169, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring mapped = MapWinCEPath(path);
+        LOG(API, "[API] SetFileAttributesW('%ls', 0x%X)\n", path.c_str(), regs[1]);
+        regs[0] = SetFileAttributesW(mapped.c_str(), regs[1]);
+        return true;
+    });
 }

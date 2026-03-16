@@ -42,9 +42,20 @@ void Win32Thunks::RegisterFileHandlers() {
         uint32_t access = regs[1], share = regs[2];
         uint32_t creation = ReadStackArg(regs, mem, 0), flags = ReadStackArg(regs, mem, 1);
         std::wstring host_path = MapWinCEPath(wce_path);
+        /* WinCE has looser file sharing than desktop Windows.  If the
+           caller requests exclusive access (share=0) and it fails with
+           ERROR_SHARING_VIOLATION, retry with read+write sharing. */
         HANDLE h = CreateFileW(host_path.c_str(), access, share, NULL, creation, flags, NULL);
+        if (h == INVALID_HANDLE_VALUE && GetLastError() == ERROR_SHARING_VIOLATION && share == 0) {
+            constexpr DWORD SHARE_RW = FILE_SHARE_READ | FILE_SHARE_WRITE;
+            h = CreateFileW(host_path.c_str(), access, SHARE_RW, NULL, creation, flags, NULL);
+        }
         regs[0] = WrapHandle(h);
-        LOG(API, "[API] CreateFileW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
+        if (h == INVALID_HANDLE_VALUE)
+            LOG(API, "[API] CreateFileW('%ls', acc=0x%X, share=0x%X, creat=%u, flags=0x%X) -> FAILED err=%lu\n",
+                wce_path.c_str(), access, share, creation, flags, GetLastError());
+        else
+            LOG(API, "[API] CreateFileW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
         return true;
     });
     Thunk("ReadFile", 170, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -169,7 +180,13 @@ void Win32Thunks::RegisterFileHandlers() {
             /* Skip "." and ".." — WinCE never returns these */
             while (ret && IsDotOrDotDot(fd.cFileName))
                 ret = FindNextFileW(h, &fd);
-            if (ret) WriteFindDataToEmu(mem, regs[1], fd);
+            if (ret) {
+                WriteFindDataToEmu(mem, regs[1], fd);
+                LOG(API, "[API] FindNextFileW(0x%08X) -> '%ls' (attr=0x%X)\n",
+                    fake, fd.cFileName, fd.dwFileAttributes);
+            } else {
+                LOG(API, "[API] FindNextFileW(0x%08X) -> no more files\n", fake);
+            }
             regs[0] = ret; return true;
         }
         /* Root enumeration: first exhaust real host entries, then inject drives */
@@ -275,12 +292,5 @@ void Win32Thunks::RegisterFileHandlers() {
         }
         LOG(API, "[API] GetDiskFreeSpaceExW('%ls') -> %d\n", path.c_str(), ret);
         regs[0] = ret; return true;
-    });
-    Thunk("SetFileAttributesW", 169, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
-        std::wstring mapped = MapWinCEPath(path);
-        LOG(API, "[API] SetFileAttributesW('%ls', 0x%X)\n", path.c_str(), regs[1]);
-        regs[0] = SetFileAttributesW(mapped.c_str(), regs[1]);
-        return true;
     });
 }

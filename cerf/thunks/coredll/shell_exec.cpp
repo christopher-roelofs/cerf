@@ -8,6 +8,30 @@
 #include <shellapi.h>
 
 void Win32Thunks::RegisterShellExecHandler() {
+    /* WinCE kernel trap 0xF000ABDC → ordinal 5385: shell "navigate to URL" syscall.
+       On real WinCE this is an IPC to the running shell process.  We implement it
+       by calling SHCreateExplorerInstance in the current ARM context, then pumping
+       messages so the browser thread stays alive. */
+    Thunk("SHBrowseToURL", 5385, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring url = ReadWStringFromEmu(mem, regs[0]);
+        LOG(API, "[API] WinCE trap 5385: SHBrowseToURL('%ls')\n", url.c_str());
+        if (!callback_executor) { regs[0] = 0; return true; }
+        const uint32_t shCreateExplorerInstance = 0x0001A120;
+        uint32_t args[2] = { regs[0], 0 };
+        uint32_t ret = callback_executor(shCreateExplorerInstance, args, 2);
+        LOG(API, "[API]   SHCreateExplorerInstance returned %d\n", ret);
+        if (ret) {
+            /* Browser thread was created — pump messages to keep this process alive */
+            MSG msg;
+            while (GetMessage(&msg, NULL, 0, 0) > 0) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+        }
+        regs[0] = ret ? 1 : 0;
+        return true;
+    });
+
     Thunk("ShellExecuteEx", 480, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t sei_addr = regs[0];
         if (!sei_addr) { regs[0] = 0; SetLastError(ERROR_INVALID_PARAMETER); return true; }
@@ -78,17 +102,48 @@ void Win32Thunks::RegisterShellExecHandler() {
                     ReadFile(hf, buf, sizeof(buf) - 1, &n, NULL);
                     CloseHandle(hf);
                     buf[n] = 0;
-                    /* WinCE .lnk format: "<decimal_length>#<path>" (e.g. "16#\windows\xls.exe") */
+                    /* WinCE .lnk format: "<decimal_length>#["]<path>["]\s<params>"
+                       e.g. "16#\windows\xls.exe" or "27#\windows\iexplore.exe -home"
+                       or   "15#\"\My Documents\"" */
                     char* hash = strchr(buf, '#');
                     if (hash) {
                         char* p = hash + 1;
                         char* end = p;
                         while (*end && *end != '\r' && *end != '\n') end++;
                         *end = 0;
-                        std::wstring target;
-                        for (char* c = p; *c; c++) target += (wchar_t)*c;
-                        LOG(API, "[API]   -> .lnk resolved to '%ls'\n", target.c_str());
+                        /* Split path from params — find first space after the executable */
+                        std::wstring target, lnk_params;
+                        if (*p == '"') {
+                            /* Quoted path */
+                            p++;
+                            char* q = strchr(p, '"');
+                            if (q) {
+                                for (char* c = p; c < q; c++) target += (wchar_t)*c;
+                                p = q + 1;
+                                while (*p == ' ') p++;
+                                for (; *p; p++) lnk_params += (wchar_t)*p;
+                            } else {
+                                for (; *p; p++) target += (wchar_t)*p;
+                            }
+                        } else {
+                            /* Unquoted: find .exe boundary then split on space */
+                            char* exe_end = strstr(p, ".exe");
+                            if (!exe_end) exe_end = strstr(p, ".EXE");
+                            if (exe_end) {
+                                exe_end += 4; /* skip past ".exe" */
+                                for (char* c = p; c < exe_end; c++) target += (wchar_t)*c;
+                                p = exe_end;
+                                while (*p == ' ') p++;
+                                for (; *p; p++) lnk_params += (wchar_t)*p;
+                            } else {
+                                for (; *p; p++) target += (wchar_t)*p;
+                            }
+                        }
+                        LOG(API, "[API]   -> .lnk resolved to '%ls' params='%ls'\n",
+                            target.c_str(), lnk_params.c_str());
                         file = target;
+                        if (!lnk_params.empty() && params.empty())
+                            params = lnk_params;
                     }
                 }
             }

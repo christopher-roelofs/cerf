@@ -244,4 +244,51 @@ void Win32Thunks::RegisterArmRuntimeHandlers() {
     Thunk("__ges", 2038, [=](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (regs_to_float(regs[0]) >= regs_to_float(regs[1])) ? 1 : 0; return true;
     });
+    /* Byte-swap intrinsics (used by Winsock for htonl/htons/ntohl/ntohs) */
+    Thunk("_byteswap_ulong", 1623, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = _byteswap_ulong(regs[0]); return true;
+    });
+    Thunk("_byteswap_ushort", 1624, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = _byteswap_ushort((uint16_t)regs[0]); return true;
+    });
+    Thunk("_byteswap_uint64", 1622, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint64_t v = ((uint64_t)regs[1] << 32) | regs[0];
+        v = _byteswap_uint64(v);
+        regs[0] = (uint32_t)v; regs[1] = (uint32_t)(v >> 32); return true;
+    });
+
+    /* C++ EH vector constructor iterator (??_L): calls ctor for each array element.
+       R0=ptr, R1=element_size, R2=count, R3=ctor, [SP+0]=dtor (unused w/o exceptions) */
+    Thunk("__ehvec_ctor", 1576, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t ptr = regs[0], elem_size = regs[1], count = regs[2], ctor = regs[3];
+        LOG(API, "[API] __ehvec_ctor(0x%08X, size=%u, count=%u, ctor=0x%08X)\n",
+            ptr, elem_size, count, ctor);
+        if (ctor && callback_executor && count < 10000) {
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t args[1] = { ptr + i * elem_size };
+                callback_executor(ctor, args, 1);
+            }
+        }
+        return true;
+    });
+    /* C++ EH vector copy constructor iterator (??_N): not commonly needed, stub for now */
+    Thunk("__ehvec_copy_ctor", 1577, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] __ehvec_copy_ctor(0x%08X, size=%u, count=%u) -> stub\n",
+            regs[0], regs[1], regs[2]);
+        return true;
+    });
+    /* C++ EH vector destructor iterator (??_M): calls dtor for each element in reverse.
+       R0=ptr, R1=element_size, R2=count, R3=dtor */
+    Thunk("__ehvec_dtor", 1578, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t ptr = regs[0], elem_size = regs[1], count = regs[2], dtor = regs[3];
+        LOG(API, "[API] __ehvec_dtor(0x%08X, size=%u, count=%u, dtor=0x%08X)\n",
+            ptr, elem_size, count, dtor);
+        if (dtor && callback_executor && count < 10000) {
+            for (int i = (int)count - 1; i >= 0; i--) {
+                uint32_t args[1] = { ptr + (uint32_t)i * elem_size };
+                callback_executor(dtor, args, 1);
+            }
+        }
+        return true;
+    });
 }

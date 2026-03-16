@@ -99,7 +99,10 @@ void Win32Thunks::RegisterModuleHandlers() {
         /* Call DllMain(DLL_PROCESS_ATTACH) for all pending DLLs (dependencies first, then the
            loaded DLL itself). LoadArmDll queues entry points for the DLL and all its dependencies;
            dependencies are queued before the DLL that imports them, so iterating in order gives
-           correct initialization sequence. */
+           correct initialization sequence.
+           Per Windows semantics: if DllMain returns FALSE, the DLL failed to initialize
+           and LoadLibrary must return NULL. */
+        bool dll_init_failed = false;
         if (callback_executor) {
             while (!pending_dll_inits.empty()) {
                 auto init = pending_dll_inits.front();
@@ -108,7 +111,21 @@ void Win32Thunks::RegisterModuleHandlers() {
                 uint32_t args[3] = { init.base_addr, 1 /* DLL_PROCESS_ATTACH */, 0 };
                 uint32_t result = callback_executor(init.entry_point, args, 3);
                 LOG(API, "[API]   DllMain returned %d\n", result);
+                if (result == 0) {
+                    LOG(API, "[API]   DllMain FAILED for base=0x%08X — LoadLibrary will return NULL\n",
+                        init.base_addr);
+                    dll_init_failed = true;
+                }
             }
+        }
+        if (dll_init_failed) {
+            /* Remove the failed DLL so GetModuleHandle/GetProcAddress won't find it */
+            std::wstring wlower(narrow_name.begin(), narrow_name.end());
+            std::transform(wlower.begin(), wlower.end(), wlower.begin(), ::towlower);
+            loaded_dlls.erase(wlower);
+            LOG(API, "[API]   LoadLibraryW('%ls') -> NULL (DllMain failed)\n", name.c_str());
+            regs[0] = 0;
+            return true;
         }
         regs[0] = dll->base_addr;
         return true;
@@ -251,22 +268,29 @@ void Win32Thunks::RegisterModuleHandlers() {
         }
         /* LOAD_LIBRARY_AS_DATAFILE (0x2) — skip DllMain, just return handle for resources */
         bool as_datafile = (flags & 0x2) != 0;
+        bool dll_init_failed = false;
         if (!as_datafile && callback_executor) {
             while (!pending_dll_inits.empty()) {
                 auto init = pending_dll_inits.front();
                 pending_dll_inits.erase(pending_dll_inits.begin());
                 LOG(API, "[API]   Calling DllMain at 0x%08X\n", init.entry_point);
                 uint32_t args[3] = { init.base_addr, 1, 0 };
-                callback_executor(init.entry_point, args, 3);
+                uint32_t result = callback_executor(init.entry_point, args, 3);
+                LOG(API, "[API]   DllMain returned %d\n", result);
+                if (result == 0) {
+                    LOG(API, "[API]   DllMain FAILED — LoadLibraryExW will return NULL\n");
+                    dll_init_failed = true;
+                }
             }
         }
+        if (dll_init_failed) {
+            std::wstring wlower(narrow_name.begin(), narrow_name.end());
+            std::transform(wlower.begin(), wlower.end(), wlower.begin(), ::towlower);
+            loaded_dlls.erase(wlower);
+            regs[0] = 0;
+            return true;
+        }
         regs[0] = dll->base_addr;
-        return true;
-    });
-    Thunk("GetExitCodeThread", 518, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        LOG(API, "[API] GetExitCodeThread(hThread=0x%08X, lpExitCode=0x%08X) -> stub\n", regs[0], regs[1]);
-        if (regs[1]) mem.Write32(regs[1], 0);
-        regs[0] = 1;
         return true;
     });
 }

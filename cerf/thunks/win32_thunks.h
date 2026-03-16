@@ -259,9 +259,11 @@ private:
     void RegisterStdioHandlers();
     void RegisterVfsHandlers();
     void RegisterShellExecHandler();
-    void RegisterWinsockHandlers();
-    void RegisterWinsockDnsHandlers();
     void RegisterWininetDepsHandlers();
+    void RegisterSocketHandlers();
+    void RegisterSocketIOHandlers();
+    void RegisterSocketDnsHandlers();
+    void RegisterWindowRectHandlers();
     bool LaunchArmChildProcess(const std::wstring& mapped_file, const std::wstring& params,
                                uint32_t sei_addr, uint32_t* regs, EmulatedMemory& mem);
 };

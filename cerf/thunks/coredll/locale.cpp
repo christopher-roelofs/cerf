@@ -27,8 +27,43 @@ void Win32Thunks::RegisterLocaleHandlers() {
     });
     Thunk("GetACP", 186, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetACP(); return true; });
     Thunk("GetOEMCP", 187, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetOEMCP(); return true; });
-    Thunk("GetCPInfo", 188, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
-    Thunk("LCMapStringW", [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    Thunk("GetCPInfo", 188, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        UINT codePage = regs[0];
+        uint32_t cpinfo_addr = regs[1];
+        CPINFO cpi = {};
+        BOOL ret = GetCPInfo(codePage, &cpi);
+        if (ret && cpinfo_addr) {
+            mem.Write32(cpinfo_addr, cpi.MaxCharSize);
+            mem.Write8(cpinfo_addr + 4, cpi.DefaultChar[0]);
+            mem.Write8(cpinfo_addr + 5, cpi.DefaultChar[1]);
+            for (int i = 0; i < MAX_LEADBYTES && i < 12; i++)
+                mem.Write8(cpinfo_addr + 6 + i, cpi.LeadByte[i]);
+        }
+        LOG(API, "[API] GetCPInfo(cp=%u) -> %d (MaxCharSize=%u)\n",
+            codePage, ret, cpi.MaxCharSize);
+        regs[0] = ret;
+        return true;
+    });
+    Thunk("LCMapStringW", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LCID locale = regs[0];
+        DWORD flags = regs[1];
+        std::wstring src = ReadWStringFromEmu(mem, regs[2]);
+        int srcLen = (int)regs[3];
+        uint32_t dst_addr = ReadStackArg(regs, mem, 0);
+        int dstLen = (int)ReadStackArg(regs, mem, 1);
+        if (srcLen == -1) srcLen = (int)src.length();
+        if (dst_addr == 0 || dstLen == 0) {
+            /* Query required size */
+            regs[0] = LCMapStringW(locale, flags, src.c_str(), srcLen, NULL, 0);
+        } else {
+            std::vector<wchar_t> buf(dstLen + 1, 0);
+            int ret = LCMapStringW(locale, flags, src.c_str(), srcLen, buf.data(), dstLen);
+            for (int i = 0; i < ret && i < dstLen; i++)
+                mem.Write16(dst_addr + i * 2, buf[i]);
+            regs[0] = ret;
+        }
+        return true;
+    });
     /* GetTimeFormatW(Locale, dwFlags, lpTime, lpFormat, lpTimeStr, cchTime)
        r0=Locale, r1=dwFlags, r2=lpTime(ARM ptr to SYSTEMTIME), r3=lpFormat(ARM ptr),
        stack[0]=lpTimeStr(ARM ptr), stack[1]=cchTime */
@@ -103,4 +138,56 @@ void Win32Thunks::RegisterLocaleHandlers() {
     });
     Thunk("GetNumberFormatW", 204, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
     Thunk("GetCurrencyFormatW", 205, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    /* Language */
+    Thunk("GetUserDefaultUILanguage", 1318, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = 0x0409; /* US English */
+        return true;
+    });
+    Thunk("GetSystemDefaultUILanguage", 1319, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = 0x0409; /* US English */
+        return true;
+    });
+    Thunk("LCMapStringW", 199, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] LCMapStringW(locale=0x%X, flags=0x%X, src=0x%08X, srcLen=%d) -> 0 (stub)\n",
+               regs[0], regs[1], regs[2], (int32_t)regs[3]);
+        regs[0] = 0; return true;
+    });
+    Thunk("CharLowerBuffW", 222, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t addr = regs[0], len = regs[1];
+        for (uint32_t i = 0; i < len; i++) {
+            uint16_t ch = mem.Read16(addr + i * 2);
+            mem.Write16(addr + i * 2, (uint16_t)towlower(ch));
+        }
+        regs[0] = len; return true;
+    });
+    Thunk("CharUpperBuffW", 223, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t addr = regs[0], len = regs[1];
+        for (uint32_t i = 0; i < len; i++) {
+            uint16_t ch = mem.Read16(addr + i * 2);
+            mem.Write16(addr + i * 2, (uint16_t)towupper(ch));
+        }
+        regs[0] = len; return true;
+    });
+    Thunk("_ltow", 1040, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        long value = (int32_t)regs[0];
+        uint32_t buf_addr = regs[1];
+        int radix = regs[2];
+        wchar_t buf[34];
+        _ltow(value, buf, radix);
+        for (int i = 0; buf[i]; i++) mem.Write16(buf_addr + i * 2, buf[i]);
+        mem.Write16(buf_addr + (uint32_t)wcslen(buf) * 2, 0);
+        regs[0] = buf_addr;
+        return true;
+    });
+    Thunk("_itow", 1026, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        int value = (int32_t)regs[0];
+        uint32_t buf_addr = regs[1];
+        int radix = regs[2];
+        wchar_t buf[34];
+        _itow(value, buf, radix);
+        for (int i = 0; buf[i]; i++) mem.Write16(buf_addr + i * 2, buf[i]);
+        mem.Write16(buf_addr + (uint32_t)wcslen(buf) * 2, 0);
+        regs[0] = buf_addr;
+        return true;
+    });
 }

@@ -23,7 +23,9 @@ void Win32Thunks::RegisterMiscHandlers() {
     };
     /* SIP (Software Input Panel) */
     Thunk("SipGetInfo", stub0("SipGetInfo"));
+    Thunk("SipSetDefaultRect", stub0("SipSetDefaultRect"));
     Thunk("SipEnumIM", stub0("SipEnumIM"));
+    Thunk("SipShowIM", 1171, stub0("SipShowIM"));
     /* Debug */
     Thunk("OutputDebugStringW", 541, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         LOG(DBG, "[DEBUG] %ls\n", ReadWStringFromEmu(mem, regs[0]).c_str()); return true;
@@ -195,13 +197,6 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("GetGestureInfo", 2925, stub0("GetGestureInfo"));
     Thunk("GetGestureExtraArguments", stub0("GetGestureExtraArguments"));
     Thunk("CloseGestureInfoHandle", 2924, stub0("CloseGestureInfoHandle"));
-    /* IMM stubs */
-    Thunk("ImmAssociateContext", 770, stub0("ImmAssociateContext"));
-    Thunk("ImmGetContext", 783, stub0("ImmGetContext"));
-    Thunk("ImmReleaseContext", 803, stub0("ImmReleaseContext"));
-    Thunk("ImmGetOpenStatus", 792, stub0("ImmGetOpenStatus"));
-    Thunk("ImmNotifyIME", 800, stub0("ImmNotifyIME"));
-    Thunk("ImmSetOpenStatus", 814, stub0("ImmSetOpenStatus"));
     /* Clipboard */
     Thunk("RegisterClipboardFormatW", 673, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring fmt = ReadWStringFromEmu(mem, regs[0]);
@@ -215,68 +210,29 @@ void Win32Thunks::RegisterMiscHandlers() {
         regs[0] = 0;
         return true;
     });
-    /* Monitor */
-    Thunk("MonitorFromWindow", 1524, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] MonitorFromWindow(hwnd=0x%08X, flags=0x%X) -> stub\n", regs[0], regs[1]);
-        regs[0] = 1; /* fake monitor handle */
-        return true;
-    });
-    Thunk("GetMonitorInfo", 1525, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        LOG(API, "[API] GetMonitorInfo(hMonitor=0x%08X, lpmi=0x%08X) -> stub\n", regs[0], regs[1]);
-        if (regs[1]) {
-            /* Fill MONITORINFO with emulated screen resolution */
-            uint32_t addr = regs[1];
-            /* cbSize already set by caller; rcMonitor */
-            mem.Write32(addr + 4, 0); mem.Write32(addr + 8, 0);
-            mem.Write32(addr + 12, screen_width); mem.Write32(addr + 16, screen_height);
-            /* rcWork */
-            mem.Write32(addr + 20, 0); mem.Write32(addr + 24, 0);
-            mem.Write32(addr + 28, screen_width); mem.Write32(addr + 32, screen_height);
-            /* dwFlags = MONITORINFOF_PRIMARY */
-            mem.Write32(addr + 36, 1);
-        }
-        regs[0] = 1;
-        return true;
-    });
-    /* Additional IMM stubs needed by RICHED20.DLL */
-    Thunk("ImmEscapeW", 775, stub0("ImmEscapeW"));
-    Thunk("ImmGetCandidateWindow", 779, stub0("ImmGetCandidateWindow"));
-    Thunk("ImmGetCompositionStringW", 781, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] ImmGetCompositionStringW(himc=0x%08X, dwIndex=0x%X) -> 0 (stub)\n", regs[0], regs[1]);
-        regs[0] = 0; return true;
-    });
-    Thunk("ImmGetConversionStatus", 785, stub0("ImmGetConversionStatus"));
-    Thunk("ImmGetProperty", 793, stub0("ImmGetProperty"));
-    Thunk("ImmSetCandidateWindow", 807, stub0("ImmSetCandidateWindow"));
-    Thunk("ImmSetCompositionFontW", 808, stub0("ImmSetCompositionFontW"));
-    Thunk("ImmSetCompositionStringW", 809, stub0("ImmSetCompositionStringW"));
-    Thunk("ImmSetCompositionWindow", 810, stub0("ImmSetCompositionWindow"));
-    Thunk("ImmGetVirtualKey", 1210, stub0("ImmGetVirtualKey"));
-    Thunk("PostKeybdMessage", 832, stub0("PostKeybdMessage"));
-    /* Memory validation — check EmulatedMemory regions.  Native IsBadReadPtr
-       rejects WinCE kernel-mapped regions (0x20000000+) that don't exist
-       natively, but always returning 0 crashes on garbage pointers.  Check
-       the base address against our region table for correct behavior. */
-    Thunk("IsBadReadPtr", 522, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
-        return true;
-    });
-    Thunk("IsBadWritePtr", 523, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
-        return true;
-    });
-    /* Keyboard */
-    Thunk("GetKeyboardLayout", 1229, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0x04090409; /* US English */
-        return true;
-    });
-    /* Language */
-    Thunk("GetUserDefaultUILanguage", 1318, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("CryptProtectData", 1599, stub0("CryptProtectData"));
+    Thunk("EnumFontsW", 966, stub0("EnumFontsW"));
+    Thunk("GetGweApiSetTables", 1867, stub0("GetGweApiSetTables"));
+    Thunk("GetSystemDefaultUILanguage", 1319, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0x0409; /* US English */
         return true;
     });
-    Thunk("MonitorFromPoint", 1522, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 1; /* fake monitor handle */
+    Thunk("CeZeroPointer", 1907, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        /* Identity no-op — kernel buffer unmapping not needed in emulator */
+        LOG(API, "[API] CeZeroPointer(0x%08X) -> 0x%08X (identity)\n", regs[0], regs[0]);
+        return true;
+    });
+    Thunk("CeGetCallerTrust", 477, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = 2; /* OEM_CERTIFY — full trust */
+        return true;
+    });
+    /* PMFindProvider */
+    Thunk("QueryAPISetID", 2588, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* Read 4-char API set name */
+        char name[5] = {};
+        for (int i = 0; i < 4; i++) name[i] = (char)mem.Read8(regs[0] + i);
+        LOG(API, "[API] QueryAPISetID('%s') -> -1 (not registered)\n", name);
+        regs[0] = (uint32_t)-1;
         return true;
     });
 }

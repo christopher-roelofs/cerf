@@ -73,6 +73,9 @@ void Win32Thunks::RegisterGdiTextHandlers() {
             mem.Write8(regs[1]+54, tm.tmStruckOut); mem.Write8(regs[1]+55, tm.tmPitchAndFamily);
             mem.Write8(regs[1]+56, tm.tmCharSet);
         }
+        LOG(API, "[API] GetTextMetricsW(hdc=0x%08X) -> %d h=%d asc=%d desc=%d avgW=%d maxW=%d\n",
+            (uint32_t)(uintptr_t)hdc, ret, tm.tmHeight, tm.tmAscent, tm.tmDescent,
+            tm.tmAveCharWidth, tm.tmMaxCharWidth);
         regs[0] = ret; return true;
     });
     Thunk("DrawTextW", 945, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -169,6 +172,8 @@ void Win32Thunks::RegisterGdiTextHandlers() {
                 mem.Write32(pSize_addr + 4, (uint32_t)sz.cy);
             }
         }
+        LOG(API, "[API] GetTextExtentExPointW(hdc=0x%08X, cch=%d, maxExt=%d) -> %d fit=%d sz={%d,%d}\n",
+            (uint32_t)(uintptr_t)hdc, cch, maxExtent, ret, nFit, (int)sz.cx, (int)sz.cy);
         regs[0] = ret;
         return true;
     });
@@ -240,5 +245,23 @@ void Win32Thunks::RegisterGdiTextHandlers() {
     Thunk("AddFontResourceW", 893, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] [STUB] AddFontResourceW -> 1\n");
         regs[0] = 1; return true;
+    });
+    /* GetCharWidth32W(hdc, iFirstChar, iLastChar, lpBuffer)
+       r0=hdc, r1=first, r2=last, r3=lpBuffer */
+    Thunk("GetCharWidth32", 1664, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        UINT first = regs[1], last = regs[2];
+        uint32_t buf_addr = regs[3];
+        UINT count = last - first + 1;
+        std::vector<INT> widths(count);
+        BOOL ret = GetCharWidth32W(hdc, first, last, widths.data());
+        if (ret && buf_addr) {
+            for (UINT i = 0; i < count; i++)
+                mem.Write32(buf_addr + i * 4, (uint32_t)widths[i]);
+        }
+        LOG(API, "[API] GetCharWidth32(hdc=0x%08X, first=%u, last=%u) -> %d\n",
+            (uint32_t)(uintptr_t)hdc, first, last, ret);
+        regs[0] = ret;
+        return true;
     });
 }

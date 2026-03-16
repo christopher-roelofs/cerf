@@ -119,6 +119,7 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterWindowHandlers();
     RegisterWindowLayoutHandlers();
     RegisterWindowPropsHandlers();
+    RegisterWindowRectHandlers();
     RegisterDialogHandlers();
     RegisterMessageHandlers();
     RegisterMenuHandlers();
@@ -143,6 +144,8 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterVfsHandlers();
     RegisterShellHandlers();
     RegisterShellExecHandler();
+    RegisterWininetDepsHandlers();
+    RegisterSocketHandlers();
     /* WinCE UserKData page at fixed address 0xFFFFC800.
        ARM code reads GetCurrentThreadId/GetCurrentProcessId directly from here
        (PUserKData[SH_CURTHREAD] at offset +4, PUserKData[SH_CURPROC] at offset +8).

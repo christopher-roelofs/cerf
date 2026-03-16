@@ -9,6 +9,48 @@ thread_local uint8_t* EmulatedMemory::kdata_override = nullptr;
 thread_local ProcessSlot* EmulatedMemory::process_slot = nullptr;
 std::atomic<int> g_next_thread_index{0};
 
+/* Child process thread tracking */
+static std::mutex g_child_mutex;
+static std::vector<HANDLE> g_child_threads;
+
+void RegisterChildThread(HANDLE hThread) {
+    std::lock_guard<std::mutex> lock(g_child_mutex);
+    g_child_threads.push_back(hThread);
+}
+
+bool HasChildThreads() {
+    std::lock_guard<std::mutex> lock(g_child_mutex);
+    return !g_child_threads.empty();
+}
+
+void WaitForChildThreads() {
+    std::lock_guard<std::mutex> lock(g_child_mutex);
+    if (g_child_threads.empty()) return;
+    LOG(EMU, "[EMU] Waiting for %zu child thread(s)...\n",
+        g_child_threads.size());
+    /* Wait with message pump so native windows stay responsive */
+    while (!g_child_threads.empty()) {
+        DWORD count = (DWORD)g_child_threads.size();
+        if (count > MAXIMUM_WAIT_OBJECTS) count = MAXIMUM_WAIT_OBJECTS;
+        DWORD r = MsgWaitForMultipleObjects(
+            count, g_child_threads.data(), FALSE, INFINITE, QS_ALLINPUT);
+        if (r >= WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + count) {
+            DWORD idx = r - WAIT_OBJECT_0;
+            CloseHandle(g_child_threads[idx]);
+            g_child_threads.erase(g_child_threads.begin() + idx);
+        } else if (r == WAIT_OBJECT_0 + count) {
+            /* Messages available — pump them */
+            MSG msg;
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+        } else {
+            break; /* error */
+        }
+    }
+}
+
 void InitThreadKData(ThreadContext* ctx, EmulatedMemory& mem, uint32_t thread_id) {
     memset(ctx->kdata, 0, sizeof(ctx->kdata));
     /* KData layout (mapped at 0xFFFFC000-0xFFFFCFFF):
@@ -26,6 +68,43 @@ void InitThreadKData(ThreadContext* ctx, EmulatedMemory& mem, uint32_t thread_id
     *(uint32_t*)(ctx->kdata + 0x808) = thread_id;
     *(uint32_t*)(ctx->kdata + 0x80C) = GetCurrentProcessId();
     LOG(EMU, "[EMU] InitThreadKData: tid=%u, lpvTls=0x%08X\n", thread_id, tls_slot0);
+}
+
+static thread_local ThreadContext* s_lazy_arm_ctx = nullptr;
+
+void EnsureLazyArmContext(EmulatedMemory& mem, Win32Thunks* thunks) {
+    if (s_lazy_arm_ctx) {
+        t_ctx = s_lazy_arm_ctx;
+        EmulatedMemory::kdata_override = s_lazy_arm_ctx->kdata;
+        return;
+    }
+    int thread_idx = g_next_thread_index.fetch_add(1);
+    auto* ctx = new ThreadContext();
+    ctx->marshal_base = 0x3F000000 + (thread_idx + 1) * 0x10000;
+    snprintf(ctx->process_name, sizeof(ctx->process_name), "com_%u",
+             GetCurrentThreadId());
+    Log::SetProcessName(ctx->process_name, GetCurrentThreadId());
+    uint32_t stack_size = 0x100000;
+    uint32_t stack_bottom = 0x01900000 + thread_idx * stack_size;
+    mem.Alloc(stack_bottom, stack_size);
+    uint32_t stack_top = stack_bottom + stack_size - 16;
+    InitThreadKData(ctx, mem, GetCurrentThreadId());
+    EmulatedMemory::kdata_override = ctx->kdata;
+    ArmCpu& cpu = ctx->cpu;
+    cpu.mem = &mem;
+    cpu.thunk_handler = [thunks](uint32_t addr, uint32_t* regs,
+                                 EmulatedMemory& m) -> bool {
+        if (addr == 0xCAFEC000) { regs[15] = 0xCAFEC000; return true; }
+        return thunks->HandleThunk(addr, regs, m);
+    };
+    cpu.r[REG_SP] = stack_top;
+    cpu.cpsr |= 0x13;
+    mem.Alloc(ctx->marshal_base, 0x10000);
+    MakeCallbackExecutor(ctx, mem, *thunks, 0xCAFEC000);
+    t_ctx = ctx;
+    s_lazy_arm_ctx = ctx;
+    LOG(API, "[API] Created lazy ARM context for native thread %u "
+        "(idx=%d, SP=0x%08X)\n", GetCurrentThreadId(), thread_idx, stack_top);
 }
 
 void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,

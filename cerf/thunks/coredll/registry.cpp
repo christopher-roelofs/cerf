@@ -227,4 +227,7 @@ void Win32Thunks::RegisterRegistryHandlers() {
         if (pcValues) mem.Write32(pcValues, num_values);
         regs[0] = ERROR_SUCCESS; return true;
     });
+    Thunk("RegFlushKey", 1152, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = ERROR_SUCCESS; return true;
+    });
 }

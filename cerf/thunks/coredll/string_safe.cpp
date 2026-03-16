@@ -254,36 +254,31 @@ void Win32Thunks::RegisterStringSafeHandlers() {
         regs[0] = 0; /* S_OK */
         return true;
     });
-    Thunk("LCMapStringW", 199, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] LCMapStringW(locale=0x%X, flags=0x%X, src=0x%08X, srcLen=%d) -> 0 (stub)\n",
-               regs[0], regs[1], regs[2], (int32_t)regs[3]);
-        regs[0] = 0; return true;
+    /* StringCchVPrintfW(dst, cchDest, pszFormat, argList) — va_list version.
+       On ARM, va_list is a pointer into the stack where args were pushed. */
+    Thunk("StringCchVPrintfW", 1697, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[0], cch = regs[1];
+        std::wstring fmt = ReadWStringFromEmu(mem, regs[2]);
+        uint32_t va = regs[3]; /* pointer to va_list args in emulated memory */
+        uint32_t args[10];
+        for (int i = 0; i < 10; i++) args[i] = mem.Read32(va + i * 4);
+        std::wstring result = WprintfFormat(mem, fmt, args, 10);
+        if (!dst || cch == 0) { regs[0] = 0x80070057; return true; }
+        uint32_t copy_len = std::min((uint32_t)result.size(), cch - 1);
+        for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, result[i]);
+        mem.Write16(dst + copy_len * 2, 0);
+        regs[0] = (result.size() >= cch) ? 0x8007007A : 0;
+        return true;
     });
-    Thunk("CharLowerBuffW", 222, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t addr = regs[0], len = regs[1];
-        for (uint32_t i = 0; i < len; i++) {
-            uint16_t ch = mem.Read16(addr + i * 2);
-            mem.Write16(addr + i * 2, (uint16_t)towlower(ch));
-        }
-        regs[0] = len; return true;
-    });
-    Thunk("CharUpperBuffW", 223, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t addr = regs[0], len = regs[1];
-        for (uint32_t i = 0; i < len; i++) {
-            uint16_t ch = mem.Read16(addr + i * 2);
-            mem.Write16(addr + i * 2, (uint16_t)towupper(ch));
-        }
-        regs[0] = len; return true;
-    });
-    Thunk("_itow", 1026, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        int value = (int32_t)regs[0];
-        uint32_t buf_addr = regs[1];
-        int radix = regs[2];
-        wchar_t buf[34];
-        _itow(value, buf, radix);
-        for (int i = 0; buf[i]; i++) mem.Write16(buf_addr + i * 2, buf[i]);
-        mem.Write16(buf_addr + (uint32_t)wcslen(buf) * 2, 0);
-        regs[0] = buf_addr;
+    /* StringCchCopyA(dst, cchDest, src) — ANSI version */
+    Thunk("StringCchCopyA", 1705, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[0], cch = regs[1], src_ptr = regs[2];
+        if (!dst || cch == 0) { regs[0] = 0x80070057; return true; }
+        std::string src = ReadStringFromEmu(mem, src_ptr);
+        uint32_t copy_len = std::min((uint32_t)src.size(), cch - 1);
+        uint8_t* p = mem.Translate(dst);
+        if (p) { memcpy(p, src.c_str(), copy_len); p[copy_len] = 0; }
+        regs[0] = (src.size() >= cch) ? 0x8007007A : 0;
         return true;
     });
 }

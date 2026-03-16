@@ -156,6 +156,7 @@
     <ClCompile Include="cpu\arm_cpu.cpp" />
     <ClCompile Include="cpu\arm_insn.cpp" />
     <ClCompile Include="cpu\thumb_insn.cpp" />
+    <ClCompile Include="cpu\mem.cpp" />
     <!-- PE loader -->
     <ClCompile Include="loader\pe_loader.cpp" />
     <ClCompile Include="loader\pe_loader_exports.cpp" />
@@ -218,6 +219,11 @@
     <ClCompile Include="thunks\coredll\shell.cpp" />
     <ClCompile Include="thunks\coredll\shell_exec.cpp" />
     <ClCompile Include="thunks\coredll\shell_exec_launch.cpp" />
+    <ClCompile Include="thunks\coredll\wininet_deps.cpp" />
+    <ClCompile Include="thunks\coredll\socket.cpp" />
+    <ClCompile Include="thunks\coredll\socket_io.cpp" />
+    <ClCompile Include="thunks\coredll\socket_dns.cpp" />
+    <ClCompile Include="thunks\coredll\window_rect.cpp" />
     <ClCompile Include="thunks\coredll\vfs.cpp" />
     <ClCompile Include="thunks\theme.cpp" />
     <ClCompile Include="thunks\theme_subclass.cpp" />
@@ -228,7 +234,7 @@
   <!-- Bundled device files — copied to devices/ next to cerf.exe -->
   <Target Name="CopyBundledFiles" AfterTargets="Build">
     <ItemGroup>
-      <BundledFiles Include="$(ProjectDir)..\bundled\**\*" Exclude="$(ProjectDir)..\bundled\**\.gitkeep" />
+      <BundledFiles Include="$(ProjectDir)..\bundled\**\*" Exclude="$(ProjectDir)..\bundled\**\.gitkeep;$(ProjectDir)..\bundled\**\*.i64;$(ProjectDir)..\bundled\**\*.id0;$(ProjectDir)..\bundled\**\*.id1;$(ProjectDir)..\bundled\**\*.id2;$(ProjectDir)..\bundled\**\*.nam;$(ProjectDir)..\bundled\**\*.til" />
     </ItemGroup>
     <Copy SourceFiles="@(BundledFiles)"
           DestinationFiles="@(BundledFiles->'$(OutDir)%(RecursiveDir)%(Filename)%(Extension)')"

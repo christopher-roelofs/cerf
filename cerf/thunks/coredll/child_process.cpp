@@ -83,9 +83,12 @@ void Win32Thunks::RegisterChildProcessHandler() {
                     InitThreadKData(&ctx, *cpi->mem, GetCurrentThreadId());
                     EmulatedMemory::kdata_override = ctx.kdata;
 
-                    /* Set up CPU */
+                    /* Set up CPU — SP must be valid before InstallThunks/CallDllEntryPoints
+                       because DllMain callbacks run via callback_executor which uses the stack */
                     ArmCpu& cpu = ctx.cpu;
                     cpu.mem = cpi->mem;
+                    cpu.r[REG_SP] = stack_top;
+                    cpu.cpsr |= 0x13;
                     cpu.thunk_handler = [thunks = cpi->thunks](
                             uint32_t addr, uint32_t* r, EmulatedMemory& m) -> bool {
                         if (addr == 0xDEADDEAD) {
@@ -109,7 +112,7 @@ void Win32Thunks::RegisterChildProcessHandler() {
                                           (uint16_t)cpi->cmdline[j]);
                     cpi->mem->Write16(cmdline_addr + (uint32_t)(cpi->cmdline.size() * 2), 0);
 
-                    /* Set up WinMain args */
+                    /* Set up WinMain args (SP/CPSR already initialized above) */
                     cpu.r[0] = child_pe.image_base;
                     cpu.r[1] = 0;
                     cpu.r[2] = cmdline_addr;
@@ -122,7 +125,6 @@ void Win32Thunks::RegisterChildProcessHandler() {
                     } else {
                         cpu.r[REG_PC] = entry;
                     }
-                    cpu.cpsr |= 0x13;
 
                     LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X\n",
                         cpu.r[REG_PC], stack_top);
@@ -151,6 +153,7 @@ void Win32Thunks::RegisterChildProcessHandler() {
                 mem.Write32(procinfo_ptr + 0x0C, realThreadId);
             }
             LOG(API, "[API]   -> child process thread=%u\n", realThreadId);
+            RegisterChildThread(hThread);
             regs[0] = 1;
         } else {
             /* Not an ARM PE — try native CreateProcessW */

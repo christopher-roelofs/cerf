@@ -49,10 +49,16 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
                 uint32_t api_index = (WINCE_TRAP_TOP - addr) / 4;
                 auto name_it = ordinal_map.find((uint16_t)api_index);
                 std::string func_name = (name_it != ordinal_map.end()) ? name_it->second : "";
+                uint32_t api_set = api_index / 256;
+                uint32_t method = api_index % 256;
                 if (!func_name.empty()) {
-                    LOG(API, "[API] WinCE trap 0x%08X -> API %u (%s)\n", addr, api_index, func_name.c_str());
+                    LOG(API, "[API] WinCE trap 0x%08X -> API %u (set=%u method=%u) (%s) R0=0x%08X R1=0x%08X R2=0x%08X R3=0x%08X LR=0x%08X\n",
+                        addr, api_index, api_set, method, func_name.c_str(),
+                        regs[0], regs[1], regs[2], regs[3], regs[14]);
                 } else {
-                    LOG(API, "[API] WinCE trap 0x%08X -> API %u (unknown)\n", addr, api_index);
+                    LOG(API, "[API] WinCE trap 0x%08X -> API %u (set=%u method=%u) (unknown) R0=0x%08X R1=0x%08X R2=0x%08X R3=0x%08X LR=0x%08X\n",
+                        addr, api_index, api_set, method,
+                        regs[0], regs[1], regs[2], regs[3], regs[14]);
                 }
                 /* Create a temporary thunk entry and execute it */
                 ThunkEntry trap_entry;
@@ -110,25 +116,14 @@ bool Win32Thunks::ExecuteThunk(ThunkEntry& entry, uint32_t* regs, EmulatedMemory
     auto it = thunk_handlers.find(func);
     if (it != thunk_handlers.end()) return it->second(regs, mem);
 
-    /* Unhandled function.
-       For completely unknown ordinals (no name mapping), fail fast — returning
-       fake data causes silent memory corruption that's very hard to debug.
-       For known-named functions that just lack an implementation, log prominently
-       and return 0. These should be stubbed explicitly as they're discovered. */
+    /* Unhandled function — crash immediately so we notice and fix it. */
     if (func.empty() && entry.by_ordinal) {
-        LOG(API, "\n[FATAL] UNKNOWN ORDINAL: %s!@%d (no name mapping) LR=0x%08X\n",
+        LOG(API, "\n[FATAL] UNIMPLEMENTED: %s!@%d (no name mapping) LR=0x%08X\n",
                entry.dll_name.c_str(), entry.ordinal, regs[14]);
-        LOG(API, "[FATAL] Exiting to prevent silent corruption.\n\n");
-        Log::Close();
-        ExitProcess(1);
-    }
-    if (!func.empty()) {
-        LOG(API, "[API] *** UNIMPLEMENTED: %s!%s (ordinal=%d) LR=0x%08X - returning 0 ***\n",
-               entry.dll_name.c_str(), func.c_str(), entry.ordinal, regs[14]);
     } else {
-        LOG(API, "[API] *** UNIMPLEMENTED: %s!%s LR=0x%08X - returning 0 ***\n",
-               entry.dll_name.c_str(), entry.func_name.c_str(), regs[14]);
+        LOG(API, "\n[FATAL] UNIMPLEMENTED: %s!%s (ordinal=%d) LR=0x%08X\n",
+               entry.dll_name.c_str(), func.c_str(), entry.ordinal, regs[14]);
     }
-    regs[0] = 0;
-    return true;
+    Log::Close();
+    ExitProcess(1);
 }

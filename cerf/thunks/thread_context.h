@@ -25,6 +25,11 @@ extern thread_local ThreadContext* t_ctx;
 /* Thread index counter for allocating per-thread resources. */
 extern std::atomic<int> g_next_thread_index;
 
+/* Child process thread tracking — main thread waits for these before exiting. */
+void RegisterChildThread(HANDLE hThread);
+bool HasChildThreads();
+void WaitForChildThreads();
+
 class Win32Thunks;  /* forward */
 class EmulatedMemory;
 
@@ -37,3 +42,7 @@ void InitThreadKData(ThreadContext* ctx, EmulatedMemory& mem, uint32_t thread_id
    and includes the infinite-loop watchdog. */
 void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,
                           Win32Thunks& thunks, uint32_t sentinel);
+
+/* Create a lazy ARM context for the current (non-ARM) thread.
+   Used when COM/OLE threads own windows with ARM WndProcs. */
+void EnsureLazyArmContext(EmulatedMemory& mem, Win32Thunks* thunks);

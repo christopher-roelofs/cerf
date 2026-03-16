@@ -67,6 +67,11 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
             mem.Write32(lpPts + i * 8,     (uint32_t)pts[i].x);
             mem.Write32(lpPts + i * 8 + 4, (uint32_t)pts[i].y);
         }
+        if (cPoints <= 2) {
+            LOG(API, "[API] MapWindowPoints(from=0x%p, to=0x%p, n=%u) -> pt[0]={%d,%d}%s\n",
+                hwndFrom, hwndTo, cPoints, pts[0].x, pts[0].y,
+                cPoints > 1 ? " ..." : "");
+        }
         regs[0] = (uint32_t)ret;
         return true;
     });
@@ -223,10 +228,19 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
         std::wstring msg_name = ReadWStringFromEmu(mem, regs[0]);
         regs[0] = RegisterWindowMessageW(msg_name.c_str()); return true;
     });
-    Thunk("GetDesktopWindow", 1397, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=(uint32_t)(uintptr_t)GetDesktopWindow(); return true; });
     Thunk("FindWindowW", 286, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring cn = ReadWStringFromEmu(mem, regs[0]), wn = ReadWStringFromEmu(mem, regs[1]);
-        regs[0] = (uint32_t)(uintptr_t)FindWindowW(regs[0] ? cn.c_str() : NULL, regs[1] ? wn.c_str() : NULL);
+        /* MS_WebcheckMonitor: native COM creates this window, but ARM urlmon
+           needs its own version with EmuWndProc for notification dispatch.
+           Return NULL so ARM code creates it through our thunks. */
+        if (regs[0] && cn == L"MS_WebcheckMonitor") {
+            LOG(API, "[API] FindWindowW('%ls') -> NULL (blocked native)\n", cn.c_str());
+            regs[0] = 0;
+            return true;
+        }
+        HWND hw = FindWindowW(regs[0] ? cn.c_str() : NULL, regs[1] ? wn.c_str() : NULL);
+        LOG(API, "[API] FindWindowW('%ls', '%ls') -> 0x%p\n", cn.c_str(), wn.c_str(), hw);
+        regs[0] = (uint32_t)(uintptr_t)hw;
         return true;
     });
     Thunk("WindowFromPoint", 252, [](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -264,9 +278,6 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
         BOOL ret = GetCaretPos(&pt);
         if (regs[0]) { mem.Write32(regs[0], (uint32_t)pt.x); mem.Write32(regs[0]+4, (uint32_t)pt.y); }
         regs[0] = ret; return true;
-    });
-    Thunk("IsWindowVisible", 886, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = IsWindowVisible((HWND)(intptr_t)(int32_t)regs[0]); return true;
     });
     /* DeferWindowPos — pass through to native */
     Thunk("BeginDeferWindowPos", 1157, [](uint32_t* regs, EmulatedMemory&) -> bool {

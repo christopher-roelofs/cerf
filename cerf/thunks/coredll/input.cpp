@@ -92,10 +92,36 @@ void Win32Thunks::RegisterInputHandlers() {
         return true;
     });
 
-    // Ordinal-only entries (no handler, just register the ordinal mapping)
-    ThunkOrdinal("ClipCursor", 731);
-    ThunkOrdinal("GetCursor", 733);
-    ThunkOrdinal("CreateCursor", 722);
+    Thunk("ClipCursor", 731, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        if (regs[0]) {
+            RECT rc;
+            rc.left = (int)mem.Read32(regs[0]);     rc.top = (int)mem.Read32(regs[0]+4);
+            rc.right = (int)mem.Read32(regs[0]+8);  rc.bottom = (int)mem.Read32(regs[0]+12);
+            regs[0] = ClipCursor(&rc);
+        } else {
+            regs[0] = ClipCursor(nullptr);
+        }
+        return true;
+    });
+    Thunk("GetCursor", 733, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = (uint32_t)(uintptr_t)GetCursor();
+        return true;
+    });
+    Thunk("CreateCursor", 722, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HINSTANCE hInst = (HINSTANCE)(intptr_t)(int32_t)regs[0];
+        int xHot = (int)regs[1], yHot = (int)regs[2];
+        int w = (int)regs[3];
+        int h = (int)ReadStackArg(regs, mem, 0);
+        uint32_t pAND = ReadStackArg(regs, mem, 1);
+        uint32_t pXOR = ReadStackArg(regs, mem, 2);
+        int maskSize = ((w + 31) / 32) * 4 * h;
+        std::vector<uint8_t> andBits(maskSize), xorBits(maskSize);
+        for (int i = 0; i < maskSize; i++) andBits[i] = mem.Read8(pAND + i);
+        for (int i = 0; i < maskSize; i++) xorBits[i] = mem.Read8(pXOR + i);
+        regs[0] = (uint32_t)(uintptr_t)CreateCursor(
+            hInst, xHot, yHot, w, h, andBits.data(), xorBits.data());
+        return true;
+    });
     Thunk("CreateIconIndirect", 723, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         /* 32-bit ICONINFO: fIcon(4), xHotspot(4), yHotspot(4), hbmMask(4), hbmColor(4) = 20 bytes */
         uint32_t addr = regs[0];
@@ -108,10 +134,85 @@ void Win32Thunks::RegisterInputHandlers() {
         regs[0] = (uint32_t)(uintptr_t)CreateIconIndirect(&ii);
         return true;
     });
-    ThunkOrdinal("DestroyCursor", 724);
+    Thunk("DestroyCursor", 724, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = DestroyCursor((HCURSOR)(intptr_t)(int32_t)regs[0]);
+        return true;
+    });
     Thunk("DestroyIcon", 725, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = DestroyIcon((HICON)(intptr_t)(int32_t)regs[0]); return true;
     });
-    ThunkOrdinal("GetClipCursor", 732);
-    ThunkOrdinal("LoadAcceleratorsW", 94);
+    Thunk("GetClipCursor", 732, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        RECT rc;
+        BOOL ok = GetClipCursor(&rc);
+        if (ok && regs[0]) {
+            mem.Write32(regs[0], (uint32_t)rc.left);  mem.Write32(regs[0]+4, (uint32_t)rc.top);
+            mem.Write32(regs[0]+8, (uint32_t)rc.right); mem.Write32(regs[0]+12, (uint32_t)rc.bottom);
+        }
+        regs[0] = ok;
+        return true;
+    });
+    Thunk("LoadAcceleratorsW", 94, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] LoadAcceleratorsW(hInst=0x%08X, id=0x%X) -> 0 (stub)\n", regs[0], regs[1]);
+        regs[0] = 0;
+        return true;
+    });
+    /* IMM stubs */
+    Thunk("ImmAssociateContext", 770, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmAssociateContext -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmGetContext", 783, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmGetContext -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmReleaseContext", 803, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmReleaseContext -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmGetOpenStatus", 792, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmGetOpenStatus -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmNotifyIME", 800, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmNotifyIME -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmSetOpenStatus", 814, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmSetOpenStatus -> 0\n"); regs[0] = 0; return true;
+    });
+    /* Additional IMM stubs needed by RICHED20.DLL */
+    Thunk("ImmEscapeW", 775, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmEscapeW -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmGetCandidateWindow", 779, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmGetCandidateWindow -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmGetCompositionStringW", 781, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ImmGetCompositionStringW(himc=0x%08X, dwIndex=0x%X) -> 0 (stub)\n", regs[0], regs[1]);
+        regs[0] = 0; return true;
+    });
+    Thunk("ImmGetConversionStatus", 785, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmGetConversionStatus -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmGetProperty", 793, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmGetProperty -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmSetCandidateWindow", 807, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmSetCandidateWindow -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmSetCompositionFontW", 808, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmSetCompositionFontW -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmSetCompositionStringW", 809, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmSetCompositionStringW -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmSetCompositionWindow", 810, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmSetCompositionWindow -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("ImmGetVirtualKey", 1210, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] ImmGetVirtualKey -> 0\n"); regs[0] = 0; return true;
+    });
+    Thunk("PostKeybdMessage", 832, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] [STUB] PostKeybdMessage -> 0\n"); regs[0] = 0; return true;
+    });
+    /* Keyboard */
+    Thunk("GetKeyboardLayout", 1229, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = 0x04090409; /* US English */
+        return true;
+    });
 }

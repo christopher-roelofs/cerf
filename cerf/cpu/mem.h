@@ -26,6 +26,15 @@ public:
     static const uint32_t STACK_SIZE = 1024 * 1024; /* 1 MB stack */
     static const uint32_t STACK_BASE = 0x01000000;  /* Stack grows down from here (above 64KB boundary) */
 
+    /* WinCE slot-0 DLL aliasing constants.
+       In real WinCE, DLLs loaded at global addresses (0x04000000-0x42000000) are
+       also accessible via slot 0 at (addr & SLOT_MASK).  ATL thunk code and other
+       WinCE internals use this masking for function pointers.  We replicate it by
+       redirecting slot-0 reads to the real DLL memory as a Translate() fallback. */
+    static constexpr uint32_t WINCE_DLL_REGION_START = 0x04000000;
+    static constexpr uint32_t WINCE_DLL_REGION_END   = 0x42000000;
+    static constexpr uint32_t WINCE_SLOT_MASK        = 0x01FFFFFF; /* 25 bits = 32MB */
+
     /* Per-thread KData page redirect. When set, reads/writes to 0xFFFFC000-0xFFFFCFFF
        go to this buffer instead of shared memory. Each ARM thread sets this to its
        own ThreadContext::kdata[] before entering ARM execution. */
@@ -35,6 +44,24 @@ public:
        resolve through this overlay instead of the global regions. This implements
        WinCE's per-process virtual address space (slot 0). */
     static thread_local ProcessSlot* process_slot;
+
+    /* DLL slot-0 alias: maps (dll_base & SLOT_MASK) back to dll_base in Translate(). */
+    struct DllAlias {
+        uint32_t slot0_base;  /* dll_base & WINCE_SLOT_MASK */
+        uint32_t dll_base;    /* actual load address */
+        uint32_t size;        /* size_of_image */
+    };
+    std::vector<DllAlias> dll_aliases;
+
+    /* Register a DLL for slot-0 aliasing. Call after loading a DLL at base >= 0x04000000. */
+    void AddDllAlias(uint32_t dll_base, uint32_t size_of_image) {
+        if (dll_base < WINCE_DLL_REGION_START || dll_base >= WINCE_DLL_REGION_END) return;
+        DllAlias alias;
+        alias.slot0_base = dll_base & WINCE_SLOT_MASK;
+        alias.dll_base   = dll_base;
+        alias.size        = size_of_image;
+        dll_aliases.push_back(alias);
+    }
 
     std::vector<MemRegion> regions;
     std::mutex alloc_mutex;  /* Protects regions vector during Alloc/Reserve */
@@ -142,6 +169,21 @@ public:
                 return r.host_ptr + (addr - r.base);
             }
         }
+        /* WinCE slot-0 DLL aliasing: DLLs loaded at global addresses (0x04000000+)
+           are also accessible via slot 0 at (dll_base & 0x1FFFFFF).  ATL thunks and
+           other WinCE code use this to convert function pointers for slot-0 execution.
+           Check aliases as a last resort so process EXE pages always take priority. */
+        if (addr <= WINCE_SLOT_MASK && !dll_aliases.empty()) {
+            for (auto& alias : dll_aliases) {
+                if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
+                    uint32_t real_addr = alias.dll_base + (addr - alias.slot0_base);
+                    for (auto& r : regions) {
+                        if (real_addr >= r.base && real_addr < r.base + r.size)
+                            return r.host_ptr + (real_addr - r.base);
+                    }
+                }
+            }
+        }
         return nullptr;
     }
 
@@ -242,25 +284,12 @@ public:
     /* Auto-allocate on fault: if an access hits unmapped memory, allocate a page.
        Reject addresses that can't be identity-mapped on Windows (below 64KB or
        near 4GB boundary) — fallback allocations would crash if passed to native code. */
-    uint8_t* AutoAlloc(uint32_t addr) {
-        uint32_t page_base = addr & ~(PAGE_SIZE - 1);
-        if (page_base < 0x10000 || page_base >= 0xF0000000) return nullptr;
-        return Alloc(page_base, PAGE_SIZE);
-    }
+    uint8_t* AutoAlloc(uint32_t addr);
 
 private:
     mutable int fault_count = 0;
 
-    void LogFault(const char* op, uint32_t addr) const {
-        if (fault_count < 10) {
-            fprintf(stderr, "[MEM] %s fault at 0x%08X\n", op, addr);
-        } else if (fault_count == 10) {
-            fprintf(stderr, "[MEM] ... suppressing further fault messages\n");
-        }
-        fault_count++;
-    }
+    void LogFault(const char* op, uint32_t addr) const;
 
-    static uint32_t AlignUp(uint32_t val, uint32_t align) {
-        return (val + align - 1) & ~(align - 1);
-    }
+    static uint32_t AlignUp(uint32_t val, uint32_t align);
 };

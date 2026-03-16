@@ -43,24 +43,34 @@ void Win32Thunks::RegisterWindowHandlers() {
             className.c_str(), arm_wndproc, emu_brush, (uint32_t)(uintptr_t)wc.hbrBackground);
         ATOM atom = RegisterClassW(&wc);
         if (!atom && GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
-            /* The native comctl32.dll (or another system DLL) already registered
-               this class with a native WndProc.  We must replace it with our
-               EmuWndProc so that ARM code controls the window.  Try unregistering
-               the existing class from known system DLL hInstances, then re-register. */
-            LOG(API, "[API]   Class '%ls' already exists, replacing with ARM version\n", className.c_str());
-            HMODULE mods[] = {
-                GetModuleHandleW(L"comctl32.dll"),
-                GetModuleHandleW(L"comctl32"),
-                GetModuleHandleW(NULL),
-                NULL
-            };
-            for (HMODULE mod : mods) {
-                if (mod && UnregisterClassW(className.c_str(), mod)) {
-                    LOG(API, "[API]   Unregistered existing class from module %p\n", mod);
-                    break;
+            /* Check if we already registered this class ourselves (arm_wndprocs
+               has an entry).  In WinCE each process has its own class namespace,
+               so a second instance re-registering the same class succeeds.  In our
+               emulation all instances share one Win32 namespace.  If we already
+               own the class (EmuWndProc is the wndproc), just return success —
+               the arm_wndprocs map was already updated above (line 41). */
+            WNDCLASSW existing = {};
+            if (GetClassInfoW(GetModuleHandleW(NULL), className.c_str(), &existing)
+                && existing.lpfnWndProc == EmuWndProc) {
+                LOG(API, "[API]   Class '%ls' already registered with EmuWndProc, returning success\n", className.c_str());
+                atom = (ATOM)GetClassInfoW(GetModuleHandleW(NULL), className.c_str(), &existing);
+            } else {
+                /* Native DLL registered it — try to replace with our version. */
+                LOG(API, "[API]   Class '%ls' already exists, replacing with ARM version\n", className.c_str());
+                HMODULE mods[] = {
+                    GetModuleHandleW(L"comctl32.dll"),
+                    GetModuleHandleW(L"comctl32"),
+                    GetModuleHandleW(NULL),
+                    NULL
+                };
+                for (HMODULE mod : mods) {
+                    if (mod && UnregisterClassW(className.c_str(), mod)) {
+                        LOG(API, "[API]   Unregistered existing class from module %p\n", mod);
+                        break;
+                    }
                 }
+                atom = RegisterClassW(&wc);
             }
-            atom = RegisterClassW(&wc);
         }
         if (!atom) LOG(API, "[API]   RegisterClassW FAILED (error=%d)\n", GetLastError());
         regs[0] = (uint32_t)atom; return true;
@@ -246,6 +256,14 @@ void Win32Thunks::RegisterWindowHandlers() {
         /* hrgnUpdate (regs[2]) — pass through as handle */
         HRGN hrgn = (HRGN)(intptr_t)(int32_t)regs[2];
         UINT flags = regs[3];
+        wchar_t cls[64] = {};
+        GetClassNameW(hw, cls, 64);
+        RECT rgnBox = {};
+        if (hrgn) GetRgnBox(hrgn, &rgnBox);
+        LOG(API, "[API] RedrawWindow(0x%p '%ls', rc=%s{%d,%d,%d,%d}, rgn=0x%p{%d,%d,%d,%d}, flags=0x%X)\n",
+            hw, cls,
+            prc ? "" : "NULL", prc ? prc->left : 0, prc ? prc->top : 0, prc ? prc->right : 0, prc ? prc->bottom : 0,
+            hrgn, rgnBox.left, rgnBox.top, rgnBox.right, rgnBox.bottom, flags);
         regs[0] = RedrawWindow(hw, prc, hrgn, flags);
         return true;
     });

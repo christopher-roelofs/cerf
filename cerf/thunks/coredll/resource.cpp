@@ -281,4 +281,15 @@ void Win32Thunks::RegisterResourceHandlers() {
         regs[0] = native_mod ? (uint32_t)(uintptr_t)LoadAcceleratorsW(native_mod, MAKEINTRESOURCEW(name_id)) : 0;
         return true;
     });
+    /* ExtractResource: WinCE function to extract a named resource from a PE/CAB
+       to a file.  Non-critical for rendering; return FALSE (extraction failed). */
+    Thunk("ExtractResource", 573, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring src = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring name = ReadWStringFromEmu(mem, regs[1]);
+        std::wstring dest = ReadWStringFromEmu(mem, regs[2]);
+        LOG(API, "[API] ExtractResource('%ls', '%ls', '%ls') -> 0 (stub)\n",
+            src.c_str(), name.c_str(), dest.c_str());
+        regs[0] = 0;
+        return true;
+    });
 }

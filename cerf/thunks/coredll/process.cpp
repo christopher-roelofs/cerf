@@ -146,8 +146,90 @@ void Win32Thunks::RegisterProcessHandlers() {
     RegisterChildProcessHandler();
     Thunk("TerminateThread", 491, stub0("TerminateThread"));
     Thunk("ResumeThread", 500, stub0("ResumeThread"));
-    Thunk("SetThreadPriority", 514, stub0("SetThreadPriority"));
+    Thunk("SetThreadPriority", 514, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SetThreadPriority(thread=0x%X, prio=%d) -> TRUE\n", regs[0], regs[1]);
+        regs[0] = 1; return true;
+    });
     Thunk("GetExitCodeProcess", 519, stub0("GetExitCodeProcess"));
     Thunk("OpenProcess", 509, stub0("OpenProcess"));
+    /* WinCE extended thread priority (0-255 scale, 0=highest).
+       CeSetThreadPriority stores it, CeGetThreadPriority reads it back. */
+    Thunk("CeSetThreadPriority", 621, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] CeSetThreadPriority(thread=0x%X, prio=%d) -> stub TRUE\n",
+            regs[0], regs[1]);
+        regs[0] = 1; return true;
+    });
+    Thunk("CeGetThreadPriority", 622, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        constexpr uint32_t WINCE_PRIORITY_NORMAL = 251;
+        LOG(API, "[API] CeGetThreadPriority(thread=0x%X) -> %d\n",
+            regs[0], WINCE_PRIORITY_NORMAL);
+        regs[0] = WINCE_PRIORITY_NORMAL; return true;
+    });
     /* WaitForMultipleObjects moved to sync.cpp */
+    /* Fiber APIs — WinCE fiber support.  We forward to native Win32 fibers
+       since each ARM thread is a real OS thread. */
+    /* Fiber pointer wrapping — native fiber pointers are 64-bit, ARM code
+       uses 32-bit.  Use WrapHandle/UnwrapHandle to map them safely. */
+    Thunk("ConvertThreadToFiber", 1480, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        LPVOID fiber = ConvertThreadToFiber((LPVOID)(uintptr_t)regs[0]);
+        uint32_t wrapped = WrapHandle((HANDLE)fiber);
+        LOG(API, "[API] ConvertThreadToFiber(0x%08X) -> 0x%08X (native=0x%p)\n",
+            regs[0], wrapped, fiber);
+        regs[0] = wrapped;
+        return true;
+    });
+    Thunk("GetCurrentFiber", 1481, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        LPVOID fiber = GetCurrentFiber();
+        regs[0] = WrapHandle((HANDLE)fiber);
+        return true;
+    });
+    Thunk("GetFiberData", 1482, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LPVOID data = GetFiberData();
+        regs[0] = (uint32_t)(uintptr_t)data;
+        return true;
+    });
+    Thunk("CreateFiber", 1483, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t stackSize = regs[0];
+        uint32_t armStartAddr = regs[1];
+        uint32_t armParam = regs[2];
+        /* Create a native fiber whose callback enters ARM execution.
+           Fibers share the same thread, so thread_local (t_ctx) works. */
+        struct FiberCtx {
+            uint32_t arm_addr;
+            uint32_t arm_param;
+            Win32Thunks* thunks;
+        };
+        auto* fc = new FiberCtx{armStartAddr, armParam, this};
+        LPVOID fiber = ::CreateFiber(stackSize ? stackSize : 0,
+            [](LPVOID p) {
+                auto* ctx = (FiberCtx*)p;
+                uint32_t args[4] = {ctx->arm_param, 0, 0, 0};
+                ctx->thunks->callback_executor(ctx->arm_addr, args, 1);
+                delete ctx;
+            }, fc);
+        uint32_t wrapped = WrapHandle((HANDLE)fiber);
+        LOG(API, "[API] CreateFiber(stack=%u, start=0x%08X, param=0x%08X) -> 0x%08X\n",
+            stackSize, armStartAddr, armParam, wrapped);
+        regs[0] = wrapped;
+        return true;
+    });
+    Thunk("DeleteFiber", 1484, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        LPVOID fiber = (LPVOID)UnwrapHandle(regs[0]);
+        LOG(API, "[API] DeleteFiber(0x%08X)\n", regs[0]);
+        DeleteFiber(fiber);
+        regs[0] = 0;
+        return true;
+    });
+    Thunk("SwitchToFiber", 1485, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        LPVOID fiber = (LPVOID)UnwrapHandle(regs[0]);
+        LOG(API, "[API] SwitchToFiber(0x%08X -> native=0x%p)\n", regs[0], fiber);
+        ::SwitchToFiber(fiber);
+        return true;
+    });
+    Thunk("GetExitCodeThread", 518, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] GetExitCodeThread(hThread=0x%08X, lpExitCode=0x%08X) -> stub\n", regs[0], regs[1]);
+        if (regs[1]) mem.Write32(regs[1], 0);
+        regs[0] = 1;
+        return true;
+    });
 }
