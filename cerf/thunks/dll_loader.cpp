@@ -200,7 +200,7 @@ void Win32Thunks::InstallThunks(PEInfo& info, const char* module_name) {
         LOG_ERR("\n");
         LOG_ERR("================================================================\n");
         LOG_ERR("  UNRESOLVED IMPORTS in %s (%d total)\n", mod.c_str(), (int)unresolved.size());
-        LOG_ERR("  These must be explicitly stubbed or the app will crash on use.\n");
+        LOG_ERR("  These must be implemented (or stubbed with correct return data) to avoid fatal.\n");
         LOG_ERR("================================================================\n");
 
         for (auto& pair : by_dll) {
