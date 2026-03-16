@@ -112,6 +112,7 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterGdiDcHandlers();
     RegisterGdiDrawHandlers();
     RegisterGdiTextHandlers();
+    RegisterGdiFontHandlers();
     /* InitWceSysFont() is deferred — it calls LoadRegistry() which needs
        device_dir, but that isn't set until InitVFS() runs after construction.
        It's called from InitVFS() instead. */
@@ -146,6 +147,8 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterShellExecHandler();
     RegisterWininetDepsHandlers();
     RegisterSocketHandlers();
+    RegisterDirectDrawHandlers();
+    RegisterDirectDrawSurfaceHandlers();
     /* WinCE UserKData page at fixed address 0xFFFFC800.
        ARM code reads GetCurrentThreadId/GetCurrentProcessId directly from here
        (PUserKData[SH_CURTHREAD] at offset +4, PUserKData[SH_CURPROC] at offset +8).

@@ -10,10 +10,10 @@
 
 void Win32Thunks::RegisterGdiDrawHandlers() {
     Thunk("BitBlt", 903, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC dst = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC dst = GDI_HDC(regs[0]);
         int x = (int)regs[1], y = (int)regs[2], w = (int)regs[3];
         int h = (int)ReadStackArg(regs, mem, 0);
-        HDC src_dc = (HDC)(intptr_t)(int32_t)ReadStackArg(regs, mem, 1);
+        HDC src_dc = GDI_HDC(ReadStackArg(regs, mem, 1));
         int sx = (int)ReadStackArg(regs,mem,2), sy = (int)ReadStackArg(regs,mem,3);
         DWORD rop = ReadStackArg(regs,mem,4);
         GdiFlush();  /* Ensure ARM pvBits writes are visible to native GDI */
@@ -24,7 +24,7 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("PatBlt", 938, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdc = GDI_HDC(regs[0]);
         int x = (int)regs[1], y = (int)regs[2], w = (int)regs[3];
         int h = (int)ReadStackArg(regs,mem,0);
         DWORD rop = ReadStackArg(regs,mem,1);
@@ -33,17 +33,17 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
             regs[0], x, y, w, h, rop, ret);
         regs[0] = ret; return true;
     });
-    Thunk("SetBkColor", 922, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetBkColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
-    Thunk("GetBkColor", 913, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetBkColor((HDC)(intptr_t)(int32_t)regs[0]); return true; });
+    Thunk("SetBkColor", 922, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetBkColor(GDI_HDC(regs[0]), regs[1]); return true; });
+    Thunk("GetBkColor", 913, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetBkColor(GDI_HDC(regs[0])); return true; });
     Thunk("SetBkMode", 923, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] SetBkMode(hdc=0x%08X, mode=%d [%s])\n", regs[0], regs[1], regs[1]==1?"TRANSPARENT":"OPAQUE");
-        regs[0] = SetBkMode((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true;
+        regs[0] = SetBkMode(GDI_HDC(regs[0]), regs[1]); return true;
     });
-    Thunk("SetTextColor", 924, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetTextColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
-    Thunk("GetTextColor", 914, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetTextColor((HDC)(intptr_t)(int32_t)regs[0]); return true; });
+    Thunk("SetTextColor", 924, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetTextColor(GDI_HDC(regs[0]), regs[1]); return true; });
+    Thunk("GetTextColor", 914, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetTextColor(GDI_HDC(regs[0])); return true; });
     Thunk("SetBrushOrgEx", 943, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         POINT pt;
-        BOOL ret = SetBrushOrgEx((HDC)(intptr_t)(int32_t)regs[0], (int)regs[1], (int)regs[2], regs[3] ? &pt : NULL);
+        BOOL ret = SetBrushOrgEx(GDI_HDC(regs[0]), (int)regs[1], (int)regs[2], regs[3] ? &pt : NULL);
         if (regs[3] && ret) { mem.Write32(regs[3], pt.x); mem.Write32(regs[3] + 4, pt.y); }
         regs[0] = ret; return true;
     });
@@ -51,7 +51,7 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         /* Create as DIB section instead of DDB so ARM code can directly access pixel data.
            ARM apps may memcpy pixels between DIB sections and "compatible" bitmaps,
            which only works if all bitmaps have pvBits in emulated memory. */
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdc = GDI_HDC(regs[0]);
         int w = (int)regs[1], h = (int)regs[2];
         if (w <= 0 || h <= 0) { regs[0] = 0; return true; }
         /* Use native desktop bpp so bitmaps match the screen DC format.
@@ -100,28 +100,28 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         regs[0] = (uint32_t)(uintptr_t)hbm;
         return true;
     });
-    Thunk("GetPixel", 936, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetPixel((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2]); return true; });
-    Thunk("SetPixel", 944, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetPixel((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2], regs[3]); return true; });
+    Thunk("GetPixel", 936, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetPixel(GDI_HDC(regs[0]), regs[1], regs[2]); return true; });
+    Thunk("SetPixel", 944, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetPixel(GDI_HDC(regs[0]), regs[1], regs[2], regs[3]); return true; });
     Thunk("Rectangle", 941, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = Rectangle((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2], regs[3], ReadStackArg(regs,mem,0)); return true;
+        regs[0] = Rectangle(GDI_HDC(regs[0]), regs[1], regs[2], regs[3], ReadStackArg(regs,mem,0)); return true;
     });
     Thunk("FillRect", 935, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc={mem.Read32(regs[1]),mem.Read32(regs[1]+4),mem.Read32(regs[1]+8),mem.Read32(regs[1]+12)};
-        regs[0] = FillRect((HDC)(intptr_t)(int32_t)regs[0], &rc, (HBRUSH)(intptr_t)(int32_t)regs[2]); return true;
+        regs[0] = FillRect(GDI_HDC(regs[0]), &rc, GDI_HBRUSH(regs[2])); return true;
     });
     Thunk("DrawFocusRect", 933, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc={mem.Read32(regs[1]),mem.Read32(regs[1]+4),mem.Read32(regs[1]+8),mem.Read32(regs[1]+12)};
-        regs[0] = DrawFocusRect((HDC)(intptr_t)(int32_t)regs[0], &rc); return true;
+        regs[0] = DrawFocusRect(GDI_HDC(regs[0]), &rc); return true;
     });
-    Thunk("GetNearestColor", 952, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetNearestColor((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
-    Thunk("LineTo", 1652, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = LineTo((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2]); return true; });
-    Thunk("MoveToEx", 1651, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = MoveToEx((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2], NULL); return true; });
-    Thunk("SetViewportOrgEx", 983, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetViewportOrgEx((HDC)(intptr_t)(int32_t)regs[0], regs[1], regs[2], NULL); return true; });
+    Thunk("GetNearestColor", 952, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetNearestColor(GDI_HDC(regs[0]), regs[1]); return true; });
+    Thunk("LineTo", 1652, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = LineTo(GDI_HDC(regs[0]), regs[1], regs[2]); return true; });
+    Thunk("MoveToEx", 1651, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = MoveToEx(GDI_HDC(regs[0]), regs[1], regs[2], NULL); return true; });
+    Thunk("SetViewportOrgEx", 983, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetViewportOrgEx(GDI_HDC(regs[0]), regs[1], regs[2], NULL); return true; });
     Thunk("StretchBlt", 905, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC dst = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC dst = GDI_HDC(regs[0]);
         int xD=(int)regs[1], yD=(int)regs[2], wD=(int)regs[3];
         int hD=(int)ReadStackArg(regs,mem,0);
-        HDC src = (HDC)(intptr_t)(int32_t)ReadStackArg(regs,mem,1);
+        HDC src = GDI_HDC(ReadStackArg(regs,mem,1));
         int xS=(int)ReadStackArg(regs,mem,2), yS=(int)ReadStackArg(regs,mem,3);
         int wS=(int)ReadStackArg(regs,mem,4), hS=(int)ReadStackArg(regs,mem,5);
         DWORD rop = ReadStackArg(regs,mem,6);
@@ -134,12 +134,12 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     });
     /* MaskBlt(hdcDest, xDest, yDest, width, height, hdcSrc, xSrc, ySrc, hbmMask, xMask, yMask, rop) */
     Thunk("MaskBlt", 904, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdcDest = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdcDest = GDI_HDC(regs[0]);
         int xDest = (int)regs[1], yDest = (int)regs[2], w = (int)regs[3];
         int h = (int)ReadStackArg(regs, mem, 0);
-        HDC hdcSrc = (HDC)(intptr_t)(int32_t)ReadStackArg(regs, mem, 1);
+        HDC hdcSrc = GDI_HDC(ReadStackArg(regs, mem, 1));
         int xSrc = (int)ReadStackArg(regs, mem, 2), ySrc = (int)ReadStackArg(regs, mem, 3);
-        HBITMAP hbmMask = (HBITMAP)(intptr_t)(int32_t)ReadStackArg(regs, mem, 4);
+        HBITMAP hbmMask = GDI_HBMP(ReadStackArg(regs, mem, 4));
         int xMask = (int)ReadStackArg(regs, mem, 5), yMask = (int)ReadStackArg(regs, mem, 6);
         DWORD rop = ReadStackArg(regs, mem, 7);
         BOOL ret = MaskBlt(hdcDest, xDest, yDest, w, h, hdcSrc, xSrc, ySrc, hbmMask, xMask, yMask, rop);
@@ -149,7 +149,7 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("CreateDIBSection", 90, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0]; uint32_t bmi_addr = regs[1];
+        HDC hdc = GDI_HDC(regs[0]); uint32_t bmi_addr = regs[1];
         BITMAPINFOHEADER bih; bih.biSize = mem.Read32(bmi_addr);
         bih.biWidth = (LONG)mem.Read32(bmi_addr+4); bih.biHeight = (LONG)mem.Read32(bmi_addr+8);
         bih.biPlanes = mem.Read16(bmi_addr+12); bih.biBitCount = mem.Read16(bmi_addr+14);
@@ -186,7 +186,7 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("StretchDIBits", 1667, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdc = GDI_HDC(regs[0]);
         int xD=(int)regs[1],yD=(int)regs[2],wD=(int)regs[3],hD=(int)ReadStackArg(regs,mem,0);
         int xS=(int)ReadStackArg(regs,mem,1),yS=(int)ReadStackArg(regs,mem,2),wS=(int)ReadStackArg(regs,mem,3),hS=(int)ReadStackArg(regs,mem,4);
         uint32_t bits_addr=ReadStackArg(regs,mem,5), bmi_addr=ReadStackArg(regs,mem,6);
@@ -206,7 +206,7 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("SetDIBitsToDevice", 1726, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdc=(HDC)(intptr_t)(int32_t)regs[0]; int xD=(int)regs[1],yD=(int)regs[2],w=(int)regs[3];
+        HDC hdc=GDI_HDC(regs[0]); int xD=(int)regs[1],yD=(int)regs[2],w=(int)regs[3];
         int h=(int)ReadStackArg(regs,mem,0),xS=(int)ReadStackArg(regs,mem,1),yS=(int)ReadStackArg(regs,mem,2);
         uint32_t startScan=ReadStackArg(regs,mem,3),numScans=ReadStackArg(regs,mem,4);
         uint32_t bits_addr=ReadStackArg(regs,mem,5),bmi_addr=ReadStackArg(regs,mem,6),usage=ReadStackArg(regs,mem,7);
@@ -224,16 +224,16 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("TransparentImage", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0]=TransparentBlt((HDC)(intptr_t)(int32_t)regs[0],(int)regs[1],(int)regs[2],(int)regs[3],
-            (int)ReadStackArg(regs,mem,0),(HDC)(intptr_t)(int32_t)ReadStackArg(regs,mem,1),
+        regs[0]=TransparentBlt(GDI_HDC(regs[0]),(int)regs[1],(int)regs[2],(int)regs[3],
+            (int)ReadStackArg(regs,mem,0),GDI_HDC(ReadStackArg(regs,mem,1)),
             (int)ReadStackArg(regs,mem,2),(int)ReadStackArg(regs,mem,3),
             (int)ReadStackArg(regs,mem,4),(int)ReadStackArg(regs,mem,5),ReadStackArg(regs,mem,6));
         return true;
     });
     Thunk("TransparentBlt", 906, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdcDest = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdcDest = GDI_HDC(regs[0]);
         int xD=(int)regs[1], yD=(int)regs[2], wD=(int)regs[3], hD=(int)ReadStackArg(regs,mem,0);
-        HDC hdcSrc = (HDC)(intptr_t)(int32_t)ReadStackArg(regs,mem,1);
+        HDC hdcSrc = GDI_HDC(ReadStackArg(regs,mem,1));
         int xS=(int)ReadStackArg(regs,mem,2), yS=(int)ReadStackArg(regs,mem,3);
         int wS=(int)ReadStackArg(regs,mem,4), hS=(int)ReadStackArg(regs,mem,5);
         UINT crTrans = ReadStackArg(regs,mem,6);
@@ -244,10 +244,10 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     Thunk("InvertRect", 1770, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc; rc.left=mem.Read32(regs[1]); rc.top=mem.Read32(regs[1]+4);
         rc.right=mem.Read32(regs[1]+8); rc.bottom=mem.Read32(regs[1]+12);
-        regs[0]=InvertRect((HDC)(intptr_t)(int32_t)regs[0],&rc); return true;
+        regs[0]=InvertRect(GDI_HDC(regs[0]),&rc); return true;
     });
     Thunk("GradientFill", 1763, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdc = GDI_HDC(regs[0]);
         uint32_t vertex_addr = regs[1];
         ULONG nVertex = regs[2];
         uint32_t mesh_addr = regs[3];
@@ -264,7 +264,7 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     Thunk("Polyline", 940, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0]=1; return true; });
     /* RoundRect(hdc, left, top, right, bottom, width, height) — 7 args */
     Thunk("RoundRect", 942, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = ::RoundRect((HDC)(intptr_t)(int32_t)regs[0],
+        regs[0] = ::RoundRect(GDI_HDC(regs[0]),
             (int)regs[1], (int)regs[2], (int)regs[3],
             (int)ReadStackArg(regs, mem, 0),
             (int)ReadStackArg(regs, mem, 1),
@@ -285,6 +285,12 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
         return true;
     });
     Thunk("CreateSolidBrush", 931, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)CreateSolidBrush(regs[0]); return true;
+        COLORREF color = regs[0];
+        HBRUSH hbr = CreateSolidBrush(color);
+        LOG(API, "[API] CreateSolidBrush(0x%08X RGB(%d,%d,%d)) -> 0x%08X\n",
+            color, GetRValue(color), GetGValue(color), GetBValue(color),
+            (uint32_t)(uintptr_t)hbr);
+        regs[0] = (uint32_t)(uintptr_t)hbr;
+        return true;
     });
 }

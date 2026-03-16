@@ -3,6 +3,7 @@
 /* Process/thread thunks: CreateProcessW, CreateThread stubs, file mapping */
 #include "../win32_thunks.h"
 #include "../../log.h"
+#include "../../debugger/gdb_stub.h"
 #include <cstdio>
 #include <vector>
 
@@ -114,11 +115,23 @@ void Win32Thunks::RegisterProcessHandlers() {
                 }
                 cpu.cpsr |= 0x13; /* SVC mode */
 
+                /* Attach GDB debugger if one is active */
+                if (g_debugger) {
+                    cpu.debugger = g_debugger;
+                    g_debugger->RegisterCpu(&cpu, GetCurrentThreadId());
+                }
+
                 LOG(API, "[THREAD] Started thread %d: PC=0x%08X SP=0x%08X param=0x%08X\n",
                     thread_idx, cpu.r[REG_PC], stack_top, info->parameter);
                 delete info;
 
                 cpu.Run();
+
+                /* Detach from debugger before thread context is destroyed */
+                if (g_debugger) {
+                    cpu.debugger = nullptr;
+                    g_debugger->UnregisterCpu(&cpu);
+                }
 
                 LOG(API, "[THREAD] Thread %d exited with R0=0x%X\n",
                     thread_idx, cpu.r[0]);

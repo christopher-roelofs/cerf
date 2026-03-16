@@ -132,21 +132,49 @@ void Win32Thunks::RegisterMemoryHandlers() {
         regs[0] = size;
         return true;
     });
-    Thunk("GetProcessHeap", 50, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0xDEAD0001; return true;
+    Thunk("GetProcessHeap", 50, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* Return a pointer to a fake heap structure in emulated memory.
+           ARM code (mshtml, OLE) dereferences the heap handle to validate it.
+           Returning a dummy value like 0xDEAD0001 causes HeapString allocation
+           failures because the handle doesn't point to readable memory. */
+        constexpr uint32_t FAKE_PROCESS_HEAP = 0x00BF0000;
+        static bool initialized = false;
+        if (!initialized) {
+            mem.Alloc(FAKE_PROCESS_HEAP, 0x1000);
+            /* Fill with plausible heap metadata (zeroed is fine for most
+               validation checks — the important thing is it's readable). */
+            mem.Write32(FAKE_PROCESS_HEAP, 0x48454150); /* "HEAP" signature */
+            mem.Write32(FAKE_PROCESS_HEAP + 4, 0x00C00000); /* base addr */
+            mem.Write32(FAKE_PROCESS_HEAP + 8, 0x00300000); /* max size */
+            initialized = true;
+        }
+        regs[0] = FAKE_PROCESS_HEAP;
+        return true;
     });
     auto heapAllocImpl = [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         static std::atomic<uint32_t> next_heap{0x00C00000};
-        uint32_t size = regs[2];
+        uint32_t hHeap = regs[0], flags = regs[1], size = regs[2];
         regs[0] = BumpAlloc(next_heap, mem, size);
         TrackAlloc(regs[0], size);
+        LOG(API, "[API] HeapAlloc(heap=0x%08X, flags=0x%X, size=%u) -> 0x%08X\n",
+            hHeap, flags, size, regs[0]);
         return true;
     };
     Thunk("HeapAlloc", 46, heapAllocImpl);
     Thunk("HeapAllocTrace", 20, heapAllocImpl);
-    Thunk("HeapCreate", 44, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        static std::atomic<uint32_t> next_handle{0xDEAD0002};
-        regs[0] = next_handle.fetch_add(1);
+    Thunk("HeapCreate", 44, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* Return a valid pointer to a fake heap structure so ARM code
+           that dereferences heap handles doesn't crash. */
+        constexpr uint32_t HEAP_STRUCT_BASE = 0x00BF1000;
+        constexpr uint32_t HEAP_STRUCT_SIZE = 0x100;
+        static std::atomic<uint32_t> next_offset{0};
+        uint32_t offset = next_offset.fetch_add(HEAP_STRUCT_SIZE);
+        uint32_t addr = HEAP_STRUCT_BASE + offset;
+        mem.Alloc(addr, HEAP_STRUCT_SIZE);
+        mem.Write32(addr, 0x48454150); /* "HEAP" signature */
+        LOG(API, "[API] HeapCreate(0x%X, 0x%X, 0x%X) -> 0x%08X\n",
+            regs[0], regs[1], regs[2], addr);
+        regs[0] = addr;
         return true;
     });
     Thunk("HeapFree", 49, [](uint32_t* regs, EmulatedMemory&) -> bool {

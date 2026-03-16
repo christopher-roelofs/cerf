@@ -5,10 +5,10 @@
 
 void Win32Thunks::RegisterGdiRegionHandlers() {
     Thunk("SelectPalette", 954, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)SelectPalette((HDC)(intptr_t)(int32_t)regs[0], (HPALETTE)(intptr_t)(int32_t)regs[1], regs[2]); return true;
+        regs[0] = (uint32_t)(uintptr_t)SelectPalette(GDI_HDC(regs[0]), GDI_HPAL(regs[1]), regs[2]); return true;
     });
     Thunk("RealizePalette", 953, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = RealizePalette((HDC)(intptr_t)(int32_t)regs[0]); return true;
+        regs[0] = RealizePalette(GDI_HDC(regs[0])); return true;
     });
     Thunk("CreatePalette", 947, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         /* LOGPALETTE: WORD palVersion, WORD palNumEntries, PALETTEENTRY[] */
@@ -18,7 +18,7 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         return true;
     });
     Thunk("GetPaletteEntries", 949, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HPALETTE hp = (HPALETTE)(intptr_t)(int32_t)regs[0];
+        HPALETTE hp = GDI_HPAL(regs[0]);
         UINT start = regs[1], count = regs[2]; uint32_t pe_ptr = regs[3];
         std::vector<PALETTEENTRY> entries(count);
         UINT ret = ::GetPaletteEntries(hp, start, count, entries.data());
@@ -37,9 +37,9 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         regs[0] = (uint32_t)(uintptr_t)CreateRectRgn(regs[0], regs[1], regs[2], regs[3]); return true;
     });
     Thunk("CombineRgn", 968, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        HRGN dest = (HRGN)(intptr_t)(int32_t)regs[0];
-        HRGN src1 = (HRGN)(intptr_t)(int32_t)regs[1];
-        HRGN src2 = (HRGN)(intptr_t)(int32_t)regs[2];
+        HRGN dest = GDI_HRGN(regs[0]);
+        HRGN src1 = GDI_HRGN(regs[1]);
+        HRGN src2 = GDI_HRGN(regs[2]);
         int mode = regs[3];
         int ret = CombineRgn(dest, src1, src2, mode);
         RECT box = {};
@@ -49,8 +49,8 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         regs[0] = ret; return true;
     });
     Thunk("SelectClipRgn", 979, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
-        HRGN hrgn = (HRGN)(intptr_t)(int32_t)regs[1];
+        HDC hdc = GDI_HDC(regs[0]);
+        HRGN hrgn = GDI_HRGN(regs[1]);
         RECT box = {};
         if (hrgn) GetRgnBox(hrgn, &box);
         int ret = SelectClipRgn(hdc, hrgn);
@@ -59,7 +59,7 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         regs[0] = ret; return true;
     });
     Thunk("IntersectClipRect", 975, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HDC hdc = (HDC)(intptr_t)(int32_t)regs[0];
+        HDC hdc = GDI_HDC(regs[0]);
         int l = (int)regs[1], t = (int)regs[2], r = (int)regs[3], b = (int)ReadStackArg(regs,mem,0);
         int ret = IntersectClipRect(hdc, l, t, r, b);
         LOG(API, "[API] IntersectClipRect(hdc=0x%08X, {%d,%d,%d,%d}) -> %d\n",
@@ -67,7 +67,7 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         regs[0] = ret; return true;
     });
     Thunk("GetClipBox", 971, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        RECT rc; int ret = GetClipBox((HDC)(intptr_t)(int32_t)regs[0], &rc);
+        RECT rc; int ret = GetClipBox(GDI_HDC(regs[0]), &rc);
         mem.Write32(regs[1], rc.left); mem.Write32(regs[1]+4, rc.top);
         mem.Write32(regs[1]+8, rc.right); mem.Write32(regs[1]+12, rc.bottom);
         LOG(API, "[API] GetClipBox(hdc=0x%08X) -> %d, rc={%d,%d,%d,%d}\n",
@@ -75,11 +75,11 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         regs[0] = ret; return true;
     });
     Thunk("GetClipRgn", 972, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetClipRgn((HDC)(intptr_t)(int32_t)regs[0], (HRGN)(intptr_t)(int32_t)regs[1]);
+        regs[0] = GetClipRgn(GDI_HDC(regs[0]), GDI_HRGN(regs[1]));
         return true;
     });
-    Thunk("SetLayout", 1890, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetLayout((HDC)(intptr_t)(int32_t)regs[0], regs[1]); return true; });
-    Thunk("GetLayout", 1891, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetLayout((HDC)(intptr_t)(int32_t)regs[0]); return true; });
+    Thunk("SetLayout", 1890, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetLayout(GDI_HDC(regs[0]), regs[1]); return true; });
+    Thunk("GetLayout", 1891, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetLayout(GDI_HDC(regs[0])); return true; });
     Thunk("CreateRectRgnIndirect", 969, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc;
         rc.left = (LONG)mem.Read32(regs[0]);
@@ -90,7 +90,7 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         return true;
     });
     Thunk("EqualRgn", 91, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = EqualRgn((HRGN)(intptr_t)(int32_t)regs[0], (HRGN)(intptr_t)(int32_t)regs[1]);
+        regs[0] = EqualRgn(GDI_HRGN(regs[0]), GDI_HRGN(regs[1]));
         return true;
     });
     Thunk("BeginPaint", 260, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -150,38 +150,39 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
             hw, (uint32_t)(uintptr_t)hdc, ps.fErase,
             ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom,
             (uint32_t)(uintptr_t)hUpdateRgn);
+
         regs[0] = (uint32_t)(uintptr_t)hdc; return true;
     });
     Thunk("EndPaint", 261, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
-        PAINTSTRUCT ps = {}; ps.hdc = (HDC)(intptr_t)(int32_t)mem.Read32(regs[1]);
+        PAINTSTRUCT ps = {}; ps.hdc = GDI_HDC(mem.Read32(regs[1]));
         LOG(API, "[API] EndPaint(0x%p, hdc=0x%08X)\n", hw, (uint32_t)(uintptr_t)ps.hdc);
         EndPaint(hw, &ps);
         /* Delete the update region HRGN stored in rgbReserved by BeginPaint */
         constexpr uint32_t PS_RGBRESERVED_OFFSET = 32;
-        HRGN hRgn = (HRGN)(intptr_t)(int32_t)mem.Read32(regs[1] + PS_RGBRESERVED_OFFSET);
+        HRGN hRgn = GDI_HRGN(mem.Read32(regs[1] + PS_RGBRESERVED_OFFSET));
         if (hRgn) DeleteObject(hRgn);
         regs[0] = 1; return true;
     });
     Thunk("Ellipse", 934, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = ::Ellipse((HDC)(intptr_t)(int32_t)regs[0],
+        regs[0] = ::Ellipse(GDI_HDC(regs[0]),
             (int)regs[1], (int)regs[2], (int)regs[3], (int)ReadStackArg(regs, mem, 0));
         return true;
     });
     Thunk("ExcludeClipRect", 970, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = ExcludeClipRect((HDC)(intptr_t)(int32_t)regs[0],
+        regs[0] = ExcludeClipRect(GDI_HDC(regs[0]),
             (int)regs[1], (int)regs[2], (int)regs[3], (int)ReadStackArg(regs, mem, 0));
         return true;
     });
     Thunk("SetWindowRgn", 1398, [](uint32_t* regs, EmulatedMemory&) -> bool {
         HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
-        HRGN rgn = (HRGN)(intptr_t)(int32_t)regs[1];
+        HRGN rgn = GDI_HRGN(regs[1]);
         BOOL redraw = regs[2];
         regs[0] = SetWindowRgn(hw, rgn, redraw);
         return true;
     });
     Thunk("GetWindowRgn", 1399, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetWindowRgn((HWND)(intptr_t)(int32_t)regs[0], (HRGN)(intptr_t)(int32_t)regs[1]);
+        regs[0] = GetWindowRgn((HWND)(intptr_t)(int32_t)regs[0], GDI_HRGN(regs[1]));
         return true;
     });
     Thunk("ExtCreateRegion", 1617, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -205,7 +206,7 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
     });
     Thunk("GetRgnBox", 973, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc;
-        int ret = GetRgnBox((HRGN)(intptr_t)(int32_t)regs[0], &rc);
+        int ret = GetRgnBox(GDI_HRGN(regs[0]), &rc);
         if (regs[1]) {
             mem.Write32(regs[1], rc.left); mem.Write32(regs[1]+4, rc.top);
             mem.Write32(regs[1]+8, rc.right); mem.Write32(regs[1]+12, rc.bottom);
@@ -216,7 +217,7 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         return true;
     });
     Thunk("OffsetRgn", 976, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        HRGN rgn = (HRGN)(intptr_t)(int32_t)regs[0];
+        HRGN rgn = GDI_HRGN(regs[0]);
         int dx = (int)regs[1], dy = (int)regs[2];
         int ret = OffsetRgn(rgn, dx, dy);
         RECT box = {};
@@ -226,18 +227,18 @@ void Win32Thunks::RegisterGdiRegionHandlers() {
         regs[0] = ret; return true;
     });
     Thunk("PtInRegion", 977, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = PtInRegion((HRGN)(intptr_t)(int32_t)regs[0], (int)regs[1], (int)regs[2]);
+        regs[0] = PtInRegion(GDI_HRGN(regs[0]), (int)regs[1], (int)regs[2]);
         return true;
     });
     Thunk("RectInRegion", 978, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc;
         rc.left = (LONG)mem.Read32(regs[1]); rc.top = (LONG)mem.Read32(regs[1]+4);
         rc.right = (LONG)mem.Read32(regs[1]+8); rc.bottom = (LONG)mem.Read32(regs[1]+12);
-        regs[0] = RectInRegion((HRGN)(intptr_t)(int32_t)regs[0], &rc);
+        regs[0] = RectInRegion(GDI_HRGN(regs[0]), &rc);
         return true;
     });
     Thunk("GetRegionData", 974, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HRGN rgn = (HRGN)(intptr_t)(int32_t)regs[0];
+        HRGN rgn = GDI_HRGN(regs[0]);
         DWORD count = regs[1];
         uint32_t buf_addr = regs[2];
         if (!buf_addr || !count) {

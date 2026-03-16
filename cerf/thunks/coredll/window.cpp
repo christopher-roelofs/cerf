@@ -8,7 +8,12 @@ void Win32Thunks::RegisterWindowHandlers() {
     Thunk("RegisterClassW", 95, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t arm_wndproc = mem.Read32(regs[0] + 4);
         WNDCLASSW wc = {};
-        wc.style = mem.Read32(regs[0]); wc.lpfnWndProc = EmuWndProc;
+        /* WinCE gives each window its own persistent DC (equivalent to CS_OWNDC).
+           mshtml and other WinCE code cache DC handles from GetDC/WM_ERASEBKGND
+           and reuse them later, expecting the DC to remain valid.  Without CS_OWNDC,
+           desktop Windows uses a shared DC cache where DCs become invalid after
+           ReleaseDC or when the system reclaims them after message processing. */
+        wc.style = mem.Read32(regs[0]) | CS_OWNDC; wc.lpfnWndProc = EmuWndProc;
         wc.cbClsExtra = mem.Read32(regs[0]+8); wc.cbWndExtra = mem.Read32(regs[0]+12);
         wc.hInstance = GetModuleHandleW(NULL);
         /* WinCE icon/cursor/brush handles are 32-bit values that don't map to

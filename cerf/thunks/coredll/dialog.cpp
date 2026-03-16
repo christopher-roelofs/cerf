@@ -142,6 +142,10 @@ void Win32Thunks::RegisterDialogHandlers() {
         regs[0] = (uint32_t)(uintptr_t)GetDlgItem((HWND)(intptr_t)(int32_t)regs[0], regs[1]);
         return true;
     });
+    Thunk("GetDialogBaseUnits", 694, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = (uint32_t)GetDialogBaseUnits();
+        return true;
+    });
     Thunk("SetDlgItemTextW", 686, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring text = ReadWStringFromEmu(mem, regs[2]);
         regs[0] = SetDlgItemTextW((HWND)(intptr_t)(int32_t)regs[0], regs[1], text.c_str());

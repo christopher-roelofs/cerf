@@ -27,6 +27,12 @@ void Win32Thunks::RegisterLocaleHandlers() {
     });
     Thunk("GetACP", 186, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetACP(); return true; });
     Thunk("GetOEMCP", 187, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetOEMCP(); return true; });
+    Thunk("IsValidCodePage", 185, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        UINT cp = regs[0];
+        regs[0] = IsValidCodePage(cp);
+        LOG(API, "[API] IsValidCodePage(%u) -> %u\n", cp, regs[0]);
+        return true;
+    });
     Thunk("GetCPInfo", 188, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         UINT codePage = regs[0];
         uint32_t cpinfo_addr = regs[1];

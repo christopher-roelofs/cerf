@@ -16,6 +16,8 @@ Commands:
     step                     Single-step one instruction
     cont                     Continue execution
     stop                     Send Ctrl+C interrupt
+    threads                  List all threads with PC/SP/LR
+    thread <tid>             Select thread and show registers
     detach                   Detach from target
 """
 import socket
@@ -115,6 +117,22 @@ class GdbClient:
     def detach(self):
         return self.command("D")
 
+    def list_threads(self) -> list:
+        """Query thread IDs from the GDB stub."""
+        resp = self.command("qfThreadInfo")
+        if not resp or resp[0] != 'm':
+            return []
+        tids = []
+        for t in resp[1:].split(","):
+            t = t.strip()
+            if t:
+                tids.append(int(t, 16))
+        return tids
+
+    def select_thread(self, tid: int):
+        """Select thread for register reads (Hg command)."""
+        return self.command(f"Hg{tid:x}")
+
 
 def print_regs(regs):
     for i in range(0, 16, 4):
@@ -207,6 +225,18 @@ def main():
                 print(f"Stop: {reply}")
                 regs = gdb.read_regs()
                 print_regs(regs)
+        elif cmd == "threads":
+            tids = gdb.list_threads()
+            print(f"Threads ({len(tids)}):")
+            for tid in tids:
+                gdb.select_thread(tid)
+                regs = gdb.read_regs()
+                print(f"  tid={tid} PC=0x{regs[15]:08X} SP=0x{regs[13]:08X} LR=0x{regs[14]:08X}")
+        elif cmd == "thread":
+            tid = int(args[1], 0)
+            print(gdb.select_thread(tid))
+            regs = gdb.read_regs()
+            print_regs(regs)
         elif cmd == "detach":
             print(gdb.detach())
         else:

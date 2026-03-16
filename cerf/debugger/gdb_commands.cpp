@@ -1,5 +1,6 @@
 /* GDB RSP command handlers — register, memory, breakpoint, control.
-   Dispatched from GdbStub::Poll() when the CPU is stopped. */
+   Thread-aware: uses current_cpu (selected via Hg) for register access.
+   Dispatched from GdbStub::Poll() when any CPU is stopped. */
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -28,16 +29,16 @@ void GdbStub::HandlePacket(const std::string& pkt) {
     case 'z': HandleBreakpoint(args, false); break;
     case 'c': HandleContinue(); break;
     case 's': HandleStep(); break;
-    case 'H': SendPacket("OK"); break;  /* Set thread — single thread */
+    case 'H': HandleThreadSelect(args); break;
     case 'D':  /* Detach */
         SendPacket("OK");
         connected = false;
-        stopped = false;
+        ResumeAll();
         LOG(DBG, "[GDB] Client detached\n");
         break;
     case 'k':  /* Kill */
         connected = false;
-        stopped = false;
+        ResumeAll();
         LOG(DBG, "[GDB] Kill requested\n");
         ExitProcess(0);
         break;
@@ -66,11 +67,32 @@ void GdbStub::HandleQuery(const std::string& pkt) {
     } else if (pkt == "qAttached") {
         SendPacket("1");
     } else if (pkt == "qC") {
-        SendPacket("QC1");
+        /* Report current thread ID */
+        uint32_t tid = 1;
+        {
+            std::lock_guard<std::mutex> lock(registry_mutex);
+            for (auto& t : threads)
+                if (t.cpu == current_cpu) { tid = t.tid; break; }
+        }
+        char buf[16];
+        snprintf(buf, sizeof(buf), "QC%x", tid);
+        SendPacket(buf);
     } else if (pkt == "qfThreadInfo") {
-        SendPacket("m1");
+        /* First thread info query — return all thread IDs */
+        std::string reply = "m";
+        {
+            std::lock_guard<std::mutex> lock(registry_mutex);
+            for (size_t i = 0; i < threads.size(); i++) {
+                if (i > 0) reply += ",";
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%x", threads[i].tid);
+                reply += buf;
+            }
+        }
+        if (reply == "m") reply = "m1"; /* fallback if no threads registered */
+        SendPacket(reply);
     } else if (pkt == "qsThreadInfo") {
-        SendPacket("l");
+        SendPacket("l");  /* end of thread list */
     } else if (pkt == "qTStatus") {
         SendPacket("");
     } else if (pkt == "QStartNoAckMode") {
@@ -83,42 +105,69 @@ void GdbStub::HandleQuery(const std::string& pkt) {
     }
 }
 
-/* ---- Register access ---- */
+/* ---- Thread selection ---- */
+
+void GdbStub::HandleThreadSelect(const std::string& args) {
+    /* H<op><thread-id>  where op='g' (register reads) or 'c' (continue/step)
+       thread-id: hex, 0 = any, -1 = all */
+    if (args.empty()) { SendPacket("OK"); return; }
+    /* Skip the operation char ('g' or 'c') */
+    std::string tid_str = args.substr(1);
+    int32_t tid = (int32_t)HexToU32(tid_str);
+
+    if (tid <= 0) {
+        /* 0 = pick any, -1 = all threads — keep current */
+        SendPacket("OK");
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(registry_mutex);
+    ArmCpu* found = FindCpuByTid((uint32_t)tid);
+    if (found) {
+        current_cpu = found;
+        LOG(DBG, "[GDB] Thread selected: tid=%d, PC=0x%08X\n",
+            tid, found->r[REG_PC]);
+    }
+    SendPacket("OK");
+}
+
+/* ---- Register access (uses current_cpu) ---- */
 
 void GdbStub::HandleReadRegisters() {
-    /* ARM 'g' packet: r0-r15 then cpsr, each 4 bytes little-endian hex.
-       Some GDB configs expect FPA regs between r15 and cpsr — IDA's
-       basic ARM stub works fine with just 17 regs. */
+    if (!current_cpu) { SendPacket("E01"); return; }
+    /* ARM 'g' packet: r0-r15 then cpsr, each 4 bytes little-endian hex. */
     std::string hex;
     hex.reserve(GDB_ARM_NUM_REGS * 8);
     for (int i = 0; i < 16; i++)
-        hex += U32ToHexLE(cpu->r[i]);
-    hex += U32ToHexLE(cpu->cpsr);
+        hex += U32ToHexLE(current_cpu->r[i]);
+    hex += U32ToHexLE(current_cpu->cpsr);
     SendPacket(hex);
 }
 
 void GdbStub::HandleWriteRegisters(const std::string& data) {
+    if (!current_cpu) { SendPacket("E01"); return; }
     constexpr size_t MIN_LEN = GDB_ARM_NUM_REGS * 8;
     if (data.size() < MIN_LEN) { SendPacket("E01"); return; }
     uint8_t bytes[4];
     for (int i = 0; i < 16; i++) {
         FromHex(data.substr(i * 8, 8), bytes, 4);
-        cpu->r[i] = bytes[0] | (bytes[1] << 8) |
+        current_cpu->r[i] = bytes[0] | (bytes[1] << 8) |
                     (bytes[2] << 16) | (bytes[3] << 24);
     }
     FromHex(data.substr(16 * 8, 8), bytes, 4);
-    cpu->cpsr = bytes[0] | (bytes[1] << 8) |
+    current_cpu->cpsr = bytes[0] | (bytes[1] << 8) |
                 (bytes[2] << 16) | (bytes[3] << 24);
     SendPacket("OK");
 }
 
 void GdbStub::HandleReadRegister(const std::string& args) {
+    if (!current_cpu) { SendPacket("E01"); return; }
     uint32_t reg = HexToU32(args);
     uint32_t val;
     if (reg < 16)
-        val = cpu->r[reg];
+        val = current_cpu->r[reg];
     else if (reg == 25 || reg == 16)
-        val = cpu->cpsr;  /* GDB ARM: cpsr is reg 25, but some stubs use 16 */
+        val = current_cpu->cpsr;
     else {
         SendPacket("E01");
         return;
@@ -127,6 +176,7 @@ void GdbStub::HandleReadRegister(const std::string& args) {
 }
 
 void GdbStub::HandleWriteRegister(const std::string& args) {
+    if (!current_cpu) { SendPacket("E01"); return; }
     size_t eq = args.find('=');
     if (eq == std::string::npos) { SendPacket("E01"); return; }
     uint32_t reg = HexToU32(args.substr(0, eq));
@@ -135,9 +185,9 @@ void GdbStub::HandleWriteRegister(const std::string& args) {
     uint32_t val = bytes[0] | (bytes[1] << 8) |
                    (bytes[2] << 16) | (bytes[3] << 24);
     if (reg < 16)
-        cpu->r[reg] = val;
+        current_cpu->r[reg] = val;
     else if (reg == 25 || reg == 16)
-        cpu->cpsr = val;
+        current_cpu->cpsr = val;
     else {
         SendPacket("E01");
         return;
@@ -208,11 +258,13 @@ void GdbStub::HandleBreakpoint(const std::string& args, bool set) {
 /* ---- Execution control ---- */
 
 void GdbStub::HandleContinue() {
-    stopped = false;
+    single_step_cpu.store(nullptr);
+    ResumeAll();
     /* No reply now — stop reply sent when next breakpoint/step completes */
 }
 
 void GdbStub::HandleStep() {
-    stopped = false;
-    single_step = true;
+    /* Single-step the current (selected) CPU only */
+    single_step_cpu.store(current_cpu);
+    ResumeAll();
 }

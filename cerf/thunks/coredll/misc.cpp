@@ -100,10 +100,27 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("sndPlaySoundW", 377, stub1("sndPlaySoundW"));
     Thunk("PlaySoundW", 378, stub1("PlaySoundW"));
     Thunk("waveOutSetVolume", 382, stub0("waveOutSetVolume"));
-    /* RAS */
+    /* RAS — wininet.dll dynamically loads these via GetProcAddress */
     Thunk("RasDial", 342, stub0("RasDial"));
     Thunk("RasHangup", stub0("RasHangup"));
     thunk_handlers["RasHangUp"] = thunk_handlers["RasHangup"];
+    Thunk("RasEnumEntries", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* (reserved, phonebook, entries, cb, count) — 5th arg on stack */
+        uint32_t sp = regs[13];
+        uint32_t count_ptr = mem.Read32(sp);
+        if (count_ptr) mem.Write32(count_ptr, 0);
+        if (regs[3]) mem.Write32(regs[3], 0); /* *lpcb = 0 */
+        LOG(API, "[API] RasEnumEntries() -> 0 (no entries)\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("RasEnumConnections", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        if (regs[2]) mem.Write32(regs[2], 0); /* *lpcConnections = 0 */
+        LOG(API, "[API] RasEnumConnections() -> 0 (none)\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("RasGetConnectStatus", stub0("RasGetConnectStatus"));
+    Thunk("RasGetErrorString", stub0("RasGetErrorString"));
+    Thunk("RasGetEntryProperties", stub0("RasGetEntryProperties"));
     /* C runtime misc */
     Thunk("_purecall", 1092, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] _purecall\n"); regs[0] = 0; return true;
@@ -181,7 +198,43 @@ void Win32Thunks::RegisterMiscHandlers() {
         return true;
     });
     Thunk("GlobalAddAtomW", 1519, stub1("GlobalAddAtomW"));
-    Thunk("GetAPIAddress", 32, stub0("GetAPIAddress"));
+    Thunk("GetAPIAddress", 32, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* WinCE GetAPIAddress(apiSetId, methodIndex) — returns function pointer.
+           ddraw.dll calls this during DllMain to populate its DDI vtable
+           (display driver interface, methods 2-139).
+
+           On real WinCE, these point to the display driver's DirectDraw
+           acceleration entry points. We provide thunks for each method:
+           - Method 132 (DirectDrawCreate): full implementation via our
+             ddraw_DirectDrawCreate handler (creates IDirectDraw4 COM object)
+           - Other methods: return S_OK (0) as no-op stubs. ddraw.dll checks
+             the return value — S_OK means "supported, operation done." */
+        constexpr int DDI_METHOD_DDCREATE = 132;
+        int method = (int)regs[1];
+
+        /* For DirectDrawCreate (method 132), return thunk to our handler */
+        if (method == DDI_METHOD_DDCREATE) {
+            uint32_t thunk = AllocThunk("ddraw.dll", "ddraw_DirectDrawCreate", 0, false);
+            LOG(API, "[API] GetAPIAddress(set=%d, method=%d) -> 0x%08X (DirectDrawCreate)\n",
+                regs[0], method, thunk);
+            regs[0] = thunk;
+            return true;
+        }
+        /* For all other DDI methods, return a stub that returns S_OK (0).
+           This tells ddraw.dll the driver "handled" the call successfully. */
+        constexpr uint32_t DDI_STUB_ADDR = 0xCAFEC100;
+        static bool stub_installed = false;
+        if (!stub_installed) {
+            mem.Alloc(DDI_STUB_ADDR, 0x100);
+            mem.Write32(DDI_STUB_ADDR + 0x00, 0xE3A00000); /* MOV R0, #0 (S_OK) */
+            mem.Write32(DDI_STUB_ADDR + 0x04, 0xE12FFF1E); /* BX LR              */
+            stub_installed = true;
+        }
+        LOG(API, "[API] GetAPIAddress(set=%d, method=%d) -> 0x%08X (ddi-stub)\n",
+            regs[0], method, DDI_STUB_ADDR);
+        regs[0] = DDI_STUB_ADDR;
+        return true;
+    });
     Thunk("WaitForAPIReady", 2562, stub0("WaitForAPIReady"));
     Thunk("__GetUserKData", 2528, [](uint32_t* regs, EmulatedMemory&) -> bool {
         /* Return the standard PUserKData address (0xFFFFC800).
@@ -222,12 +275,12 @@ void Win32Thunks::RegisterMiscHandlers() {
         LOG(API, "[API] CeZeroPointer(0x%08X) -> 0x%08X (identity)\n", regs[0], regs[0]);
         return true;
     });
-    Thunk("CeGetCallerTrust", 477, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("CeGetCallerTrust", 1395, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 2; /* OEM_CERTIFY — full trust */
         return true;
     });
     /* PMFindProvider */
-    Thunk("QueryAPISetID", 2588, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+    Thunk("QueryAPISetID", 490, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         /* Read 4-char API set name */
         char name[5] = {};
         for (int i = 0; i < 4; i++) name[i] = (char)mem.Read8(regs[0] + i);

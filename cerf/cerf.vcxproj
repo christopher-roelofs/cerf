@@ -191,7 +191,10 @@
     <ClCompile Include="thunks\coredll\string_safe.cpp" />
     <ClCompile Include="thunks\coredll\gdi_dc.cpp" />
     <ClCompile Include="thunks\coredll\gdi_draw.cpp" />
+    <ClCompile Include="thunks\coredll\ddraw_iface.cpp" />
+    <ClCompile Include="thunks\coredll\ddraw_surface.cpp" />
     <ClCompile Include="thunks\coredll\gdi_text.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_font.cpp" />
     <ClCompile Include="thunks\coredll\gdi_region.cpp" />
     <ClCompile Include="thunks\coredll\window.cpp" />
     <ClCompile Include="thunks\coredll\window_layout.cpp" />
@@ -233,6 +236,7 @@
     <ClCompile Include="thunks\thread_context.cpp" />
     <!-- GDB remote debugger -->
     <ClCompile Include="debugger\gdb_stub.cpp" />
+    <ClCompile Include="debugger\gdb_server.cpp" />
     <ClCompile Include="debugger\gdb_commands.cpp" />
   </ItemGroup>
   <!-- Bundled device files — copied to devices/ next to cerf.exe -->

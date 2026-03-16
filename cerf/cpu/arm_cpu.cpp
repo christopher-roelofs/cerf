@@ -105,7 +105,7 @@ void ArmCpu::Step() {
     if (halted) return;
 
     /* GDB debugger hook — checks breakpoints, handles commands when stopped */
-    if (debugger) debugger->Poll();
+    if (debugger) debugger->Poll(this);
     if (halted) return;  /* debugger may have killed us */
 
     if (IsThumb()) {

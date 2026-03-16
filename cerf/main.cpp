@@ -270,13 +270,15 @@ int main(int argc, char* argv[]) {
     /* GDB remote debugging — start stub before running if requested */
     GdbStub* gdb = nullptr;
     if (gdb_port > 0) {
-        gdb = new GdbStub((uint16_t)gdb_port, &cpu, &mem);
+        gdb = new GdbStub((uint16_t)gdb_port, &mem);
+        gdb->RegisterCpu(&cpu, GetCurrentThreadId());
         if (!gdb->Start()) {
             LOG_ERR("[GDB] Failed to start debug server on port %d\n", gdb_port);
             delete gdb;
             gdb = nullptr;
         } else {
             cpu.debugger = gdb;
+            g_debugger = gdb;  /* make available to child threads */
         }
     }
 
@@ -287,6 +289,8 @@ int main(int argc, char* argv[]) {
 
     if (gdb) {
         cpu.debugger = nullptr;
+        gdb->UnregisterCpu(&cpu);
+        g_debugger = nullptr;
         delete gdb;
     }
 

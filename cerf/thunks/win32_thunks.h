@@ -11,6 +11,20 @@
 #include "../loader/pe_loader.h"
 #include "thread_context.h"
 
+/* GDI handles are UNSIGNED 32-bit values that must be ZERO-extended to 64-bit.
+   On 64-bit Windows, GDI handles regularly have bit 31 set (e.g., HDC 0xA9011628).
+   Sign-extending these via (intptr_t)(int32_t) corrupts them to 0xFFFFFFFFxxxxxxxx
+   instead of the correct 0x00000000xxxxxxxx, causing ERROR_INVALID_HANDLE (6).
+   Window handles (HWND) rarely have bit 31 set and still use sign-extension. */
+#define GDI_HDC(r)    ((HDC)(uintptr_t)(uint32_t)(r))
+#define GDI_HRGN(r)   ((HRGN)(uintptr_t)(uint32_t)(r))
+#define GDI_HBRUSH(r) ((HBRUSH)(uintptr_t)(uint32_t)(r))
+#define GDI_HPEN(r)   ((HPEN)(uintptr_t)(uint32_t)(r))
+#define GDI_HFONT(r)  ((HFONT)(uintptr_t)(uint32_t)(r))
+#define GDI_HBMP(r)   ((HBITMAP)(uintptr_t)(uint32_t)(r))
+#define GDI_HPAL(r)   ((HPALETTE)(uintptr_t)(uint32_t)(r))
+#define GDI_OBJ(r)    ((HGDIOBJ)(uintptr_t)(uint32_t)(r))
+
 /* Thunked DLL registry — add one entry here, then create Register*Handlers(). */
 struct ThunkedDllInfo {
     const char* name;          /* lowercase key (e.g. "coredll") */
@@ -230,6 +244,7 @@ private:
     void RegisterGdiDcHandlers();
     void RegisterGdiDrawHandlers();
     void RegisterGdiTextHandlers();
+    void RegisterGdiFontHandlers();
     void RegisterGdiRegionHandlers();
     void RegisterWindowHandlers();
     void RegisterWindowLayoutHandlers();
@@ -264,6 +279,9 @@ private:
     void RegisterSocketIOHandlers();
     void RegisterSocketDnsHandlers();
     void RegisterWindowRectHandlers();
+    void RegisterDirectDrawHandlers();
+    void RegisterDirectDrawSurfaceHandlers();
+    void BuildDirectDrawVtables(EmulatedMemory& mem);
     bool LaunchArmChildProcess(const std::wstring& mapped_file, const std::wstring& params,
                                uint32_t sei_addr, uint32_t* regs, EmulatedMemory& mem);
 };

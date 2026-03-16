@@ -4,6 +4,7 @@
    or falls back to native CreateProcessW for non-ARM executables. */
 #include "../win32_thunks.h"
 #include "../../log.h"
+#include "../../debugger/gdb_stub.h"
 #include <cstdio>
 #include <vector>
 
@@ -126,10 +127,21 @@ void Win32Thunks::RegisterChildProcessHandler() {
                         cpu.r[REG_PC] = entry;
                     }
 
+                    /* Attach GDB debugger if one is active */
+                    if (g_debugger) {
+                        cpu.debugger = g_debugger;
+                        g_debugger->RegisterCpu(&cpu, GetCurrentThreadId());
+                    }
+
                     LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X\n",
                         cpu.r[REG_PC], stack_top);
                     delete cpi;
                     cpu.Run();
+
+                    if (g_debugger) {
+                        cpu.debugger = nullptr;
+                        g_debugger->UnregisterCpu(&cpu);
+                    }
 
                     uint32_t exit_code = cpu.r[0];
                     LOG(API, "[PROC] Child process exited with code %u\n", exit_code);
