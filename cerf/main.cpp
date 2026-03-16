@@ -12,6 +12,7 @@
 #include "log.h"
 #include "cpu/mem.h"
 #include "cpu/arm_cpu.h"
+#include "debugger/gdb_stub.h"
 #include "loader/pe_loader.h"
 #include "thunks/win32_thunks.h"
 #include "cli_helpers.h"
@@ -31,6 +32,7 @@ int main(int argc, char* argv[]) {
     int cli_os_major = -1, cli_os_minor = -1, cli_os_build = -1;
     const char* cli_os_build_date = nullptr;
     int cli_fake_total_phys = 0;
+    int gdb_port = 0;  /* 0 = disabled; >0 = GDB stub listens on this port */
 
     Log::Init();
 
@@ -67,6 +69,8 @@ int main(int argc, char* argv[]) {
             cli_os_build_date = argv[i] + 16;
         } else if (strncmp(argv[i], "--fake-total-phys=", 18) == 0) {
             cli_fake_total_phys = atoi(argv[i] + 18);
+        } else if (strncmp(argv[i], "--gdb-port=", 11) == 0) {
+            gdb_port = atoi(argv[i] + 11);
         } else if (strcmp(argv[i], "--quiet") == 0) {
             Log::SetEnabled(Log::NONE);
             explicit_log = true;
@@ -263,24 +267,28 @@ int main(int argc, char* argv[]) {
     LOG(EMU, "\n[EMU] Starting at 0x%08X (%s), SP=0x%08X hInst=0x%08X\n",
            cpu.r[REG_PC], cpu.IsThumb() ? "Thumb" : "ARM", cpu.r[REG_SP], cpu.r[0]);
 
+    /* GDB remote debugging — start stub before running if requested */
+    GdbStub* gdb = nullptr;
+    if (gdb_port > 0) {
+        gdb = new GdbStub((uint16_t)gdb_port, &cpu, &mem);
+        if (!gdb->Start()) {
+            LOG_ERR("[GDB] Failed to start debug server on port %d\n", gdb_port);
+            delete gdb;
+            gdb = nullptr;
+        } else {
+            cpu.debugger = gdb;
+        }
+    }
+
     /* Run the emulator */
     cpu.Run();
 
-    /* If we get here, main CPU halted. Child threads may still be running
-       (e.g. iexplore.exe stub launches explorer.exe as a child process).
-       Wait for all child threads with a message pump. */
-    LOG(EMU, "\n[EMU] CPU halted (code=%d) after %llu instructions\n", cpu.halt_code, cpu.insn_count);
-    if (HasChildThreads()) {
-        WaitForChildThreads();
-    } else if (cpu.halt_code == 0) {
-        LOG(EMU, "[EMU] Main entry returned 0 — pumping messages for child threads\n");
-        MSG msg;
-        while (GetMessage(&msg, NULL, 0, 0) > 0) {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
+    HandlePostHalt(cpu);
+
+    if (gdb) {
+        cpu.debugger = nullptr;
+        delete gdb;
     }
-    DumpRegisters(cpu);
 
     Log::Close();
     return cpu.halt_code;

@@ -18,10 +18,17 @@ cerf/
     thumb_insn.cpp                 - Thumb mode instruction handlers
   loader/
     pe_loader.h/.cpp               - WinCE PE loader (sections, imports, relocations, exports)
+  debugger/
+    gdb_stub.h                     - GDB Remote Serial Protocol stub class
+    gdb_stub.cpp                   - TCP server, RSP packet I/O, breakpoint polling
+    gdb_commands.cpp               - Register/memory/breakpoint/control command handlers
   thunks/
     win32_thunks.h                 - Win32Thunks class, ThunkEntry, ThunkedDllInfo table
     win32_thunks.cpp               - Core thunk infrastructure, dispatch, callbacks, ARM DLL loader
+    dispatch.cpp                   - Thunk address allocation and IAT/trap dispatch
     thread_context.h/.cpp          - Per-thread ARM state (ArmCpu, TLS, KData, callback_executor)
+    callbacks.cpp                  - EmuWndProc/EmuDlgProc (ARM callback bridging)
+    callbacks_marshal.cpp          - WM_NOTIFY/WINDOWPOS/CREATE struct marshaling
     coredll/                       - COREDLL.DLL thunks (one file per functional group)
       memory.cpp                   - VirtualAlloc, HeapAlloc, malloc, LocalAlloc, etc.
       string.cpp                   - wcslen, wcscpy, wsprintfW, MultiByteToWideChar, etc.
@@ -33,6 +40,7 @@ cerf/
       gdi_region.cpp               - Regions, clipping
       window.cpp                   - RegisterClass, CreateWindowEx, window management
       window_props.cpp             - Get/SetWindowLong, window properties
+      window_layout.cpp            - SetWindowPos, MoveWindow, GetWindowRect layout translation
       dialog.cpp                   - DialogBox, CreateDialog, dialog procedures
       message.cpp                  - Message loop, SendMessage, PostMessage
       menu.cpp                     - Menu creation and management
@@ -47,7 +55,7 @@ cerf/
       shell_exec.cpp               - ShellExecuteEx (ARM PE child loading via ProcessSlot)
       imagelist.cpp                - ImageList_* and InitCommonControls (coredll re-exports)
       misc.cpp                     - Debug, clipboard, sound, COM, IMM stubs
-      vfs.cpp                      - Virtual filesystem: WinCE ↔ host path translation
+      vfs.cpp                      - Virtual filesystem: WinCE <-> host path translation
 bundled/                           - Files bundled with the build output
   cerf.ini                         - Configuration (device=wince5)
   devices/
@@ -58,6 +66,9 @@ bundled/                           - Files bundled with the build output
         My Documents/              - \My Documents
         Application Data/          - \Application Data
         Program Files/             - \Program Files
+tools/
+  interact.py                      - Screenshot, click, type, inspect running apps
+  debug.py                         - GDB RSP client for automated ARM debugging
 ```
 
 ## Key Concepts
@@ -92,9 +103,30 @@ Output: `build/Release/x64/cerf.exe` with `build/Release/x64/devices/wince5/fs/W
 cerf.exe [options] <path-to-arm-wince-exe>
 ```
 
-Options: `--trace`, `--log=CATEGORIES`, `--no-log=CATEGORIES`, `--log-file=PATH`, `--flush-outputs`, `--device=NAME`, `--quiet`
+Options: `--trace`, `--log=CATEGORIES`, `--no-log=CATEGORIES`, `--log-file=PATH`, `--flush-outputs`, `--gdb-port=PORT`, `--device=NAME`, `--quiet`
 
 Test apps in `tmp/arm_test_apps/`: solitare.exe, chearts.exe, Zuma-arm.exe
+
+## GDB Remote Debugging
+
+CERF includes a GDB Remote Serial Protocol stub for debugging ARM code at the instruction level.
+
+```bash
+# Launch with debugger enabled (pauses at entry point)
+cerf.exe --gdb-port=1234 app.exe
+
+# Connect from IDA: Debugger -> Remote GDB debugger -> localhost:1234
+# Connect from Python:
+python3 tools/debug.py --port 1234 regs        # read registers
+python3 tools/debug.py --port 1234 mem 0x11000 64  # read memory
+python3 tools/debug.py --port 1234 step         # single step
+python3 tools/debug.py --port 1234 break 0x11234   # set breakpoint
+python3 tools/debug.py --port 1234 cont         # continue
+```
+
+The stub runs in-process (no separate thread). `ArmCpu::Step()` calls `GdbStub::Poll()` each instruction — fast-path returns immediately when no breakpoints are set. Supports re-connecting: when a client disconnects, the CPU runs freely until a new client attaches.
+
+For IDA: load the ARM binary first (File -> Open), then Debugger -> Select debugger -> Remote GDB debugger, set hostname/port in Process options, then Attach.
 
 ## References
 
@@ -119,13 +151,13 @@ A pre-commit hook at `.githooks/pre-commit` rejects source files (`.cpp`, `.h`, 
 **All file API thunks MUST use `MapWinCEPath()` for input paths and `MapHostToWinCE()` for output paths.** Never let WinCE programs see or use real host filesystem paths.
 
 Path translation rules (implemented in `thunks/coredll/vfs.cpp`):
-- `\c\foo\bar` → `C:\foo\bar` (single-letter root = host drive pass-through)
-- `\d\` → `D:\` (any single letter = real host drive)
-- `C:\foo\bar` → `C:\foo\bar` (drive letter syntax = same pass-through)
-- `\Windows\foo` → `<cerf_dir>/devices/<device>/fs/Windows/foo` (multi-letter root = device fs)
-- `\My Documents\file.txt` → `<cerf_dir>/devices/<device>/fs/My Documents/file.txt`
-- `\anything` → `<cerf_dir>/devices/<device>/fs/anything`
-- `relative.txt` → `<cerf_dir>/devices/<device>/fs/relative.txt`
+- `\c\foo\bar` -> `C:\foo\bar` (single-letter root = host drive pass-through)
+- `\d\` -> `D:\` (any single letter = real host drive)
+- `C:\foo\bar` -> `C:\foo\bar` (drive letter syntax = same pass-through)
+- `\Windows\foo` -> `<cerf_dir>/devices/<device>/fs/Windows/foo` (multi-letter root = device fs)
+- `\My Documents\file.txt` -> `<cerf_dir>/devices/<device>/fs/My Documents/file.txt`
+- `\anything` -> `<cerf_dir>/devices/<device>/fs/anything`
+- `relative.txt` -> `<cerf_dir>/devices/<device>/fs/relative.txt`
 
 Reverse mapping (`MapHostToWinCE`): host drive paths (`C:\foo`) become `\c\foo`; paths under device fs root get prefix stripped and leading `\` added.
 
@@ -160,7 +192,7 @@ Never create a silent stub that just returns a value without logging. This is cr
 
 > "This requires a real implementation of X. Do you want me to do the proper version, or a temporary stub?"
 
-**Never silently choose the fake/stub path** when a real implementation is possible. The user must explicitly opt into shortcuts. Lessons learned: pseudo-threading caused OLE apartment corruption, infinite loops, and days of wasted debugging. Real solutions scale; fake ones don't.
+**Never silently choose the fake/stub path** when a real implementation is possible. Lessons learned: pseudo-threading caused OLE apartment corruption, infinite loops, and days of wasted debugging. Real solutions scale; fake ones don't.
 
 ## CRITICAL: Never Modify Loaded ARM Binaries
 
@@ -232,7 +264,7 @@ python3 tools/interact.py combo ctrl+a       # key combinations
 python3 tools/inspect_cerf.py
 ```
 
-Workflow: launch app → `windows` to get coordinates → `screenshot` to see UI → `click`/`key` to interact → `screenshot` to verify → repeat. Always `taskkill //f //im cerf.exe` when done.
+Workflow: launch app -> `windows` to get coordinates -> `screenshot` to see UI -> `click`/`key` to interact -> `screenshot` to verify -> repeat. Always `taskkill //f //im cerf.exe` when done.
 
 ## IDA Pro MCP Servers (Reverse Engineering)
 

@@ -150,6 +150,7 @@
     <ClInclude Include="cli_helpers.h" />
     <ClInclude Include="thunks\theme_internal.h" />
     <ClInclude Include="thunks\coredll\dialog_template.h" />
+    <ClInclude Include="debugger\gdb_stub.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- CPU emulation -->
@@ -230,6 +231,9 @@
     <ClCompile Include="thunks\theme_nc_paint.cpp" />
     <ClCompile Include="thunks\coredll\dialog_template.cpp" />
     <ClCompile Include="thunks\thread_context.cpp" />
+    <!-- GDB remote debugger -->
+    <ClCompile Include="debugger\gdb_stub.cpp" />
+    <ClCompile Include="debugger\gdb_commands.cpp" />
   </ItemGroup>
   <!-- Bundled device files — copied to devices/ next to cerf.exe -->
   <Target Name="CopyBundledFiles" AfterTargets="Build">

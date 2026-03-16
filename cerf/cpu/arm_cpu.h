@@ -45,6 +45,8 @@ enum {
    Returns true if handled. */
 typedef std::function<bool(uint32_t addr, uint32_t* regs, EmulatedMemory& mem)> ThunkCallback;
 
+class GdbStub;  /* forward declaration for debugger integration */
+
 class ArmCpu {
 public:
     /* General purpose registers R0-R15 */
@@ -66,6 +68,9 @@ public:
 
     /* Debug/trace flag */
     bool trace;
+
+    /* GDB stub — when non-null, Poll() is called every instruction */
+    GdbStub* debugger = nullptr;
 
     ArmCpu() : mem(nullptr), insn_count(0), halted(false), halt_code(0), trace(false) {
         Reset();

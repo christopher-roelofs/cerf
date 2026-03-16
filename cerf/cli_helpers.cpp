@@ -1,6 +1,8 @@
+#include <windows.h>
 #include "cli_helpers.h"
 #include "log.h"
 #include "cpu/arm_cpu.h"
+#include "thunks/thread_context.h"
 #include <cstdio>
 
 void PrintUsage(const char* prog) {
@@ -23,6 +25,7 @@ void PrintUsage(const char* prog) {
     printf("  --os-build-date=STR      WinCE build date (default: \"Jan  1 2008\")\n");
     printf("  --fake-total-phys=N      Fake total physical RAM in bytes (0 = real)\n");
     printf("  --flush-outputs          Flush after every log write (for complete captures)\n");
+    printf("  --gdb-port=PORT          Start GDB remote stub on PORT (e.g. 1234)\n");
     printf("  --quiet                  Disable all log output\n");
     printf("  --help                   Show this help\n");
 }
@@ -46,4 +49,23 @@ void DumpRegisters(ArmCpu& cpu) {
            cpu.IsThumb() ? "Thumb" : "ARM");
     LOG_RAW("  Instructions executed: %llu\n", cpu.insn_count);
     LOG_RAW("-----------------\n\n");
+}
+
+void HandlePostHalt(ArmCpu& cpu) {
+    /* If we get here, main CPU halted. Child threads may still be running
+       (e.g. iexplore.exe stub launches explorer.exe as a child process).
+       Wait for all child threads with a message pump. */
+    LOG(EMU, "\n[EMU] CPU halted (code=%d) after %llu instructions\n",
+        cpu.halt_code, cpu.insn_count);
+    if (HasChildThreads()) {
+        WaitForChildThreads();
+    } else if (cpu.halt_code == 0) {
+        LOG(EMU, "[EMU] Main entry returned 0 — pumping messages for child threads\n");
+        MSG msg;
+        while (GetMessage(&msg, NULL, 0, 0) > 0) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+    DumpRegisters(cpu);
 }
