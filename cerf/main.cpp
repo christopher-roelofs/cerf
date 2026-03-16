@@ -163,7 +163,7 @@ int main(int argc, char* argv[]) {
     if (cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cli_fake_total_phys;
 
     /* Install import thunks */
-    thunks.InstallThunks(pe_info);
+    thunks.InstallThunks(pe_info, exe_path);
 
     /* Allocate stack */
     uint32_t stack_top = mem.AllocStack();

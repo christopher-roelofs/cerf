@@ -59,7 +59,7 @@ bool IsArmPE(const std::wstring& host_path); /* Check if file is ARM PE (WinCE) 
 class Win32Thunks {
 public:
     Win32Thunks(EmulatedMemory& mem);
-    void InstallThunks(PEInfo& info);      /* Replace IAT entries with thunk addresses */
+    void InstallThunks(PEInfo& info, const char* module_name = "");  /* Replace IAT entries with thunk addresses */
     void CallDllEntryPoints();             /* Call DllMain for loaded ARM DLLs */
     bool HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem);
 

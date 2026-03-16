@@ -102,7 +102,7 @@ void Win32Thunks::RegisterChildProcessHandler() {
 
                     MakeCallbackExecutor(&ctx, *cpi->mem, *cpi->thunks, 0xCAFEC000);
                     cpi->mem->Alloc(ctx.marshal_base, 0x10000);
-                    cpi->thunks->InstallThunks(child_pe);
+                    cpi->thunks->InstallThunks(child_pe, ctx.process_name);
                     cpi->thunks->CallDllEntryPoints();
 
                     /* Build command line in shared memory */

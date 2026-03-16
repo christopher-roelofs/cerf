@@ -64,7 +64,7 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     loaded_dlls[wlower] = loaded;
 
     /* Recursively install thunks for this DLL's own imports */
-    InstallThunks(loaded_dlls[wlower].pe_info);
+    InstallThunks(loaded_dlls[wlower].pe_info, dll_name.c_str());
     /* Queue DLL entry point (DllMain) for deferred call after CPU init */
     if (entry != 0 && dll_info.entry_point_rva != 0) {
         LOG(API, "[API]  DLL has entry point at 0x%08X - queued for init\n", entry);
@@ -74,11 +74,18 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     return &loaded_dlls[wlower];
 }
 
-void Win32Thunks::InstallThunks(PEInfo& info) {
+void Win32Thunks::InstallThunks(PEInfo& info, const char* module_name) {
     /* For each import, try to resolve from a loaded ARM DLL first,
        then fall back to creating a thunk stub. ARM DLLs are loaded
        on demand (cascading: their imports are resolved recursively). */
+    struct UnresolvedImport {
+        std::string dll_name;
+        std::string display;   /* "FuncName" or "@ordinal" */
+    };
+    std::vector<UnresolvedImport> unresolved;
     std::set<std::string> warned_dlls;
+    std::set<std::string> missing_dlls;
+
     for (auto& imp : info.imports) {
         /* Thunked system DLL (coredll) — always create a thunk */
         if (IsThunkedDll(imp.dll_name)) {
@@ -90,6 +97,30 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
             } else {
                 LOG(API, "[API] Installed thunk for %s!%s at 0x%08X -> IAT 0x%08X\n",
                        imp.dll_name.c_str(), imp.func_name.c_str(), thunk_addr, imp.iat_addr);
+            }
+
+            /* Check if this thunk actually has a handler registered */
+            bool has_handler = false;
+            if (imp.by_ordinal) {
+                auto oit = ordinal_map.find(imp.ordinal);
+                if (oit != ordinal_map.end())
+                    has_handler = thunk_handlers.count(oit->second) > 0;
+            } else {
+                has_handler = thunk_handlers.count(imp.func_name) > 0;
+            }
+            if (!has_handler) {
+                char buf[64];
+                if (imp.by_ordinal) {
+                    sprintf(buf, "@%d", imp.ordinal);
+                    /* Also try to show the name if we know it */
+                    auto oit = ordinal_map.find(imp.ordinal);
+                    if (oit != ordinal_map.end())
+                        unresolved.push_back({imp.dll_name, oit->second + " (" + buf + ")"});
+                    else
+                        unresolved.push_back({imp.dll_name, buf});
+                } else {
+                    unresolved.push_back({imp.dll_name, imp.func_name});
+                }
             }
             continue;
         }
@@ -118,9 +149,26 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
             }
             LOG(API, "[API] WARNING: Export not found in %s for %s@%d, using thunk stub\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), imp.ordinal);
+            /* Track as unresolved */
+            if (imp.by_ordinal) {
+                char buf[64];
+                sprintf(buf, "@%d", imp.ordinal);
+                unresolved.push_back({imp.dll_name, buf});
+            } else {
+                unresolved.push_back({imp.dll_name, imp.func_name});
+            }
         } else {
+            missing_dlls.insert(imp.dll_name);
             if (warned_dlls.insert(imp.dll_name).second) {
                 LOG_ERR("[API] ERROR: DLL not found: %s — imports will fail at runtime!\n", imp.dll_name.c_str());
+            }
+            /* Track as unresolved */
+            if (imp.by_ordinal) {
+                char buf[64];
+                sprintf(buf, "@%d", imp.ordinal);
+                unresolved.push_back({imp.dll_name, buf});
+            } else {
+                unresolved.push_back({imp.dll_name, imp.func_name});
             }
         }
 
@@ -134,6 +182,38 @@ void Win32Thunks::InstallThunks(PEInfo& info) {
             LOG(API, "[API] Installed thunk for %s!%s at 0x%08X -> IAT 0x%08X\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), thunk_addr, imp.iat_addr);
         }
+    }
+
+    /* Print summary of unresolved imports */
+    if (!unresolved.empty()) {
+        std::string mod = (module_name && module_name[0]) ? module_name : "<unknown>";
+        /* Extract just the filename from a path */
+        {
+            size_t pos = mod.find_last_of("\\/");
+            if (pos != std::string::npos) mod = mod.substr(pos + 1);
+        }
+
+        /* Group unresolved imports by DLL */
+        std::map<std::string, std::vector<std::string>> by_dll;
+        for (auto& u : unresolved) by_dll[u.dll_name].push_back(u.display);
+
+        LOG_ERR("\n");
+        LOG_ERR("================================================================\n");
+        LOG_ERR("  UNRESOLVED IMPORTS in %s (%d total)\n", mod.c_str(), (int)unresolved.size());
+        LOG_ERR("  These must be explicitly stubbed or the app will crash on use.\n");
+        LOG_ERR("================================================================\n");
+
+        for (auto& pair : by_dll) {
+            bool is_missing = missing_dlls.count(pair.first) > 0;
+            if (is_missing)
+                LOG_ERR("  %s  [DLL NOT FOUND]\n", pair.first.c_str());
+            else
+                LOG_ERR("  %s\n", pair.first.c_str());
+            for (auto& name : pair.second) {
+                LOG_ERR("    - %s\n", name.c_str());
+            }
+        }
+        LOG_ERR("================================================================\n\n");
     }
 }
 
