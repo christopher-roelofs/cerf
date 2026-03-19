@@ -49,33 +49,61 @@ uint32_t Win32Thunks::FindResourceInPE(uint32_t module_base, uint32_t rsrc_rva, 
 
     uint32_t rsrc_base = module_base + rsrc_rva;
 
-    /* Level 1: Type directory */
+    /* Helper: match a resource directory entry against an ID that may be either
+       an integer (≤0xFFFF) or a pointer to a wide string in ARM memory (>0xFFFF).
+       PE named entries have bit 31 set in the entry ID, with the lower bits
+       pointing to a length-prefixed Unicode string relative to rsrc_base. */
+    auto matchEntry = [&](uint32_t entry_id, uint32_t search_id) -> bool {
+        if (search_id <= 0xFFFF) {
+            /* Integer ID — entry must also be integer (bit 31 clear) */
+            return !(entry_id & 0x80000000) && entry_id == search_id;
+        }
+        /* String ID — search_id is a pointer to a wide string in ARM memory.
+           entry_id must be a named entry (bit 31 set), pointing to the string. */
+        if (!(entry_id & 0x80000000)) return false;
+        uint32_t str_offset = entry_id & 0x7FFFFFFF;
+        uint32_t str_addr = rsrc_base + str_offset;
+        uint16_t str_len = mem.Read16(str_addr);
+        /* Read the search string from ARM memory */
+        std::wstring search = ReadWStringFromEmu(mem, search_id);
+        if (str_len != search.size()) return false;
+        for (uint16_t j = 0; j < str_len; j++) {
+            wchar_t c1 = (wchar_t)mem.Read16(str_addr + 2 + j * 2);
+            wchar_t c2 = search[j];
+            if (towupper(c1) != towupper(c2)) return false;
+        }
+        return true;
+    };
+
+    /* Level 1: Type directory — search ALL entries (named + ID) */
     uint16_t num_named = mem.Read16(rsrc_base + 12);
     uint16_t num_id = mem.Read16(rsrc_base + 14);
-    uint32_t entry_addr = rsrc_base + 16 + num_named * 8; /* Skip named entries */
+    uint16_t total_entries = num_named + num_id;
+    uint32_t entry_addr = rsrc_base + 16;
 
     uint32_t type_offset = 0;
-    for (uint16_t i = 0; i < num_id; i++) {
+    for (uint16_t i = 0; i < total_entries; i++) {
         uint32_t id = mem.Read32(entry_addr + i * 8);
         uint32_t off = mem.Read32(entry_addr + i * 8 + 4);
-        if (id == type_id && (off & 0x80000000)) {
+        if (matchEntry(id, type_id) && (off & 0x80000000)) {
             type_offset = off & 0x7FFFFFFF;
             break;
         }
     }
     if (type_offset == 0) return 0;
 
-    /* Level 2: Name/ID directory */
+    /* Level 2: Name/ID directory — search ALL entries */
     uint32_t name_dir = rsrc_base + type_offset;
     num_named = mem.Read16(name_dir + 12);
     num_id = mem.Read16(name_dir + 14);
-    entry_addr = name_dir + 16 + num_named * 8;
+    total_entries = num_named + num_id;
+    entry_addr = name_dir + 16;
 
     uint32_t name_offset = 0;
-    for (uint16_t i = 0; i < num_id; i++) {
+    for (uint16_t i = 0; i < total_entries; i++) {
         uint32_t id = mem.Read32(entry_addr + i * 8);
         uint32_t off = mem.Read32(entry_addr + i * 8 + 4);
-        if (id == name_id) {
+        if (matchEntry(id, name_id)) {
             if (off & 0x80000000) {
                 name_offset = off & 0x7FFFFFFF;
             } else {

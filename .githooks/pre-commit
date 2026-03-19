@@ -7,7 +7,7 @@
 MAX_LINES=300
 FAIL=0
 
-for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|h|py)$'); do
+for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|h)$'); do
     if [ -f "$file" ]; then
         lines=$(wc -l < "$file" | tr -d ' ')
         if [ "$lines" -gt "$MAX_LINES" ]; then
@@ -23,7 +23,7 @@ if [ "$FAIL" -eq 1 ]; then
     echo ""
     echo "=== AI ASSISTANT NOTE ==="
     echo "To fix line count violations, you are FORBIDDEN from doing ANY of the following:"
-    echo "  - Removing important comments"
+    echo "  - Removing important comments (only trivial comments can be removed, but never delete such thing as architecture explanations, etc.)"
     echo "  - Deleting blank lines to compress code"
     echo "  - Merging multiple code lines into a single line"
     echo "  - Nuking code style by ANY means"

@@ -44,6 +44,16 @@ LRESULT CALLBACK Win32Thunks::MenuBarWndProc(HWND hwnd, UINT msg, WPARAM wParam,
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
     case WM_CREATE: {
+        /* Add WS_CLIPCHILDREN to parent chain (toolbar + rebar) so they
+           don't paint their background over us. Without this, the toolbar's
+           and rebar's WM_ERASEBKGND covers the Menu window text. */
+        for (HWND p = GetParent(hwnd); p; p = GetParent(p)) {
+            LONG style = GetWindowLongW(p, GWL_STYLE);
+            if (!(style & WS_CLIPCHILDREN))
+                SetWindowLongW(p, GWL_STYLE, style | WS_CLIPCHILDREN);
+            if (style & WS_CHILD) continue;
+            break; /* stop at top-level */
+        }
         /* Size window to fit menu items */
         HMENU hMenu = (HMENU)GetWindowLongPtrW(hwnd, 0);
         if (hMenu) {
@@ -82,16 +92,24 @@ LRESULT CALLBACK Win32Thunks::MenuBarWndProc(HWND hwnd, UINT msg, WPARAM wParam,
             LOG(API, "[API] Menu WM_WINDOWPOSCHANGED: x=%d y=%d cx=%d cy=%d flags=0x%04X\n",
                 wp->x, wp->y, wp->cx, wp->cy, wp->flags);
         }
+        /* Force synchronous repaint — the parent toolbar may paint its
+           background over us. InvalidateRect alone doesn't work because the
+           paint gets lost. Use UpdateWindow for immediate repaint. */
+        InvalidateRect(hwnd, NULL, TRUE);
+        UpdateWindow(hwnd);
         break;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+        LOG(API, "[API] Menu WM_PAINT: hdc=0x%p rcPaint={%d,%d,%d,%d}\n",
+            hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom);
         HMENU hMenu = (HMENU)GetWindowLongPtrW(hwnd, 0);
         if (hMenu) {
             HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
             HFONT hOld = (HFONT)SelectObject(hdc, hFont);
             SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, GetSysColor(COLOR_BTNTEXT));
             RECT client;
             GetClientRect(hwnd, &client);
             /* Fill background with button face color */

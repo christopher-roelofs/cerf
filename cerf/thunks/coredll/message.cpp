@@ -13,9 +13,22 @@ void Win32Thunks::RegisterMessageHandlers() {
         while (true) {
             ret = GetMessageW(&msg, (HWND)(intptr_t)(int32_t)regs[1], regs[2], regs[3]);
             if (ret == 0) break; /* WM_QUIT */
-            if (ret == -1) { /* Error — avoid infinite loop in ARM code */
-                LOG(API, "[API] GetMessageW error %lu (hwnd=0x%p)\n",
-                    GetLastError(), (HWND)(intptr_t)(int32_t)regs[1]);
+            if (ret == -1) {
+                DWORD err = GetLastError();
+                HWND hwnd_arg = (HWND)(intptr_t)(int32_t)regs[1];
+                /* ERROR_INVALID_WINDOW_HANDLE (1400): the window was destroyed.
+                   Return WM_QUIT so the ARM message loop exits cleanly instead of
+                   spinning forever on a dead HWND. This happens when an Explore
+                   window is closed — the thread's GetMessageW loop needs to end. */
+                if (err == ERROR_INVALID_WINDOW_HANDLE || (hwnd_arg && !::IsWindow(hwnd_arg))) {
+                    LOG(API, "[API] GetMessageW: HWND 0x%p destroyed (err=%lu), returning WM_QUIT\n",
+                        hwnd_arg, err);
+                    ret = 0; /* WM_QUIT */
+                    msg = {};
+                    msg.message = WM_QUIT;
+                    break;
+                }
+                LOG(API, "[API] GetMessageW error %lu (hwnd=0x%p)\n", err, hwnd_arg);
                 Sleep(1);
                 continue;
             }
@@ -94,7 +107,23 @@ void Win32Thunks::RegisterMessageHandlers() {
         }
         if (message == WM_PAINT) {
             tls_paint_hwnd = hwnd;
+            /* Log WM_PAINT + CDoc._grfLock for IE_Server windows */
+            wchar_t pcls[64] = {};
+            GetClassNameW(hwnd, pcls, 64);
+            if (wcsstr(pcls, L"Internet Explorer_Server")) {
+                uint32_t cdoc = (uint32_t)GetWindowLongW(hwnd, -21);
+                constexpr uint32_t CDOC_GRFLOCK = 0x1EC;
+                constexpr uint32_t CDOC_CSS_DL = 0x434;
+                constexpr uint32_t CDOC_FLAGS_4AC = 0x4AC;
+                uint32_t grflock = cdoc ? mem.Read32(cdoc + CDOC_GRFLOCK) : 0xDEAD;
+                uint32_t css_dl = cdoc ? mem.Read32(cdoc + CDOC_CSS_DL) : 0xDEAD;
+                uint32_t flags = cdoc ? mem.Read32(cdoc + CDOC_FLAGS_4AC) : 0xDEAD;
+                LOG(API, "[API] WM_PAINT IE_Server 0x%p: CDoc=0x%08X lock=0x%X cssDL=%u flags4AC=0x%X (bit80=%d)\n",
+                    hwnd, cdoc, grflock, css_dl, flags, (flags & 0x80) ? 1 : 0);
+            }
         }
+        /* (Removed: deferred navigation handler. SHBrowseToURL trap now calls
+           SHCreateExplorerInstance directly via main_callback_executor.) */
         auto it = hwnd_wndproc_map.find(hwnd);
         if (it != hwnd_wndproc_map.end() && callback_executor) {
             if (message == WM_CHAR || message == WM_KEYDOWN || message == WM_LBUTTONDOWN) {
@@ -231,66 +260,6 @@ void Win32Thunks::RegisterMessageHandlers() {
         }
         return true;
     });
-    Thunk("PostQuitMessage", 866, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        PostQuitMessage(regs[0]); return true;
-    });
-    Thunk("DefWindowProcW", 264, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HWND hw = (HWND)(intptr_t)(int32_t)regs[0]; UINT umsg = regs[1];
-        if ((umsg == WM_CREATE || umsg == WM_NCCREATE) && regs[3] != 0) {
-            regs[0] = (umsg == WM_NCCREATE) ? 1 : 0;
-        } else if ((umsg == WM_WINDOWPOSCHANGED || umsg == WM_WINDOWPOSCHANGING) && regs[3] != 0) {
-            /* ARM lParam points to 32-bit WINDOWPOS in emulated memory.
-               Marshal to native 64-bit WINDOWPOS for DefWindowProcW.
-               ARM layout: hwnd(4) hwndInsertAfter(4) x(4) y(4) cx(4) cy(4) flags(4) */
-            uint32_t a = regs[3];
-            WINDOWPOS wp = {};
-            wp.hwnd = (HWND)(intptr_t)(int32_t)mem.Read32(a + 0);
-            wp.hwndInsertAfter = (HWND)(intptr_t)(int32_t)mem.Read32(a + 4);
-            wp.x = (int)mem.Read32(a + 8);
-            wp.y = (int)mem.Read32(a + 12);
-            wp.cx = (int)mem.Read32(a + 16);
-            wp.cy = (int)mem.Read32(a + 20);
-            wp.flags = mem.Read32(a + 24);
-            regs[0] = (uint32_t)DefWindowProcW(hw, umsg, regs[2], (LPARAM)&wp);
-            /* Copy back for WM_WINDOWPOSCHANGING */
-            if (umsg == WM_WINDOWPOSCHANGING) {
-                mem.Write32(a + 8, wp.x);
-                mem.Write32(a + 12, wp.y);
-                mem.Write32(a + 16, wp.cx);
-                mem.Write32(a + 20, wp.cy);
-                mem.Write32(a + 24, wp.flags);
-            }
-        } else if (umsg == WM_SETTEXT && regs[3] != 0) {
-            /* ARM lParam is an emulated memory pointer to a wchar string.
-               Read it and pass a native pointer to DefWindowProcW. */
-            std::wstring text = ReadWStringFromEmu(mem, regs[3]);
-            regs[0] = (uint32_t)DefWindowProcW(hw, WM_SETTEXT, 0, (LPARAM)text.c_str());
-        } else {
-            regs[0] = (uint32_t)DefWindowProcW(hw, umsg, regs[2], regs[3]);
-        }
-        return true;
-    });
-    Thunk("MessageBoxW", 858, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring text = ReadWStringFromEmu(mem, regs[1]);
-        std::wstring title = ReadWStringFromEmu(mem, regs[2]);
-        LOG(API, "[API] MessageBoxW(hwnd=0x%08X, text='%ls', title='%ls', type=0x%X)\n",
-            regs[0], text.c_str(), title.c_str(), regs[3]);
-        regs[0] = MessageBoxW((HWND)(intptr_t)(int32_t)regs[0], text.c_str(), title.c_str(), regs[3]);
-        return true;
-    });
-    Thunk("MessageBeep", 857, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        MessageBeep(regs[0]); regs[0] = 1; return true;
-    });
-    Thunk("MsgWaitForMultipleObjectsEx", 871, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        regs[0] = MsgWaitForMultipleObjectsEx(0, NULL, regs[2], regs[3], ReadStackArg(regs, mem, 0));
-        return true;
-    });
-    Thunk("SendNotifyMessageW", 869, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = SendNotifyMessageW((HWND)(intptr_t)(int32_t)regs[0], regs[1], regs[2], regs[3]);
-        return true;
-    });
-    Thunk("GetMessagePos", 862, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetMessagePos(); return true;
-    });
-    Thunk("TranslateAcceleratorW", 838, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    /* PostQuitMessage, DefWindowProcW, MessageBox, MsgWait, etc — in message_wait.cpp */
+    RegisterMessageWaitHandlers();
 }

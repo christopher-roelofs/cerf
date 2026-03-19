@@ -1,5 +1,6 @@
 /* File I/O thunks: CreateFile, ReadFile, WriteFile, Find*, directory ops */
 #include "../win32_thunks.h"
+#include "../handle_table.h"
 #include "../../log.h"
 #include <cstdio>
 #include <vector>
@@ -56,6 +57,9 @@ void Win32Thunks::RegisterFileHandlers() {
                 wce_path.c_str(), access, share, creation, flags, GetLastError());
         else
             LOG(API, "[API] CreateFileW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
+            /* Track handle for per-process cleanup */
+            auto* ht = GetProcessHandleTable();
+            if (ht) ht->Track((HANDLE)(uintptr_t)regs[0]);
         return true;
     });
     Thunk("ReadFile", 170, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -134,11 +138,7 @@ void Win32Thunks::RegisterFileHandlers() {
         regs[0] = CreateDirectoryW(MapWinCEPath(wce_path).c_str(), NULL);
         return true;
     });
-    Thunk("RemoveDirectoryW", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
-        regs[0] = RemoveDirectoryW(MapWinCEPath(wce_path).c_str());
-        return true;
-    });
+    /* RemoveDirectoryW: registered in wininet_deps.cpp (with ordinal 161) */
     Thunk("FindFirstFileW", 167, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring wce_pattern = ReadWStringFromEmu(mem, regs[0]);
         uint32_t find_data_addr = regs[1];
@@ -224,73 +224,6 @@ void Win32Thunks::RegisterFileHandlers() {
         root_find_states.erase(fake);
         return true;
     });
-    Thunk("GetFileTime", 176, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        HANDLE h = UnwrapHandle(regs[0]);
-        FILETIME ct, at, wt;
-        BOOL ret = GetFileTime(h, regs[1] ? &ct : NULL, regs[2] ? &at : NULL, regs[3] ? &wt : NULL);
-        if (ret) {
-            if (regs[1]) { mem.Write32(regs[1], ct.dwLowDateTime); mem.Write32(regs[1]+4, ct.dwHighDateTime); }
-            if (regs[2]) { mem.Write32(regs[2], at.dwLowDateTime); mem.Write32(regs[2]+4, at.dwHighDateTime); }
-            if (regs[3]) { mem.Write32(regs[3], wt.dwLowDateTime); mem.Write32(regs[3]+4, wt.dwHighDateTime); }
-        }
-        LOG(API, "[API] GetFileTime(0x%08X) -> %d\n", regs[0], ret);
-        regs[0] = ret; return true;
-    });
-    Thunk("FileTimeToLocalFileTime", 21, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        FILETIME ft_in, ft_out;
-        ft_in.dwLowDateTime = mem.Read32(regs[0]);
-        ft_in.dwHighDateTime = mem.Read32(regs[0] + 4);
-        BOOL ret = FileTimeToLocalFileTime(&ft_in, &ft_out);
-        if (ret && regs[1]) {
-            mem.Write32(regs[1], ft_out.dwLowDateTime);
-            mem.Write32(regs[1] + 4, ft_out.dwHighDateTime);
-        }
-        regs[0] = ret; return true;
-    });
-    Thunk("FileTimeToSystemTime", 20, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        FILETIME ft;
-        ft.dwLowDateTime = mem.Read32(regs[0]);
-        ft.dwHighDateTime = mem.Read32(regs[0] + 4);
-        SYSTEMTIME st;
-        BOOL ret = FileTimeToSystemTime(&ft, &st);
-        if (ret && regs[1]) {
-            mem.Write16(regs[1]+0, st.wYear); mem.Write16(regs[1]+2, st.wMonth);
-            mem.Write16(regs[1]+4, st.wDayOfWeek); mem.Write16(regs[1]+6, st.wDay);
-            mem.Write16(regs[1]+8, st.wHour); mem.Write16(regs[1]+10, st.wMinute);
-            mem.Write16(regs[1]+12, st.wSecond); mem.Write16(regs[1]+14, st.wMilliseconds);
-        }
-        regs[0] = ret; return true;
-    });
-    Thunk("CopyFileW", 164, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring src = ReadWStringFromEmu(mem, regs[0]);
-        std::wstring dst = ReadWStringFromEmu(mem, regs[1]);
-        BOOL failIfExists = regs[2];
-        std::wstring host_src = MapWinCEPath(src);
-        std::wstring host_dst = MapWinCEPath(dst);
-        BOOL ret = CopyFileW(host_src.c_str(), host_dst.c_str(), failIfExists);
-        LOG(API, "[API] CopyFileW('%ls' -> '%ls', failIfExists=%d) -> %d\n",
-            src.c_str(), dst.c_str(), failIfExists, ret);
-        regs[0] = ret;
-        return true;
-    });
-    ThunkOrdinal("GetTempPathW", 162); /* Ordinal-only entries */
-    ThunkOrdinal("FlushFileBuffers", 175);
-    ThunkOrdinal("SetFileTime", 177);
-    ThunkOrdinal("DeleteAndRenameFile", 183);
-    Thunk("GetDiskFreeSpaceExW", 184, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
-        std::wstring mapped = MapWinCEPath(path);
-        ULARGE_INTEGER freeCaller = {}, totalBytes = {}, totalFree = {};
-        BOOL ret = GetDiskFreeSpaceExW(mapped.c_str(),
-            regs[1] ? &freeCaller : NULL,
-            regs[2] ? &totalBytes : NULL,
-            regs[3] ? &totalFree : NULL);
-        if (ret) {
-            if (regs[1]) { mem.Write32(regs[1], freeCaller.LowPart); mem.Write32(regs[1]+4, freeCaller.HighPart); }
-            if (regs[2]) { mem.Write32(regs[2], totalBytes.LowPart); mem.Write32(regs[2]+4, totalBytes.HighPart); }
-            if (regs[3]) { mem.Write32(regs[3], totalFree.LowPart); mem.Write32(regs[3]+4, totalFree.HighPart); }
-        }
-        LOG(API, "[API] GetDiskFreeSpaceExW('%ls') -> %d\n", path.c_str(), ret);
-        regs[0] = ret; return true;
-    });
+    /* File time, copy, disk ops — registered in file_time.cpp */
+    RegisterFileTimeHandlers();
 }

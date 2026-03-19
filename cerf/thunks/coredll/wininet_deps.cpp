@@ -238,11 +238,6 @@ void Win32Thunks::RegisterWininetDepsHandlers() {
         return true;
     });
 
-    Thunk("CeSetThreadPriority", 621, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* WinCE thread priority — map to native SetThreadPriority (approximate) */
-        regs[0] = 1; /* success */
-        return true;
-    });
 
     /* Misc stubs */
     Thunk("CeEventHasOccurred", 479, [](uint32_t* regs, EmulatedMemory&) -> bool {

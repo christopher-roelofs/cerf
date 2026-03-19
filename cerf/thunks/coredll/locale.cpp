@@ -50,7 +50,7 @@ void Win32Thunks::RegisterLocaleHandlers() {
         regs[0] = ret;
         return true;
     });
-    Thunk("LCMapStringW", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+    Thunk("LCMapStringW", 199, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         LCID locale = regs[0];
         DWORD flags = regs[1];
         std::wstring src = ReadWStringFromEmu(mem, regs[2]);
@@ -152,11 +152,6 @@ void Win32Thunks::RegisterLocaleHandlers() {
     Thunk("GetSystemDefaultUILanguage", 1319, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0x0409; /* US English */
         return true;
-    });
-    Thunk("LCMapStringW", 199, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] LCMapStringW(locale=0x%X, flags=0x%X, src=0x%08X, srcLen=%d) -> 0 (stub)\n",
-               regs[0], regs[1], regs[2], (int32_t)regs[3]);
-        regs[0] = 0; return true;
     });
     Thunk("CharLowerBuffW", 222, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t addr = regs[0], len = regs[1];

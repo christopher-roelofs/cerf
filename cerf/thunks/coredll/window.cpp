@@ -1,5 +1,6 @@
 /* Window thunks: RegisterClass, CreateWindowEx, Show/Move/Destroy */
 #include "../win32_thunks.h"
+#include "../class_bridge.h"
 #include "../../log.h"
 #include <cstdio>
 #include <commctrl.h>
@@ -13,7 +14,8 @@ void Win32Thunks::RegisterWindowHandlers() {
            and reuse them later, expecting the DC to remain valid.  Without CS_OWNDC,
            desktop Windows uses a shared DC cache where DCs become invalid after
            ReleaseDC or when the system reclaims them after message processing. */
-        wc.style = mem.Read32(regs[0]) | CS_OWNDC; wc.lpfnWndProc = EmuWndProc;
+        wc.style = ClassBridge::TranslateStyleToNative(mem.Read32(regs[0]));
+        wc.lpfnWndProc = EmuWndProc;
         wc.cbClsExtra = mem.Read32(regs[0]+8); wc.cbWndExtra = mem.Read32(regs[0]+12);
         wc.hInstance = GetModuleHandleW(NULL);
         /* WinCE icon/cursor/brush handles are 32-bit values that don't map to
@@ -21,29 +23,22 @@ void Win32Thunks::RegisterWindowHandlers() {
            The ARM WndProc handles all actual drawing via EmuWndProc dispatch. */
         uint32_t emu_cursor = mem.Read32(regs[0]+24);
         uint32_t emu_brush = mem.Read32(regs[0]+28);
+        uint32_t emu_icon = 0; /* WinCE icons not preserved (always NULL) */
         wc.hIcon = NULL;
         wc.hCursor = emu_cursor ? LoadCursorW(NULL, IDC_ARROW) : NULL;
-        /* Brush values 1-31 are COLOR_xxx+1 constants — pass through directly.
-           WinCE GetSysColor uses a 0x40000000 flag on color indices; strip it.
-           Non-zero values above 31 are native GDI brush handles (truncated to
-           32-bit by our GetSysColorBrush/CreateSolidBrush thunks) — sign-extend
-           them back to 64-bit so DefWindowProc can use them for WM_ERASEBKGND. */
-        uint32_t brush_val = emu_brush & 0x3FFFFFFF; /* strip WinCE sys color flag */
-        if (brush_val > 0 && brush_val <= 31) {
-            /* Brush values 1-31 encode COLOR_xxx+1.  WinCE added COLOR_STATIC=25
-               and COLOR_STATICTEXT=26 which don't exist on desktop Windows.
-               Map them to appropriate desktop equivalents. */
-            if (brush_val == 26)      brush_val = COLOR_3DFACE + 1;     /* COLOR_STATIC+1 */
-            else if (brush_val == 27) brush_val = COLOR_WINDOWTEXT + 1; /* COLOR_STATICTEXT+1 */
-            wc.hbrBackground = (HBRUSH)(uintptr_t)brush_val;
-        }
-        else if (emu_brush != 0)
-            wc.hbrBackground = (HBRUSH)(intptr_t)(int32_t)emu_brush;
-        else
-            wc.hbrBackground = NULL;
+        /* Brush translation: via ClassBridge (single source of truth) */
+        wc.hbrBackground = ClassBridge::TranslateBrushToNative(emu_brush);
         std::wstring className = ReadWStringFromEmu(mem, mem.Read32(regs[0]+36));
         wc.lpszClassName = className.c_str();
         arm_wndprocs[className] = arm_wndproc;
+        /* Store original ARM class info in ClassBridge for Get/SetClassLongW */
+        ArmClassInfo aci;
+        aci.arm_wndproc = arm_wndproc;
+        aci.arm_style = mem.Read32(regs[0]); /* original style WITHOUT CS_OWNDC */
+        aci.arm_brush = emu_brush;
+        aci.arm_cursor = emu_cursor;
+        aci.arm_icon = emu_icon;
+        GetClassBridge().RegisterClass(className, aci);
         LOG(API, "[API] RegisterClassW: '%ls' (ARM WndProc=0x%08X, brush=0x%08X->0x%08X)\n",
             className.c_str(), arm_wndproc, emu_brush, (uint32_t)(uintptr_t)wc.hbrBackground);
         ATOM atom = RegisterClassW(&wc);
@@ -214,6 +209,16 @@ void Win32Thunks::RegisterWindowHandlers() {
                 HICON hIcon = LoadIconW(NULL, IDI_APPLICATION);
                 SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
                 SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+                /* WinCE windows always come to foreground on creation.
+                   Desktop Windows restricts SetForegroundWindow from background threads.
+                   Force it via AttachThreadInput to match WinCE behavior. */
+                DWORD fgThread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+                DWORD myThread = GetCurrentThreadId();
+                if (fgThread != myThread)
+                    AttachThreadInput(myThread, fgThread, TRUE);
+                SetForegroundWindow(hwnd);
+                if (fgThread != myThread)
+                    AttachThreadInput(myThread, fgThread, FALSE);
             }
             ApplyWindowTheme(hwnd, !is_child);
             if (has_captionok) {

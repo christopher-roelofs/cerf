@@ -4,7 +4,11 @@
 #include "../win32_thunks.h"
 #include "../../log.h"
 #include <cstdio>
+#include <algorithm>
 #include <shellapi.h>
+#ifndef RT_TYPELIB
+#define RT_TYPELIB MAKEINTRESOURCEW(8)
+#endif
 
 void Win32Thunks::RegisterResourceHandlers() {
     Thunk("LoadStringW", 874, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -237,59 +241,6 @@ void Win32Thunks::RegisterResourceHandlers() {
         regs[0] = (it != rsrc_map.end()) ? it->second.data_size : 0;
         return true;
     });
-    Thunk("LoadAcceleratorsW", 94, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t hmod = regs[0], name_id = regs[1];
-        LOG(API, "[API] LoadAcceleratorsW(0x%08X, %d)\n", hmod, name_id);
-        uint32_t rsrc_rva = 0, rsrc_sz = 0;
-        bool is_arm = (hmod == emu_hinstance);
-        if (is_arm) {
-            uint32_t dos_lfanew = mem.Read32(hmod + 0x3C), nt_addr = hmod + dos_lfanew;
-            uint32_t n = mem.Read32(nt_addr + 0x74);
-            if (n > IMAGE_DIRECTORY_ENTRY_RESOURCE) {
-                rsrc_rva = mem.Read32(nt_addr + 0x78 + IMAGE_DIRECTORY_ENTRY_RESOURCE * 8);
-                rsrc_sz = mem.Read32(nt_addr + 0x78 + IMAGE_DIRECTORY_ENTRY_RESOURCE * 8 + 4);
-            }
-        }
-        for (auto& pair : loaded_dlls) {
-            if (pair.second.base_addr == hmod) {
-                is_arm = true; rsrc_rva = pair.second.pe_info.rsrc_rva;
-                rsrc_sz = pair.second.pe_info.rsrc_size; break;
-            }
-        }
-        if (is_arm && rsrc_rva) {
-            uint32_t data_rva = 0, data_size = 0;
-            if (FindResourceInPE(hmod, rsrc_rva, rsrc_sz, 9, name_id, data_rva, data_size)) {
-                uint8_t* data = mem.Translate(hmod + data_rva);
-                if (data && data_size >= 8) {
-                    int count = data_size / 8;
-                    ACCEL* accels = new ACCEL[count];
-                    for (int i = 0; i < count; i++) {
-                        uint16_t* entry = (uint16_t*)(data + i * 8);
-                        accels[i].fVirt = (BYTE)entry[0];
-                        accels[i].key = entry[1];
-                        accels[i].cmd = entry[2] | (entry[3] << 16);
-                    }
-                    HACCEL h = CreateAcceleratorTableW(accels, count);
-                    delete[] accels;
-                    regs[0] = (uint32_t)(uintptr_t)h;
-                    LOG(API, "[API]   -> HACCEL 0x%08X (%d entries)\n", regs[0], count);
-                    return true;
-                }
-            }
-        }
-        HMODULE native_mod = is_arm ? GetNativeModuleForResources(hmod) : (HMODULE)(intptr_t)(int32_t)hmod;
-        regs[0] = native_mod ? (uint32_t)(uintptr_t)LoadAcceleratorsW(native_mod, MAKEINTRESOURCEW(name_id)) : 0;
-        return true;
-    });
-    /* ExtractResource: WinCE function to extract a named resource from a PE/CAB
-       to a file.  Non-critical for rendering; return FALSE (extraction failed). */
-    Thunk("ExtractResource", 573, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring src = ReadWStringFromEmu(mem, regs[0]);
-        std::wstring name = ReadWStringFromEmu(mem, regs[1]);
-        std::wstring dest = ReadWStringFromEmu(mem, regs[2]);
-        LOG(API, "[API] ExtractResource('%ls', '%ls', '%ls') -> 0 (stub)\n",
-            src.c_str(), name.c_str(), dest.c_str());
-        regs[0] = 0;
-        return true;
-    });
+    /* LoadAcceleratorsW, ExtractResource — registered in resource_extract.cpp */
+    RegisterResourceExtractHandlers();
 }

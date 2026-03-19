@@ -116,7 +116,6 @@ void Win32Thunks::RegisterGdiDrawHandlers() {
     Thunk("GetNearestColor", 952, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = GetNearestColor(GDI_HDC(regs[0]), regs[1]); return true; });
     Thunk("LineTo", 1652, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = LineTo(GDI_HDC(regs[0]), regs[1], regs[2]); return true; });
     Thunk("MoveToEx", 1651, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = MoveToEx(GDI_HDC(regs[0]), regs[1], regs[2], NULL); return true; });
-    Thunk("SetViewportOrgEx", 983, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetViewportOrgEx(GDI_HDC(regs[0]), regs[1], regs[2], NULL); return true; });
     Thunk("StretchBlt", 905, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HDC dst = GDI_HDC(regs[0]);
         int xD=(int)regs[1], yD=(int)regs[2], wD=(int)regs[3];

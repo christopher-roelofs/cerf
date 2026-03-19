@@ -196,8 +196,6 @@ void Win32Thunks::RegisterComHandlers() {
         LOG(API, "[API] OpenEventW(access=0x%X, inherit=%d) -> 0 (stub)\n", regs[0], regs[1]);
         regs[0] = 0; return true;
     });
-    Thunk("CreateAPISet", 559, stub0("CreateAPISet"));
-    Thunk("RegisterAPISet", 635, stub0("RegisterAPISet"));
     Thunk("SetProcPermissions", 611, stub1("SetProcPermissions"));
     Thunk("GetCurrentPermissions", 612, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0xFFFFFFFF; /* all permissions */
@@ -209,10 +207,7 @@ void Win32Thunks::RegisterComHandlers() {
         LOG(API, "[API] MapCallerPtr(ptr=0x%08X, size=%u) -> 0x%08X\n", regs[0], regs[1], regs[0]);
         return true; /* regs[0] already contains the pointer */
     });
-    Thunk("GetExitCodeThread", 518, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] [STUB] GetExitCodeThread -> 0\n");
-        regs[0] = 0; return true;
-    });
+    /* GetExitCodeThread: registered in process.cpp */
     Thunk("GetThreadPriority", 515, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0; /* THREAD_PRIORITY_NORMAL */
         return true;
@@ -251,10 +246,7 @@ void Win32Thunks::RegisterComHandlers() {
     Thunk("GwesPowerOffSystem", 296, stub0("GwesPowerOffSystem"));
     Thunk("RectangleAnimation", 294, stub0("RectangleAnimation"));
     Thunk("TouchCalibrate", 877, stub0("TouchCalibrate"));
-    Thunk("TerminateProcess", 544, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] TerminateProcess(hProcess=0x%08X, exitCode=%d)\n", regs[0], regs[1]);
-        regs[0] = 1; return true;
-    });
+    /* TerminateProcess: registered in module.cpp */
     Thunk("GetKeyboardLayoutList", 1767, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         if (regs[0] > 0 && regs[1]) {
             mem.Write32(regs[1], 0x04090409); /* US English */
@@ -270,9 +262,7 @@ void Win32Thunks::RegisterComHandlers() {
         regs[0] = 0; /* Always return FALSE - pointer is valid */
         return true;
     });
-    Thunk("GetKeyState", 860, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)GetKeyState((int)regs[0]); return true;
-    });
+    /* GetKeyState: registered in input.cpp */
     Thunk("SetSysColors", 890, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         /* SetSysColors(cElements, lpaElements, lpaRgbValues)
            r0=count, r1=ptr to int array of COLOR_* indices, r2=ptr to COLORREF array */
@@ -290,9 +280,7 @@ void Win32Thunks::RegisterComHandlers() {
         regs[0] = 1;
         return true;
     });
-    Thunk("GetAsyncKeyState", 826, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)GetAsyncKeyState((int)regs[0]); return true;
-    });
+    /* GetAsyncKeyState: registered in input.cpp */
     /* Ordinal-only entries */
     ThunkOrdinal("GetOwnerProcess", 606);
     ThunkOrdinal("Random", 80);

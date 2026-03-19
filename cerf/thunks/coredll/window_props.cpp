@@ -1,5 +1,6 @@
 /* Window thunks: Get/SetWindowLong, text, rect ops */
 #include "../win32_thunks.h"
+#include "../class_bridge.h"
 #include "../../log.h"
 #include <cstdio>
 
@@ -262,4 +263,6 @@ void Win32Thunks::RegisterWindowPropsHandlers() {
         mem.Write32(regs[0]+8,r); mem.Write32(regs[0]+12,b);
         regs[0]=1; return true;
     });
+    /* Get/SetClassLongW — registered in window_class.cpp */
+    RegisterWindowClassHandlers();
 }

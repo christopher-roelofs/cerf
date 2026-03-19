@@ -1,6 +1,7 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 #include "win32_thunks.h"
+#include "../tracing/trace_manager.h"
 #include "../log.h"
 #include <cstdio>
 #include <algorithm>
@@ -40,21 +41,62 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
         dll_path = dll_name;
         f = fopen(dll_path.c_str(), "rb");
     }
-    if (!f) return nullptr;
+    /* If not found and name has no extension, try appending ".dll" (standard
+       Windows behavior — LoadLibrary("iectl") should find "iectl.dll") */
+    if (!f) {
+        std::string with_ext = dll_name;
+        if (dll_name.find('.') == std::string::npos)
+            with_ext += ".dll";
+        else {
+            LOG(API, "[API] LoadArmDll: '%s' not found (searched sys/exe dirs)\n", dll_name.c_str());
+            return nullptr; /* already had extension, genuinely not found */
+        }
+        if (!wince_sys_dir.empty()) {
+            dll_path = wince_sys_dir + with_ext;
+            f = fopen(dll_path.c_str(), "rb");
+        }
+        if (!f) {
+            dll_path = exe_dir + with_ext;
+            f = fopen(dll_path.c_str(), "rb");
+        }
+        if (!f) {
+            dll_path = with_ext;
+            f = fopen(dll_path.c_str(), "rb");
+        }
+        if (!f) {
+            LOG(API, "[API] LoadArmDll: '%s' not found (also tried '%s')\n",
+                dll_name.c_str(), with_ext.c_str());
+            return nullptr;
+        }
+        /* Update lower/wlower to include the extension for the cache key */
+        lower = with_ext;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        wlower = std::wstring(lower.begin(), lower.end());
+        /* Check cache again with the full name */
+        auto it2 = loaded_dlls.find(wlower);
+        if (it2 != loaded_dlls.end()) { fclose(f); return &it2->second; }
+    }
     fclose(f);
 
     PEInfo dll_info = {};
     uint32_t entry = PELoader::LoadDll(dll_path.c_str(), mem, dll_info);
     if (entry == 0 && dll_info.image_base == 0) {
-        LOG(API, "[API] Failed to load ARM DLL: %s\n", dll_path.c_str());
+        LOG(API, "[API] LoadArmDll: Failed to load ARM DLL: %s\n", dll_path.c_str());
         return nullptr;
     }
 
-    LOG(API, "[API] Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
+    LOG(API, "[API] LoadArmDll: Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
            dll_name.c_str(), dll_info.image_base, dll_info.export_rva, dll_info.export_size);
+
+    /* Activate ARM trace points for this DLL (auto-rebase, CRC32 verification) */
+    if (trace_mgr_)
+        trace_mgr_->OnDllLoad(dll_name, dll_path, dll_info.image_base);
 
     /* Register slot-0 alias so WinCE slot-masked addresses resolve to this DLL */
     mem.AddDllAlias(dll_info.image_base, dll_info.size_of_image);
+
+    /* Register writable sections for per-process copy-on-write */
+    mem.RegisterDllWritableSections(dll_info.image_base, dll_info.sections);
 
     LoadedDll loaded;
     loaded.path = dll_path;
@@ -65,10 +107,21 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
 
     /* Recursively install thunks for this DLL's own imports */
     InstallThunks(loaded_dlls[wlower].pe_info, dll_name.c_str());
-    /* Queue DLL entry point (DllMain) for deferred call after CPU init */
+
+    /* Call DLL entry point (DllMain) — immediately if callback_executor is
+       available (runtime LoadLibrary), otherwise queue for deferred init
+       (initial PE loading before the CPU is set up). */
     if (entry != 0 && dll_info.entry_point_rva != 0) {
-        LOG(API, "[API]  DLL has entry point at 0x%08X - queued for init\n", entry);
-        pending_dll_inits.push_back({entry, dll_info.image_base});
+        if (callback_executor) {
+            LOG(API, "[API] LoadArmDll: Calling DllMain at 0x%08X (base=0x%08X, DLL_PROCESS_ATTACH) immediately\n",
+                   entry, dll_info.image_base);
+            uint32_t args[3] = { dll_info.image_base, 1 /* DLL_PROCESS_ATTACH */, 0 };
+            uint32_t result = callback_executor(entry, args, 3);
+            LOG(API, "[API] DllMain returned %d\n", result);
+        } else {
+            LOG(API, "[API] LoadArmDll: DLL has entry point at 0x%08X - queued for init\n", entry);
+            pending_dll_inits.push_back({entry, dll_info.image_base});
+        }
     }
 
     return &loaded_dlls[wlower];
@@ -147,7 +200,7 @@ void Win32Thunks::InstallThunks(PEInfo& info, const char* module_name) {
                 }
                 continue;
             }
-            LOG(API, "[API] WARNING: Export not found in %s for %s@%d, using thunk stub\n",
+            LOG(API, "[API] LoadArmDll: WARNING: Export not found in %s for %s@%d, using thunk stub\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), imp.ordinal);
             /* Track as unresolved */
             if (imp.by_ordinal) {
@@ -160,7 +213,7 @@ void Win32Thunks::InstallThunks(PEInfo& info, const char* module_name) {
         } else {
             missing_dlls.insert(imp.dll_name);
             if (warned_dlls.insert(imp.dll_name).second) {
-                LOG_ERR("[API] ERROR: DLL not found: %s — imports will fail at runtime!\n", imp.dll_name.c_str());
+                LOG_ERR("[API] LoadArmDll: ERROR: DLL not found: %s — imports will fail at runtime!\n", imp.dll_name.c_str());
             }
             /* Track as unresolved */
             if (imp.by_ordinal) {
@@ -176,10 +229,10 @@ void Win32Thunks::InstallThunks(PEInfo& info, const char* module_name) {
         uint32_t thunk_addr = AllocThunk(imp.dll_name, imp.func_name, imp.ordinal, imp.by_ordinal);
         mem.Write32(imp.iat_addr, thunk_addr);
         if (imp.by_ordinal) {
-            LOG(API, "[API] Installed thunk for %s!@%d at 0x%08X -> IAT 0x%08X\n",
+            LOG(API, "[API] LoadArmDll: Installed thunk for %s!@%d at 0x%08X -> IAT 0x%08X\n",
                    imp.dll_name.c_str(), imp.ordinal, thunk_addr, imp.iat_addr);
         } else {
-            LOG(API, "[API] Installed thunk for %s!%s at 0x%08X -> IAT 0x%08X\n",
+            LOG(API, "[API] LoadArmDll: Installed thunk for %s!%s at 0x%08X -> IAT 0x%08X\n",
                    imp.dll_name.c_str(), imp.func_name.c_str(), thunk_addr, imp.iat_addr);
         }
     }

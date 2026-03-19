@@ -129,7 +129,9 @@ void Win32Thunks::RegisterGdiDcHandlers() {
         regs[0] = SetROP2(GDI_HDC(regs[0]), regs[1]); return true;
     });
     Thunk("SetViewportOrgEx", 983, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = SetViewportOrgEx(GDI_HDC(regs[0]), regs[1], regs[2], NULL); return true;
+        int x = (int)regs[1], y = (int)regs[2];
+        LOG(API, "[API] SetViewportOrgEx(hdc=0x%08X, x=%d, y=%d)\n", regs[0], x, y);
+        regs[0] = SetViewportOrgEx(GDI_HDC(regs[0]), x, y, NULL); return true;
     });
     Thunk("GetObjectType", 917, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetObjectType(GDI_OBJ(regs[0])); return true;

@@ -13,88 +13,22 @@
 #include "cpu/mem.h"
 #include "cpu/arm_cpu.h"
 #include "debugger/gdb_stub.h"
+#include "tracing/trace_manager.h"
+#include "tracing/register_all.h"
 #include "loader/pe_loader.h"
 #include "thunks/win32_thunks.h"
 #include "cli_helpers.h"
+#include "main_config.h"
 #include "patches.h"
 
 int main(int argc, char* argv[]) {
-    const char* exe_path = nullptr;
-    const char* device_override = nullptr;
-    bool trace = false;
-    bool explicit_log = false;
-    const char* log_file = nullptr;
-    bool flush_outputs = false;
-    uint32_t no_log_mask = 0;
-    int cli_fake_screen_resolution = -1; /* -1=unset, 0=false, 1=true */
-    int cli_screen_width = 0;
-    int cli_screen_height = 0;
-    int cli_os_major = -1, cli_os_minor = -1, cli_os_build = -1;
-    const char* cli_os_build_date = nullptr;
-    int cli_fake_total_phys = 0;
-    int gdb_port = 0;  /* 0 = disabled; >0 = GDB stub listens on this port */
-
+    CerfConfig cfg;
     Log::Init();
 
-    for (int i = 1; i < argc; i++) {
-        if (exe_path) break; /* Everything after exe_path belongs to the ARM app */
-        if (strcmp(argv[i], "--trace") == 0) {
-            trace = true;
-            Log::EnableCategory(Log::TRACE);
-        } else if (strncmp(argv[i], "--log=", 6) == 0) {
-            Log::SetEnabled(Log::ParseCategories(argv[i] + 6));
-            explicit_log = true;
-        } else if (strncmp(argv[i], "--no-log=", 9) == 0) {
-            no_log_mask |= Log::ParseCategories(argv[i] + 9);
-        } else if (strncmp(argv[i], "--log-file=", 11) == 0) {
-            log_file = argv[i] + 11;
-        } else if (strcmp(argv[i], "--flush-outputs") == 0) {
-            flush_outputs = true;
-        } else if (strncmp(argv[i], "--device=", 9) == 0) {
-            device_override = argv[i] + 9;
-        } else if (strncmp(argv[i], "--fake-screen-resolution=", 25) == 0) {
-            const char* val = argv[i] + 25;
-            cli_fake_screen_resolution = (strcmp(val, "false") != 0 && strcmp(val, "0") != 0 && strcmp(val, "no") != 0) ? 1 : 0;
-        } else if (strncmp(argv[i], "--screen-width=", 15) == 0) {
-            cli_screen_width = atoi(argv[i] + 15);
-        } else if (strncmp(argv[i], "--screen-height=", 16) == 0) {
-            cli_screen_height = atoi(argv[i] + 16);
-        } else if (strncmp(argv[i], "--os-major=", 11) == 0) {
-            cli_os_major = atoi(argv[i] + 11);
-        } else if (strncmp(argv[i], "--os-minor=", 11) == 0) {
-            cli_os_minor = atoi(argv[i] + 11);
-        } else if (strncmp(argv[i], "--os-build=", 11) == 0) {
-            cli_os_build = atoi(argv[i] + 11);
-        } else if (strncmp(argv[i], "--os-build-date=", 16) == 0) {
-            cli_os_build_date = argv[i] + 16;
-        } else if (strncmp(argv[i], "--fake-total-phys=", 18) == 0) {
-            cli_fake_total_phys = atoi(argv[i] + 18);
-        } else if (strncmp(argv[i], "--gdb-port=", 11) == 0) {
-            gdb_port = atoi(argv[i] + 11);
-        } else if (strcmp(argv[i], "--quiet") == 0) {
-            Log::SetEnabled(Log::NONE);
-            explicit_log = true;
-        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            PrintUsage(argv[0]);
-            return 0;
-        } else {
-            exe_path = argv[i];
-        }
-    }
+    if (!ParseCerfArgs(argc, argv, cfg))
+        return 0; /* --help was requested */
 
-    /* Apply --no-log after everything else */
-    if (no_log_mask) {
-        Log::SetEnabled(Log::GetEnabled() & ~no_log_mask);
-    }
-
-    if (flush_outputs) {
-        Log::SetFlush(true);
-    }
-
-    if (log_file) {
-        Log::SetFile(log_file);
-    }
-
+    const char* exe_path = cfg.exe_path;
     if (!exe_path) {
         PrintUsage(argv[0]);
         return 1;
@@ -147,20 +81,20 @@ int main(int argc, char* argv[]) {
 
     /* Initialize virtual filesystem — reads cerf.ini, sets up device paths.
        This also sets wince_sys_dir for ARM DLL loading. */
-    thunks.InitVFS(device_override ? device_override : "");
+    thunks.InitVFS(cfg.device_override ? cfg.device_override : "");
 
     /* CLI overrides take priority over cerf.ini */
-    if (cli_fake_screen_resolution >= 0)
-        thunks.fake_screen_resolution = (cli_fake_screen_resolution != 0);
-    if (cli_screen_width > 0)
-        thunks.screen_width = (uint32_t)cli_screen_width;
-    if (cli_screen_height > 0)
-        thunks.screen_height = (uint32_t)cli_screen_height;
-    if (cli_os_major >= 0) thunks.os_major = (uint32_t)cli_os_major;
-    if (cli_os_minor >= 0) thunks.os_minor = (uint32_t)cli_os_minor;
-    if (cli_os_build >= 0) thunks.os_build = (uint32_t)cli_os_build;
-    if (cli_os_build_date) thunks.os_build_date = cli_os_build_date;
-    if (cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cli_fake_total_phys;
+    if (cfg.cli_fake_screen_resolution >= 0)
+        thunks.fake_screen_resolution = (cfg.cli_fake_screen_resolution != 0);
+    if (cfg.cli_screen_width > 0)
+        thunks.screen_width = (uint32_t)cfg.cli_screen_width;
+    if (cfg.cli_screen_height > 0)
+        thunks.screen_height = (uint32_t)cfg.cli_screen_height;
+    if (cfg.cli_os_major >= 0) thunks.os_major = (uint32_t)cfg.cli_os_major;
+    if (cfg.cli_os_minor >= 0) thunks.os_minor = (uint32_t)cfg.cli_os_minor;
+    if (cfg.cli_os_build >= 0) thunks.os_build = (uint32_t)cfg.cli_os_build;
+    if (cfg.cli_os_build_date) thunks.os_build_date = cfg.cli_os_build_date;
+    if (cfg.cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cfg.cli_fake_total_phys;
 
     /* Install import thunks */
     thunks.InstallThunks(pe_info, exe_path);
@@ -173,7 +107,17 @@ int main(int argc, char* argv[]) {
     main_ctx.marshal_base = 0x3F000000;
     ArmCpu& cpu = main_ctx.cpu;
     cpu.mem = &mem;
-    cpu.trace = trace;
+    cpu.trace = cfg.trace;
+
+    /* ARM trace point system — per-DLL, auto-rebased, checksum-gated */
+    TraceManager trace_mgr;
+    RegisterTracesForDevice(thunks.GetDeviceName(), trace_mgr);
+    cpu.traces = &trace_mgr;
+    thunks.SetTraceManager(&trace_mgr);
+
+    /* Activate traces for the main EXE (it's loaded by PELoader::Load, not LoadArmDll,
+       so the OnDllLoad hook in dll_loader.cpp doesn't fire for it) */
+    trace_mgr.OnDllLoad(exe_path, exe_path, pe_info.image_base);
 
     /* Set up initial register state */
     cpu.r[REG_SP] = stack_top;
@@ -255,7 +199,7 @@ int main(int argc, char* argv[]) {
 
     /* Set up the trampoline: thunk handlers use this->callback_executor which
        delegates to the current thread's real callback_executor via t_ctx. */
-    thunks.callback_executor = [](uint32_t addr, uint32_t* args, int nargs) -> uint32_t {
+    thunks.main_callback_executor = [](uint32_t addr, uint32_t* args, int nargs) -> uint32_t {
         if (!t_ctx || !t_ctx->callback_executor) return 0;
         return t_ctx->callback_executor(addr, args, nargs);
     };
@@ -269,11 +213,11 @@ int main(int argc, char* argv[]) {
 
     /* GDB remote debugging — start stub before running if requested */
     GdbStub* gdb = nullptr;
-    if (gdb_port > 0) {
-        gdb = new GdbStub((uint16_t)gdb_port, &mem);
+    if (cfg.gdb_port > 0) {
+        gdb = new GdbStub((uint16_t)cfg.gdb_port, &mem);
         gdb->RegisterCpu(&cpu, GetCurrentThreadId());
         if (!gdb->Start()) {
-            LOG_ERR("[GDB] Failed to start debug server on port %d\n", gdb_port);
+            LOG_ERR("[GDB] Failed to start debug server on port %d\n", cfg.gdb_port);
             delete gdb;
             gdb = nullptr;
         } else {

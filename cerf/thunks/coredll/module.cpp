@@ -200,6 +200,7 @@ void Win32Thunks::RegisterModuleHandlers() {
             regs[0] = AllocThunk(dll_name, func_name, 0, false);
             LOG(API, "[API]   -> thunk at 0x%08X\n", regs[0]);
         } else {
+            LOG(API, "[API]   -> not found (dll=%s, func='%s')\n", dll_name.c_str(), func_name.c_str());
             regs[0] = 0;
         }
         return true;
@@ -241,8 +242,9 @@ void Win32Thunks::RegisterModuleHandlers() {
         regs[0] = 1; /* TRUE */
         return true;
     });
-    Thunk("DisableThreadLibraryCalls", 1232, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("DisableThreadLibraryCalls", 1232, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] DisableThreadLibraryCalls(hModule=0x%08X) -> TRUE\n", regs[0]);
+        disable_thread_notify_bases.insert(regs[0]);
         regs[0] = 1;
         return true;
     });

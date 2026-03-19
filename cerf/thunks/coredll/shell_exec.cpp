@@ -8,29 +8,11 @@
 #include <shellapi.h>
 
 void Win32Thunks::RegisterShellExecHandler() {
-    /* WinCE kernel trap 0xF000ABDC → ordinal 5385: shell "navigate to URL" syscall.
-       On real WinCE this is an IPC to the running shell process.  We implement it
-       by calling SHCreateExplorerInstance in the current ARM context, then pumping
-       messages so the browser thread stays alive. */
-    Thunk("SHBrowseToURL", 5385, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring url = ReadWStringFromEmu(mem, regs[0]);
-        LOG(API, "[API] WinCE trap 5385: SHBrowseToURL('%ls')\n", url.c_str());
-        if (!callback_executor) { regs[0] = 0; return true; }
-        const uint32_t shCreateExplorerInstance = 0x0001A120;
-        uint32_t args[2] = { regs[0], 0 };
-        uint32_t ret = callback_executor(shCreateExplorerInstance, args, 2);
-        LOG(API, "[API]   SHCreateExplorerInstance returned %d\n", ret);
-        if (ret) {
-            /* Browser thread was created — pump messages to keep this process alive */
-            MSG msg;
-            while (GetMessage(&msg, NULL, 0, 0) > 0) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
-        }
-        regs[0] = ret ? 1 : 0;
-        return true;
-    });
+    /* SHBrowseToURL (trap 5385 = SH_SHELL set 21, method 9) is now handled
+       by the generic API Set dispatch system in dispatch.cpp. Explorer registers
+       the SH_SHELL API set via CreateAPISet/RegisterAPISet, and the kernel
+       dispatch calls vtable[9] = SHCreateExplorerInstance in explorer's context.
+       No hardcoded thunk needed here. */
 
     Thunk("ShellExecuteEx", 480, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t sei_addr = regs[0];
@@ -54,8 +36,10 @@ void Win32Thunks::RegisterShellExecHandler() {
                verb.c_str(), file.c_str(), params.c_str(), dir.c_str(), nShow);
 
         /* Helper: open a folder browser via SHCreateExplorerInstance in the ARM explorer */
+        // TODO: Is this the correct approach? We must verify real COREDLL/NK.EXE behaviour - what it does.
+        //       I suspect it might use ApiSet just like it does when second instance of explorer is opened.
         auto callSHCreateExplorerInstance = [&](const std::wstring& path) -> bool {
-            const uint32_t shCreateExplorerInstance = 0x0001A120;
+            const uint32_t shCreateExplorerInstance = EXPLORER_SHCREATEEXPLORERINSTANCE;
             uint32_t path_addr = 0x60002000;
             mem.Alloc(path_addr, 0x1000);
             for (size_t j = 0; j < path.size() && j < 0x7FE; j++)

@@ -39,6 +39,16 @@ const ThunkedDllInfo* FindThunkedDllW(const std::wstring& dll_name); /* wide ver
 #define THUNK_BASE   0xFE000000
 #define THUNK_STRIDE 4
 #define WINCE_SCREEN_WIDTH_DEFAULT   800
+
+/* explorer.exe ARM function address for SHCreateExplorerInstance.
+   IDA address 0x0001A120, explorer loads at its natural base 0x00010000. */
+constexpr uint32_t EXPLORER_SHCREATEEXPLORERINSTANCE = 0x0001A120;
+
+/* Kernel IPC message for cross-thread SHBrowseToURL dispatch.
+   Sent via SendMessage from a child process thread to the main explorer's
+   desktop window. The main thread's EmuWndProc calls SHCreateExplorerInstance
+   in its own ARM context. WPARAM = ARM address of URL string. */
+/* (Removed: WM_CERF_KERNEL_BROWSE — API set dispatch handles this now) */
 #define WINCE_SCREEN_HEIGHT_DEFAULT  480
 /* WinCE trap-based API range: index = (0xF0010000 - addr) / 4 */
 #define WINCE_TRAP_BASE  0xF0000000
@@ -66,12 +76,28 @@ public:
     void SetHInstance(uint32_t hinst) { emu_hinstance = hinst; }
     void SetExePath(const std::wstring& path) { exe_path = path; }
     void SetExeDir(const std::string& dir) { exe_dir = dir; }
+    const std::string& GetDeviceName() const { return device_name; }
+
+    /* Trace manager for ARM instruction-level tracing */
+    void SetTraceManager(class TraceManager* tm) { trace_mgr_ = tm; }
+    class TraceManager* GetTraceManager() const { return trace_mgr_; }
 
     void InitVFS(const std::string& device_override = "");
 
-    /* Callback executor: trampoline to t_ctx->callback_executor (per-thread) */
+    /* Callback executor: executes ARM code from native context.
+       Each thread has its own executor (own CPU/stack/registers).
+       The main_callback_executor is set for the main thread during init.
+       All call sites use callback_executor which auto-resolves to the
+       current thread's executor, falling back to main if no thread context. */
     typedef std::function<uint32_t(uint32_t addr, uint32_t* args, int nargs)> CallbackExecutor;
-    CallbackExecutor callback_executor;
+    CallbackExecutor main_callback_executor; /* main thread only — set in main.cpp */
+
+    /* Returns the correct executor for the CURRENT thread */
+    CallbackExecutor GetCallbackExecutor() const;
+
+    /* Legacy name — kept as a property-like accessor so existing code compiles.
+       All 61+ call sites that use `callback_executor` now get the right executor. */
+    __declspec(property(get=GetCallbackExecutor)) CallbackExecutor callback_executor;
 
     std::atomic<uint32_t> next_tls_slot{4};  /* TLS slot allocator (0-3 reserved) */
     std::map<uint32_t, CRITICAL_SECTION*> cs_map; /* ARM CS addr -> native CS* */
@@ -111,6 +137,11 @@ private:
     uint32_t next_thunk_addr;
     uint32_t emu_hinstance;
     std::wstring exe_path;
+    /* Kernel API Set system (CreateAPISet/RegisterAPISet) */
+    class ApiSetManager& GetApiSets();
+private:
+    class ApiSetManager* api_sets_ = nullptr;
+public:
     std::string exe_dir;
     std::string wince_sys_dir;
 
@@ -153,25 +184,17 @@ private:
     std::string device_name;
     std::string device_fs_root;
     std::string device_dir;
+    class TraceManager* trace_mgr_ = nullptr;
 
-    struct LoadedDll {
-        std::string path;
-        uint32_t base_addr;
-        PEInfo pe_info;
-        HMODULE native_rsrc_handle;
-    };
-    std::map<std::wstring, LoadedDll> loaded_dlls;
-    LoadedDll* LoadArmDll(const std::string& dll_name);
+public:
+    /* Centralized ARM↔Native class attribute bridge.
+       ALL class/window attribute code MUST use this. See class_bridge.h. */
+    class ClassBridge& GetClassBridge();
+private:
+    class ClassBridge* class_bridge_ = nullptr;
 
-    struct EmuRsrc { uint32_t data_rva; uint32_t data_size; uint32_t module_base; };
-    std::map<uint32_t, EmuRsrc> rsrc_map;
-    uint32_t next_rsrc_handle = 0xE0000000;
-    uint32_t FindResourceInPE(uint32_t module_base, uint32_t rsrc_rva, uint32_t rsrc_size,
-                              uint32_t type_id, uint32_t name_id,
-                              uint32_t& out_data_rva, uint32_t& out_data_size);
-
-    struct PendingDllInit { uint32_t entry_point; uint32_t base_addr; };
-    std::vector<PendingDllInit> pending_dll_inits;
+    /* DLL loader and resource types — in win32_dll_types.h */
+#include "win32_dll_types.h"
 
     /* Ordinal to function name mapping */
     static std::map<uint16_t, std::string> ordinal_map;
@@ -182,49 +205,15 @@ private:
     uint32_t ReadStackArg(uint32_t* regs, EmulatedMemory& mem, int index);
     HMODULE GetNativeModuleForResources(uint32_t emu_handle);
 
-    /* Handle mapping (64-bit HANDLE <-> 32-bit fake handle for ARM round-trip) */
-    std::map<uint32_t, HANDLE> handle_map;
-    uint32_t next_fake_handle = 0x00100000;
-    struct FileMappingInfo { uint32_t emu_addr; uint32_t size; };
-    std::map<uint32_t, FileMappingInfo> file_mappings;
-
-    /* DIB section tracking */
-    uint32_t next_dib_addr = 0x04000000;
-    std::map<uint32_t, uint32_t> hbitmap_to_emu_pvbits; /* HBITMAP -> emu pvBits addr */
-    uint32_t WrapHandle(HANDLE h);
-    HANDLE UnwrapHandle(uint32_t fake);
-    void RemoveHandle(uint32_t fake);
+    /* Handle mapping + DIB tracking — declarations in win32_handles.h */
+#include "win32_handles.h"
 
     std::wstring MapWinCEPath(const std::wstring& wce_path);
     std::wstring MapHostToWinCE(const std::wstring& host_path);
 
 public:
-    /* Emulated registry (file-backed, text format) */
-    struct RegValue { uint32_t type = 0; std::vector<uint8_t> data; };
-    /* Case-insensitive comparator for registry value names (Windows registry is case-insensitive) */
-    struct WstrCILess {
-        bool operator()(const std::wstring& a, const std::wstring& b) const {
-            return _wcsicmp(a.c_str(), b.c_str()) < 0;
-        }
-    };
-    struct RegKey { std::map<std::wstring, RegValue, WstrCILess> values; std::set<std::wstring, WstrCILess> subkeys; };
-private:
-    std::map<std::wstring, RegKey, WstrCILess> registry;
-    std::map<uint32_t, std::wstring> hkey_map;
-    uint32_t next_fake_hkey = 0xAE000000;
-    bool registry_loaded = false;
-    std::string registry_path;
-    std::recursive_mutex registry_mutex; /* Protects registry, hkey_map, next_fake_hkey */
-    void LoadRegistry();
-    void SaveRegistry();
-    void ImportRegFile(const std::string& path);
-    std::wstring ResolveHKey(uint32_t hkey, const std::wstring& subkey);
-    void EnsureParentKeys(const std::wstring& path);
-    /* Internal registry helpers — handle locking + LoadRegistry internally */
-    bool RegGetValue(const std::wstring& key, const std::wstring& name, RegValue& out);
-    void RegSetValue(const std::wstring& key, const std::wstring& name, const RegValue& val);
-    bool ResolveMuiString(const std::wstring& mui_ref, std::wstring& resolved);
-    void WriteFindDataToEmu(EmulatedMemory& mem, uint32_t addr, const WIN32_FIND_DATAW& fd);
+    /* Emulated registry types and private members — in win32_registry_types.h */
+#include "win32_registry_types.h"
 
     /* Map-based thunk dispatch */
     typedef std::function<bool(uint32_t* regs, EmulatedMemory& mem)> ThunkHandler;
@@ -232,11 +221,14 @@ private:
     void Thunk(const std::string& name, uint16_t ordinal, ThunkHandler handler);
     void Thunk(const std::string& name, ThunkHandler handler);
     void ThunkOrdinal(const std::string& name, uint16_t ordinal);
+    std::vector<std::string> duplicate_thunks;
+    void CheckDuplicateThunks();
 
     /* Handler registration (each in its own .cpp file) */
     void RegisterArmRuntimeHandlers();
     void RegisterMemoryHandlers();
     void RegisterCrtHandlers();
+    void RegisterCrtMemoryHandlers();
     void RegisterStringHandlers();
     void RegisterStringFormatHandlers();
     void RegisterStringSafeHandlers();
@@ -246,21 +238,25 @@ private:
     void RegisterGdiTextHandlers();
     void RegisterGdiFontHandlers();
     void RegisterGdiRegionHandlers();
+    void RegisterGdiPaintHandlers();
     void RegisterWindowHandlers();
     void RegisterWindowLayoutHandlers();
     void RegisterWindowPropsHandlers();
     void RegisterDialogHandlers();
     void RegisterMessageHandlers();
+    void RegisterMessageWaitHandlers();
     void RegisterMenuHandlers();
     void RegisterInputHandlers();
     void RegisterRegistryHandlers();
     void RegisterFileHandlers();
+    void RegisterFileTimeHandlers();
     void RegisterFileNotifyHandlers();
     void RegisterSystemHandlers();
     void RegisterSysInfoHandlers();
     void RegisterLocaleHandlers();
     void RegisterSyncHandlers();
     void RegisterResourceHandlers();
+    void RegisterResourceExtractHandlers();
     void RegisterShellHandlers();
     void RegisterProcessHandlers();
     void RegisterChildProcessHandler();
@@ -279,6 +275,11 @@ private:
     void RegisterSocketIOHandlers();
     void RegisterSocketDnsHandlers();
     void RegisterWindowRectHandlers();
+    void RegisterWindowClassHandlers();
+    void RegisterCrtExtraHandlers();
+    void RegisterGdiMiscHandlers();
+    void RegisterMiscUiHandlers();
+    void RegisterMiscMshtmlHandlers();
     void RegisterDirectDrawHandlers();
     void RegisterDirectDrawSurfaceHandlers();
     void BuildDirectDrawVtables(EmulatedMemory& mem);

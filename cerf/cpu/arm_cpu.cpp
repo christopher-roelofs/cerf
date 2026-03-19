@@ -1,6 +1,7 @@
 /* ARM CPU core: condition checking, barrel shifter, run loop, stepping */
 #include "arm_cpu.h"
 #include "../debugger/gdb_stub.h"
+#include "../tracing/trace_manager.h"
 #include "../log.h"
 #include <cstdlib>
 
@@ -119,6 +120,8 @@ void ArmCpu::Step() {
         ExecuteThumb(insn);
     } else {
         uint32_t pc = r[REG_PC];
+        /* Per-DLL ARM trace points — see cerf/tracing/ for handlers */
+        if (traces) traces->Check(pc, r, mem);
         uint32_t insn = mem->Read32(pc);
 
         trace_buf[trace_idx % TRACE_SIZE] = { pc, insn, false, r[0], r[1], r[3], r[REG_LR] };

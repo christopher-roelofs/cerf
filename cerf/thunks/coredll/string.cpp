@@ -78,15 +78,19 @@ void Win32Thunks::RegisterStringHandlers() {
     Thunk("towupper", 195, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)towupper((wint_t)regs[0]); return true; });
     Thunk("iswctype", 193, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = (uint32_t)iswctype((wint_t)regs[0], regs[1]); return true; });
     Thunk("MultiByteToWideChar", 196, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t codepage = regs[0];
         std::string src = ReadStringFromEmu(mem, regs[2]);
         uint32_t dst_addr = ReadStackArg(regs, mem, 0), dst_size = ReadStackArg(regs, mem, 1);
-        int needed = MultiByteToWideChar(regs[0], regs[1], src.c_str(), regs[3], NULL, 0);
+        int needed = MultiByteToWideChar(codepage, regs[1], src.c_str(), regs[3], NULL, 0);
         if (dst_addr != 0 && dst_size > 0) {
             std::vector<wchar_t> buf(needed + 1);
-            int ret = MultiByteToWideChar(regs[0], regs[1], src.c_str(), regs[3], buf.data(), needed);
+            int ret = MultiByteToWideChar(codepage, regs[1], src.c_str(), regs[3], buf.data(), needed);
             for (int i = 0; i < ret && i < (int)dst_size; i++) mem.Write16(dst_addr + i*2, buf[i]);
             regs[0] = ret;
         } else regs[0] = needed;
+        if (regs[3] > 4)
+            LOG(API, "[API] MultiByteToWideChar(cp=%u, len=%d) -> %d chars '%s'\n",
+                codepage, (int)regs[3], needed, src.substr(0, 40).c_str());
         return true;
     });
     Thunk("WideCharToMultiByte", 197, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
@@ -270,9 +274,6 @@ void Win32Thunks::RegisterStringHandlers() {
     Thunk("atoi", 993, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::string s = ReadStringFromEmu(mem, regs[0]);
         regs[0] = (uint32_t)atoi(s.c_str()); return true;
-    });
-    Thunk("IsValidCodePage", 185, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = IsValidCodePage(regs[0]); return true;
     });
     Thunk("IsDBCSLeadByte", 191, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = IsDBCSLeadByte((BYTE)regs[0]); return true;

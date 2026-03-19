@@ -53,6 +53,26 @@ public:
     };
     std::vector<DllAlias> dll_aliases;
 
+    /* Global registry of DLL writable sections for copy-on-write.
+       Populated by LoadArmDll when DLLs are loaded. Used by ProcessSlot to
+       determine which pages need private copies per-process. */
+    std::vector<DllWritableSection> dll_writable_sections;
+
+    /* Register a DLL's writable sections (called from LoadArmDll). */
+    void RegisterDllWritableSections(uint32_t image_base,
+                                     const std::vector<IMAGE_SECTION_HEADER>& sections) {
+        constexpr DWORD WRITE_FLAG = IMAGE_SCN_MEM_WRITE;
+        for (auto& sec : sections) {
+            if (sec.Characteristics & WRITE_FLAG) {
+                DllWritableSection ws;
+                ws.start = image_base + sec.VirtualAddress;
+                ws.size = sec.Misc.VirtualSize;
+                if (ws.size == 0) ws.size = sec.SizeOfRawData;
+                dll_writable_sections.push_back(ws);
+            }
+        }
+    }
+
     /* Register a DLL for slot-0 aliasing. Call after loading a DLL at base >= 0x04000000. */
     void AddDllAlias(uint32_t dll_base, uint32_t size_of_image) {
         if (dll_base < WINCE_DLL_REGION_START || dll_base >= WINCE_DLL_REGION_END) return;
@@ -164,15 +184,23 @@ public:
             uint8_t* sp = process_slot->Translate(addr);
             if (sp) return sp;
         }
+        /* DLL copy-on-write: if a private copy exists for this DLL data page,
+           return it instead of the shared global page. Read path only — writes
+           go through Write8/16/32 which trigger CopyOnWrite(). */
+        if (process_slot && addr >= ProcessSlot::SLOT_SIZE) {
+            uint8_t* dp = process_slot->TranslateDllOverlay(addr);
+            if (dp) return dp;
+        }
         for (auto& r : regions) {
             if (addr >= r.base && addr < r.base + r.size) {
                 return r.host_ptr + (addr - r.base);
             }
         }
         /* WinCE slot-0 DLL aliasing: DLLs loaded at global addresses (0x04000000+)
-           are also accessible via slot 0 at (dll_base & 0x1FFFFFF).  ATL thunks and
-           other WinCE code use this to convert function pointers for slot-0 execution.
-           Check aliases as a last resort so process EXE pages always take priority. */
+           are also accessible via slot 0 at (dll_base & 0x1FFFFFF). ARM code uses
+           these aliases for instruction fetch and data access. Safe because
+           allocator address ranges are above the DLL alias range, preventing
+           heap/DLL data overlap. */
         if (addr <= WINCE_SLOT_MASK && !dll_aliases.empty()) {
             for (auto& alias : dll_aliases) {
                 if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
@@ -215,71 +243,16 @@ public:
         uint8_t* p = Translate(addr);
         if (!p) {
             p = const_cast<EmulatedMemory*>(this)->AutoAlloc(addr);
-            if (p) { p += (addr & (PAGE_SIZE - 1)); return *(uint32_t*)p; }
+            if (p) { p += (addr & (PAGE_SIZE - 1)); return *(volatile uint32_t*)p; }
             LogFault("Read32", addr); return 0;
         }
-        return *(uint32_t*)p;
+        return *(volatile uint32_t*)p;
     }
 
-    void Write8(uint32_t addr, uint8_t val) {
-        uint8_t* p = Translate(addr);
-        if (!p) {
-            p = AutoAlloc(addr);
-            if (p) { p[addr & (PAGE_SIZE - 1)] = val; return; }
-            LogFault("Write8", addr); return;
-        }
-        *p = val;
-    }
+    /* Write-path methods (TranslateForWrite, Write8/16/32, WriteBytes,
+       AddExternalRegion, RemoveExternalRegion) — split to mem_rw.h */
+#include "mem_rw.h"
 
-    void Write16(uint32_t addr, uint16_t val) {
-        uint8_t* p = Translate(addr);
-        if (!p) {
-            p = AutoAlloc(addr);
-            if (p) { *(uint16_t*)(p + (addr & (PAGE_SIZE - 1))) = val; return; }
-            LogFault("Write16", addr); return;
-        }
-        *(uint16_t*)p = val;
-    }
-
-    void Write32(uint32_t addr, uint32_t val) {
-        uint8_t* p = Translate(addr);
-        if (!p) {
-            p = AutoAlloc(addr);
-            if (p) { *(uint32_t*)(p + (addr & (PAGE_SIZE - 1))) = val; return; }
-            LogFault("Write32", addr); return;
-        }
-        *(uint32_t*)p = val;
-    }
-
-    void WriteBytes(uint32_t addr, const void* src, uint32_t len) {
-        uint8_t* p = Translate(addr);
-        if (!p) { fprintf(stderr, "[MEM] WriteBytes fault at 0x%08X len=0x%X\n", addr, len); return; }
-        memcpy(p, src, len);
-    }
-
-    /* Register an externally-owned buffer as an emulated region.
-       The caller retains ownership; the buffer must outlive the mapping.
-       Used for CreateDIBSection pvBits: maps native bitmap data into ARM space. */
-    void AddExternalRegion(uint32_t base, uint32_t size, uint8_t* host_ptr) {
-        MemRegion r = {};
-        r.base = base; r.size = size; r.host_ptr = host_ptr;
-        r.protect = PAGE_READWRITE; r.is_external = true;
-        regions.push_back(r);
-    }
-
-    /* Remove a previously-added external region by its base address. */
-    void RemoveExternalRegion(uint32_t base) {
-        for (auto it = regions.begin(); it != regions.end(); ++it) {
-            if (it->base == base) { regions.erase(it); return; }
-        }
-    }
-
-    /* Allocate the stack region */
-    uint32_t AllocStack() {
-        uint32_t stack_bottom = STACK_BASE - STACK_SIZE;
-        Alloc(stack_bottom, STACK_SIZE, PAGE_READWRITE, true);
-        return STACK_BASE - 16; /* Return initial SP, slightly below top */
-    }
 
     /* Auto-allocate on fault: if an access hits unmapped memory, allocate a page.
        Reject addresses that can't be identity-mapped on Windows (below 64KB or

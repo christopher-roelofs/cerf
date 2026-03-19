@@ -84,6 +84,9 @@ void Win32Thunks::RegisterProcessHandlers() {
                 /* Set up CPU */
                 ArmCpu& cpu = ctx.cpu;
                 cpu.mem = info->mem;
+                /* Use the global TraceManager from Win32Thunks — it's read-only
+                   after init and shared across all threads. */
+                cpu.traces = info->thunks->GetTraceManager();
                 cpu.thunk_handler = [thunks = info->thunks](
                         uint32_t addr, uint32_t* regs, EmulatedMemory& m) -> bool {
                     if (addr == 0xDEADDEAD) {
@@ -123,9 +126,45 @@ void Win32Thunks::RegisterProcessHandlers() {
 
                 LOG(API, "[THREAD] Started thread %d: PC=0x%08X SP=0x%08X param=0x%08X\n",
                     thread_idx, cpu.r[REG_PC], stack_top, info->parameter);
+
+                /* Send DLL_THREAD_ATTACH to all loaded ARM DLLs (unless they
+                   called DisableThreadLibraryCalls). WinCE does this at the kernel
+                   level; we must do it explicitly for mshtml's THREADSTATE init. */
+                constexpr uint32_t DLL_THREAD_ATTACH_REASON = 2;
+                auto* thunks = info->thunks;
+                for (auto& pair : thunks->loaded_dlls) {
+                    auto& dll = pair.second;
+                    if (dll.pe_info.entry_point_rva == 0) continue;
+                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
+                    if (thunks->disable_thread_notify_bases.count(dll.base_addr))
+                        continue;
+                    LOG(API, "[THREAD] DLL_THREAD_ATTACH: 0x%08X (base=0x%08X)\n",
+                        entry, dll.base_addr);
+                    uint32_t dllargs[3] = { dll.base_addr, DLL_THREAD_ATTACH_REASON, 0 };
+                    ctx.callback_executor(entry, dllargs, 3);
+                }
+
                 delete info;
 
                 cpu.Run();
+
+                /* Send DLL_THREAD_DETACH to all loaded ARM DLLs.
+                   On real WinCE, the kernel sends this before thread termination.
+                   DLLs use it to release per-thread resources (locks, TLS, etc.).
+                   Without this, commdlg.dll's per-thread mutex stays held forever,
+                   blocking DLL_THREAD_ATTACH on the next thread. */
+                constexpr uint32_t DLL_THREAD_DETACH_REASON = 3;
+                for (auto& pair : thunks->loaded_dlls) {
+                    auto& dll = pair.second;
+                    if (dll.pe_info.entry_point_rva == 0) continue;
+                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
+                    if (thunks->disable_thread_notify_bases.count(dll.base_addr))
+                        continue;
+                    LOG(API, "[THREAD] DLL_THREAD_DETACH: 0x%08X (base=0x%08X)\n",
+                        entry, dll.base_addr);
+                    uint32_t detach_args[3] = { dll.base_addr, DLL_THREAD_DETACH_REASON, 0 };
+                    ctx.callback_executor(entry, detach_args, 3);
+                }
 
                 /* Detach from debugger before thread context is destroyed */
                 if (g_debugger) {
@@ -243,6 +282,14 @@ void Win32Thunks::RegisterProcessHandlers() {
         LOG(API, "[API] GetExitCodeThread(hThread=0x%08X, lpExitCode=0x%08X) -> stub\n", regs[0], regs[1]);
         if (regs[1]) mem.Write32(regs[1], 0);
         regs[0] = 1;
+        return true;
+    });
+    Thunk("IsProcessDying", 1213, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        /* Called during thread/COM cleanup to check if the process is terminating.
+           Our emulator process is never "dying" — individual ARM threads exit but
+           the host process stays alive. Return FALSE so cleanup proceeds normally
+           instead of taking the "process dying" shortcut path. */
+        regs[0] = 0; /* FALSE — process is NOT dying */
         return true;
     });
 }

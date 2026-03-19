@@ -57,7 +57,7 @@ try: os.remove(LOG)
 except: pass
 log_f = open(LOG, "w")
 proc = subprocess.Popen(
-    [CERF, "--flush-outputs", "--log=API,PE,EMU,DBG",
+    [CERF, "--flush-outputs", "--log=API,PE,EMU,DBG,REG",
      f"--gdb-port={GDB_PORT}", EXPLORER],
     stdout=log_f, stderr=log_f, cwd="Z:/")
 print(f"    PID={proc.pid}")

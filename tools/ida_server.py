@@ -726,16 +726,22 @@ def ep_search(pattern, start_ea, direction, max_results):
     Search for a byte pattern.
     *pattern* is a hex string with optional wildcards, e.g. "48 8B ?? 10".
     """
-    flag = ida_search.SEARCH_DOWN if direction == "down" else ida_search.SEARCH_UP
-    flag |= ida_search.SEARCH_CASE
-
     if start_ea is None:
         start_ea = ida_ida.inf_get_min_ea() if direction == "down" else ida_ida.inf_get_max_ea()
+
+    end_ea = idaapi.BADADDR if direction == "down" else 0
+    search_flag = ida_bytes.BIN_SEARCH_FORWARD if direction == "down" else ida_bytes.BIN_SEARCH_BACKWARD
+    search_flag |= ida_bytes.BIN_SEARCH_NOCASE
+
+    # Compile the hex pattern (IDA 9.0+ API)
+    compiled = ida_bytes.compiled_binpat_vec_t()
+    encoding = ida_nalt.get_default_encoding_idx(ida_nalt.BPU_1B)
+    err = ida_bytes.parse_binpat_str(compiled, start_ea, pattern, 16, encoding)
 
     results = []
     cur = start_ea
     for _ in range(max_results):
-        found = idaapi.find_binary(cur, idaapi.BADADDR if direction == "down" else 0, pattern, 16, flag)
+        found = ida_bytes.bin_search(cur, end_ea, compiled, search_flag)
         if found == idaapi.BADADDR:
             break
         results.append({

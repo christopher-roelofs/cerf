@@ -2,25 +2,4 @@ REGEDIT4
 
 ; Custom registry entries for CERF emulator.
 ; This file imports LAST, after all sysgen .reg files.
-; Use it for entries that are missing from the sysgen .reg export
-; but present in a running WinCE system's registry.
-
-; mshtml.dll OLE Control subkeys — required for IE to host mshtml
-; as an embedded ActiveX control for HTML rendering.
-; For some reason those are absent in SYSGEN reg files...
-; We don't know where they come from...
-; But here they are:
-
-[HKEY_CLASSES_ROOT\CLSID\{25336920-03F9-11cf-8FD0-00AA00686F13}\Control]
-
-[HKEY_CLASSES_ROOT\CLSID\{25336920-03F9-11cf-8FD0-00AA00686F13}\EnableFullPage\.htm]
-
-[HKEY_CLASSES_ROOT\CLSID\{25336920-03F9-11cf-8FD0-00AA00686F13}\EnableFullPage\.html]
-
-[HKEY_CLASSES_ROOT\CLSID\{25336920-03F9-11cf-8FD0-00AA00686F13}\EnableFullPage\MIME\text/html]
-
-[HKEY_CLASSES_ROOT\CLSID\{25336920-03F9-11cf-8FD0-00AA00686F13}\MiscStatus]
-@="0"
-
-[HKEY_CLASSES_ROOT\CLSID\{25336920-03F9-11cf-8FD0-00AA00686F13}\MiscStatus\1]
-@="2228625"
+;

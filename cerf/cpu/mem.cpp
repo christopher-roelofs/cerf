@@ -6,6 +6,14 @@
 uint8_t* EmulatedMemory::AutoAlloc(uint32_t addr) {
     uint32_t page_base = addr & ~(PAGE_SIZE - 1);
     if (page_base < 0x10000 || page_base >= 0xF0000000) return nullptr;
+
+    /* Check if a region already covers this page (avoids duplicate allocations
+       that can result in different host addresses for the same emulated page). */
+    for (auto& r : regions) {
+        if (page_base >= r.base && page_base + PAGE_SIZE <= r.base + r.size)
+            return r.host_ptr + (page_base - r.base);
+    }
+
     return Alloc(page_base, PAGE_SIZE);
 }
 

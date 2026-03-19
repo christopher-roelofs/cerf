@@ -1,13 +1,22 @@
 /* Sync thunks: critical sections, interlocked ops, events, mutexes, semaphores, TLS */
 #define NOMINMAX
 #include "../win32_thunks.h"
+#include "../handle_table.h"
 #include "../../log.h"
 #include <cstdio>
+#include <atomic>
 
 void Win32Thunks::RegisterSyncHandlers() {
     /* Critical sections — real critical sections now that we have real threads */
     Thunk("InitializeCriticalSection", 2, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t addr = regs[0];
+        /* In a child process, skip re-initializing CS that already exists in the
+           global map. On real WinCE, the child gets a fresh copy of DLL data (MMU),
+           but our shared host-side CS objects must not be overwritten. */
+        if (EmulatedMemory::process_slot) {
+            std::lock_guard<std::mutex> lock(cs_map_mutex);
+            if (cs_map.count(addr)) return true; /* Already exists, don't replace */
+        }
         CRITICAL_SECTION* cs = new CRITICAL_SECTION;
         InitializeCriticalSection(cs);
         std::lock_guard<std::mutex> lock(cs_map_mutex);
@@ -16,6 +25,15 @@ void Win32Thunks::RegisterSyncHandlers() {
     });
     Thunk("DeleteCriticalSection", 3, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t addr = regs[0];
+        /* When running in a child process (ProcessSlot active), skip deleting from
+           the global cs_map. On real WinCE, each process has its own copy of DLL
+           data sections (hardware MMU), so a child's DeleteCriticalSection only
+           affects its own copy. In our emulation, native CS objects are in a shared
+           host-side map — deleting them would corrupt the parent process. */
+        if (EmulatedMemory::process_slot) {
+            LOG(API, "[API] DeleteCriticalSection(0x%08X) skipped (child process)\n", addr);
+            return true;
+        }
         std::lock_guard<std::mutex> lock(cs_map_mutex);
         auto it = cs_map.find(addr);
         if (it != cs_map.end()) {
@@ -33,13 +51,19 @@ void Win32Thunks::RegisterSyncHandlers() {
             auto it = cs_map.find(addr);
             if (it != cs_map.end()) cs = it->second;
         }
-        if (cs) {
-            LOG(API, "[API] EnterCriticalSection(0x%08X) ...\n", addr);
-            EnterCriticalSection(cs);
-            LOG(API, "[API] EnterCriticalSection(0x%08X) acquired\n", addr);
-        } else {
-            LOG(API, "[API] EnterCriticalSection(0x%08X) UNKNOWN CS\n", addr);
+        if (!cs) {
+            /* Auto-create native CS for addresses not initialized via our thunk.
+               ARM DLLs (e.g., ole32.dll) may initialize critical sections through
+               internal code paths that bypass our InitializeCriticalSection thunk. */
+            cs = new CRITICAL_SECTION;
+            InitializeCriticalSection(cs);
+            std::lock_guard<std::mutex> lock(cs_map_mutex);
+            cs_map[addr] = cs;
+            LOG(API, "[API] EnterCriticalSection(0x%08X) auto-created\n", addr);
         }
+        LOG(API, "[API] EnterCriticalSection(0x%08X) ...\n", addr);
+        EnterCriticalSection(cs);
+        LOG(API, "[API] EnterCriticalSection(0x%08X) acquired\n", addr);
         return true;
     });
     Thunk("LeaveCriticalSection", 5, [this](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -50,10 +74,16 @@ void Win32Thunks::RegisterSyncHandlers() {
             auto it = cs_map.find(addr);
             if (it != cs_map.end()) cs = it->second;
         }
-        if (cs) {
-            LeaveCriticalSection(cs);
-            LOG(API, "[API] LeaveCriticalSection(0x%08X)\n", addr);
+        if (!cs) {
+            /* Leave for an unknown CS — create it first (matches Enter behavior).
+               This can happen if the CS was initialized outside our thunk. */
+            cs = new CRITICAL_SECTION;
+            InitializeCriticalSection(cs);
+            std::lock_guard<std::mutex> lock(cs_map_mutex);
+            cs_map[addr] = cs;
         }
+        LeaveCriticalSection(cs);
+        LOG(API, "[API] LeaveCriticalSection(0x%08X)\n", addr);
         return true;
     });
     Thunk("InitLocale", 8, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
@@ -88,6 +118,8 @@ void Win32Thunks::RegisterSyncHandlers() {
         regs[0] = (uint32_t)(uintptr_t)h;
         LOG(API, "[API] CreateEventW(manual=%d, initial=%d) -> handle=%p (arm=0x%08X)\n",
             regs[1], regs[2], h, regs[0]);
+        auto* ht = GetProcessHandleTable();
+        if (ht) ht->Track(h);
         return true;
     });
     /* WaitForSingleObject — pump sent messages while waiting to prevent
@@ -96,9 +128,10 @@ void Win32Thunks::RegisterSyncHandlers() {
        call a message-retrieval function.  MsgWaitForMultipleObjects with
        QS_SENDMESSAGE + PeekMessage(PM_NOREMOVE) lets sent messages through
        without pulling posted messages out of order. */
-    Thunk("WaitForSingleObject", 497, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("WaitForSingleObject", 497, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         HANDLE h = (HANDLE)(intptr_t)(int32_t)regs[0];
         DWORD timeout = regs[1];
+        LOG(API, "[API] WaitForSingleObject(0x%08X, %u) ...\n", regs[0], timeout);
         DWORD start = GetTickCount();
         for (;;) {
             DWORD elapsed = GetTickCount() - start;
@@ -111,16 +144,28 @@ void Win32Thunks::RegisterSyncHandlers() {
                 PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
                 continue;
             }
+            /* Memory fence: ensure all emulated memory writes from other threads
+               are visible after waking from wait.  Critical for cross-thread data
+               like CDwnStm EOF flags written by the UI thread. */
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            LOG(API, "[API] WaitForSingleObject(0x%08X) -> %u\n", regs[0], r);
             regs[0] = r;
             return true;
         }
     });
     Thunk("CloseHandle", 553, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t fake = regs[0]; HANDLE h = UnwrapHandle(fake);
+        /* Untrack from per-process handle table (so it's not double-closed on exit) */
+        auto* ht = GetProcessHandleTable();
+        if (ht) ht->Untrack(h);
         regs[0] = CloseHandle(h); RemoveHandle(fake); return true;
     });
     Thunk("CreateMutexW", 555, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = (uint32_t)(uintptr_t)CreateMutexW(NULL, regs[1], NULL); return true;
+        HANDLE h = CreateMutexW(NULL, regs[1], NULL);
+        regs[0] = (uint32_t)(uintptr_t)h;
+        auto* ht = GetProcessHandleTable();
+        if (ht) ht->Track(h);
+        return true;
     });
     Thunk("ReleaseMutex", 556, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = ReleaseMutex((HANDLE)(intptr_t)(int32_t)regs[0]); return true;
@@ -131,6 +176,8 @@ void Win32Thunks::RegisterSyncHandlers() {
         LOG(API, "[API] CreateSemaphoreW(init=%d, max=%d) -> 0x%p\n",
             (int)regs[1], (int)regs[2], h);
         regs[0] = (uint32_t)(uintptr_t)h;
+        auto* ht = GetProcessHandleTable();
+        if (ht) ht->Track(h);
         return true;
     });
     Thunk("ReleaseSemaphore", 1239, [](uint32_t* regs, EmulatedMemory&) -> bool {

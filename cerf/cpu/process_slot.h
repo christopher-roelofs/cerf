@@ -2,18 +2,27 @@
 #include <windows.h>
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 
-/* Per-process virtual address space overlay (WinCE slot 0: 0x00000000-0x01FFFFFF).
-   Each WinCE process gets its own 32MB slot. When a child process runs on a thread,
-   that thread's process_slot pointer is set so Translate() returns the overlay's
-   memory instead of the parent's for addresses in [0, SLOT_SIZE). DLLs above
-   0x02000000 are shared and not overlaid.
+/* Writable section range in a loaded DLL (for copy-on-write tracking) */
+struct DllWritableSection {
+    uint32_t start; /* absolute address in emulated memory */
+    uint32_t size;
+};
 
-   IMPORTANT: Only pages explicitly committed via Commit() are intercepted by
-   Translate(). Other slot 0 addresses fall through to global memory. This prevents
-   the child process from shadowing the parent's heap allocations (e.g. ole32.dll's
-   CDllCache stores heap pointers in slot 0 range that must resolve to the parent's
-   data, not the child's empty overlay). */
+/* Per-process virtual address space overlay.
+
+   WinCE slot 0 (0x00000000-0x01FFFFFF): private per process — each process gets
+   its own copy of the EXE's code/data/heap in this range.
+
+   DLL region (0x02000000+): code is shared, DATA pages are copy-on-write per
+   process. When a child process writes to a DLL .data/.bss page, a private copy
+   is created in the dll_overlay map. Reads check the overlay first; if no private
+   copy exists, the shared (global) page is returned.
+
+   IMPORTANT: Only pages explicitly committed via Commit() or copied via
+   CopyOnWrite() are intercepted. Other addresses fall through to global memory. */
 struct ProcessSlot {
     static const uint32_t SLOT_SIZE = 0x02000000; /* 32 MB */
     static const uint32_t IDENTITY_BASE = 0x00010000; /* WinCE EXE base */
@@ -81,7 +90,7 @@ struct ProcessSlot {
         return p != nullptr;
     }
 
-    /* Translate an ARM address within slot range to host pointer.
+    /* Translate an ARM address within slot 0 range to host pointer.
        Only returns non-null for pages that were explicitly committed. */
     uint8_t* Translate(uint32_t addr) const {
         if (addr >= SLOT_SIZE) return nullptr;
@@ -93,4 +102,69 @@ struct ProcessSlot {
         if (!buffer) return nullptr;
         return buffer + addr;
     }
+
+    /* --- DLL data copy-on-write (addresses >= 0x02000000) --- */
+
+    /* Register a DLL's writable sections for copy-on-write tracking. */
+    void RegisterWritableSections(const std::vector<DllWritableSection>& sections) {
+        for (auto& s : sections)
+            dll_writable_sections.push_back(s);
+    }
+
+    /* Check if an address falls within a DLL writable section. */
+    bool IsDllWritableAddr(uint32_t addr) const {
+        for (auto& s : dll_writable_sections)
+            if (addr >= s.start && addr < s.start + s.size) return true;
+        return false;
+    }
+
+    /* Get the private copy of a DLL data page (returns nullptr if not yet copied). */
+    uint8_t* TranslateDllOverlay(uint32_t addr) const {
+        uint32_t page = addr & ~(PAGE_SIZE - 1);
+        auto it = dll_overlay.find(page);
+        if (it == dll_overlay.end()) return nullptr;
+        return it->second + (addr & (PAGE_SIZE - 1));
+    }
+
+    /* Copy-on-write: create a private copy of a DLL data page from global memory.
+       `global_page_ptr` is the host pointer to the shared page content.
+       Returns the host pointer to the new private copy. */
+    uint8_t* CopyOnWrite(uint32_t addr, const uint8_t* global_page_ptr) {
+        uint32_t page = addr & ~(PAGE_SIZE - 1);
+        auto it = dll_overlay.find(page);
+        if (it != dll_overlay.end())
+            return it->second + (addr & (PAGE_SIZE - 1)); /* already copied */
+
+        /* Allocate a new private page */
+        uint8_t* priv = (uint8_t*)VirtualAlloc(NULL, PAGE_SIZE,
+                                                 MEM_COMMIT, PAGE_READWRITE);
+        if (!priv) return nullptr;
+
+        /* Copy the shared content */
+        memcpy(priv, global_page_ptr, PAGE_SIZE);
+        dll_overlay[page] = priv;
+        return priv + (addr & (PAGE_SIZE - 1));
+    }
+
+    /* Free all private DLL data pages (called on process exit). */
+    void FreeDllOverlay() {
+        for (auto& pair : dll_overlay)
+            VirtualFree(pair.second, 0, MEM_RELEASE);
+        dll_overlay.clear();
+    }
+
+    /* Registered writable sections across all DLLs */
+    std::vector<DllWritableSection> dll_writable_sections;
+
+    /* Per-process allocator state (Phase 4).
+       Child processes get their own heap/malloc counters so allocations
+       don't overlap with the parent's address space.
+       Uses offset ranges within slot 0 that don't conflict with the parent. */
+    std::atomic<uint32_t> proc_heap_counter{0x00C00000};
+    std::atomic<uint32_t> proc_malloc_counter{0x01100000};
+    bool has_own_allocators = false;
+
+private:
+    /* Private copies of DLL data pages: page_addr → host buffer */
+    std::unordered_map<uint32_t, uint8_t*> dll_overlay;
 };

@@ -1,6 +1,8 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 #include "win32_thunks.h"
+#include "apiset.h"
+#include "trap_table.h"
 #include "../log.h"
 #include <cstdio>
 
@@ -43,29 +45,69 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
         it = thunks.find(addr & ~1u);
         if (it == thunks.end()) {
             /* Handle WinCE trap-based API calls (0xF000xxxx range).
-               WinCE apps call some APIs via trap addresses descending from 0xF0010000.
-               API index = (0xF0010000 - addr) / 4, which maps to COREDLL ordinals. */
+               Trap index = (0xF0010000 - addr) / 4 = (api_set << 8) | method.
+               api_set identifies the target (0=W32 kernel, 21=shell, etc).
+               method identifies the function within the set.
+
+               Dispatch order:
+               1. Registered API sets (CreateAPISet/RegisterAPISet) → vtable dispatch
+               2. W32 kernel traps (set 0) → trap_table.h method → thunk handler
+               3. Coredll ordinal fallback (for high indices that match ordinals) */
             if (addr >= WINCE_TRAP_BASE && addr < WINCE_TRAP_TOP) {
                 uint32_t api_index = (WINCE_TRAP_TOP - addr) / 4;
-                auto name_it = ordinal_map.find((uint16_t)api_index);
-                std::string func_name = (name_it != ordinal_map.end()) ? name_it->second : "";
-                uint32_t api_set = api_index / 256;
-                uint32_t method = api_index % 256;
-                if (!func_name.empty()) {
-                    LOG(API, "[API] WinCE trap 0x%08X -> API %u (set=%u method=%u) (%s) R0=0x%08X R1=0x%08X R2=0x%08X R3=0x%08X LR=0x%08X\n",
-                        addr, api_index, api_set, method, func_name.c_str(),
-                        regs[0], regs[1], regs[2], regs[3], regs[14]);
-                } else {
-                    LOG(API, "[API] WinCE trap 0x%08X -> API %u (set=%u method=%u) (unknown) R0=0x%08X R1=0x%08X R2=0x%08X R3=0x%08X LR=0x%08X\n",
-                        addr, api_index, api_set, method,
-                        regs[0], regs[1], regs[2], regs[3], regs[14]);
+                uint32_t api_set = api_index >> WINCE_TRAP_HANDLE_SHIFT;
+                uint32_t method = api_index & 0xFF;
+
+                /* 1. Registered API set dispatch (e.g. SH_SHELL from explorer) */
+                if (api_sets_ && api_sets_->IsRegistered(api_set)) {
+                    LOG(API, "[API] WinCE trap 0x%08X -> APISet %u method %u R0=0x%08X R1=0x%08X LR=0x%08X\n",
+                        addr, api_set, method, regs[0], regs[1], regs[14]);
+                    bool handled = api_sets_->Dispatch(api_set, method, regs, mem);
+                    if (handled) {
+                        uint32_t lr = regs[14];
+                        regs[15] = (lr & 1) ? (lr & ~1u) : (lr & ~3u);
+                        return true;
+                    }
                 }
-                /* Create a temporary thunk entry and execute it */
+
+                /* 2. W32 kernel traps (set 0): look up in trap table.
+                   These map to thunk handlers by NAME, not by ordinal.
+                   If the method is not in the table, FATAL — do NOT fall through
+                   to coredll ordinal dispatch (they're different numbering systems). */
+                std::string func_name;
+                if (api_set == 0) {
+                    auto& w32_table = GetW32TrapTable();
+                    auto w32_it = w32_table.find(method);
+                    if (w32_it != w32_table.end()) {
+                        func_name = w32_it->second;
+                    } else {
+                        LOG(API, "\n[FATAL] Unhandled W32 kernel trap: set=0 method=%u addr=0x%08X LR=0x%08X\n",
+                            method, addr, regs[14]);
+                        LOG(API, "  Add this method to cerf/thunks/trap_table.h\n");
+                        Log::Close();
+                        ExitProcess(1);
+                    }
+                }
+
+                /* 3. Coredll ordinal fallback for non-W32 traps.
+                   Shell traps (set 21+) have high indices that match coredll
+                   ordinal forwarding stubs. */
+                if (func_name.empty()) {
+                    auto name_it = ordinal_map.find((uint16_t)api_index);
+                    if (name_it != ordinal_map.end())
+                        func_name = name_it->second;
+                }
+
+                LOG(API, "[API] WinCE trap 0x%08X -> set=%u method=%u (%s) R0=0x%08X R1=0x%08X R2=0x%08X R3=0x%08X LR=0x%08X\n",
+                    addr, api_set, method,
+                    func_name.empty() ? "unknown" : func_name.c_str(),
+                    regs[0], regs[1], regs[2], regs[3], regs[14]);
+
                 ThunkEntry trap_entry;
                 trap_entry.dll_name = "COREDLL.dll";
                 trap_entry.func_name = func_name;
                 trap_entry.ordinal = (uint16_t)api_index;
-                trap_entry.by_ordinal = true;
+                trap_entry.by_ordinal = func_name.empty();
                 trap_entry.thunk_addr = addr;
                 bool result = ExecuteThunk(trap_entry, regs, mem);
                 if (result) {

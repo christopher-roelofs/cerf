@@ -50,7 +50,23 @@ void Win32Thunks::RegisterInputHandlers() {
         regs[0] = (uint32_t)(uintptr_t)GetForegroundWindow(); return true;
     });
     Thunk("SetForegroundWindow", 702, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = SetForegroundWindow((HWND)(intptr_t)(int32_t)regs[0]); return true;
+        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
+        /* On desktop Windows, SetForegroundWindow from a background thread is
+           restricted (can't steal focus). WinCE has no such restriction — all
+           windows share a single session. Force foreground by granting permission
+           via the foreground thread's input queue. */
+        DWORD fgThread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+        DWORD myThread = GetCurrentThreadId();
+        if (fgThread != myThread) {
+            AttachThreadInput(myThread, fgThread, TRUE);
+            SetForegroundWindow(hw);
+            BringWindowToTop(hw);
+            AttachThreadInput(myThread, fgThread, FALSE);
+        } else {
+            SetForegroundWindow(hw);
+        }
+        regs[0] = 1;
+        return true;
     });
     Thunk("SetActiveWindow", 703, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)SetActiveWindow((HWND)(intptr_t)(int32_t)regs[0]); return true;
@@ -151,11 +167,7 @@ void Win32Thunks::RegisterInputHandlers() {
         regs[0] = ok;
         return true;
     });
-    Thunk("LoadAcceleratorsW", 94, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] LoadAcceleratorsW(hInst=0x%08X, id=0x%X) -> 0 (stub)\n", regs[0], regs[1]);
-        regs[0] = 0;
-        return true;
-    });
+    /* LoadAcceleratorsW: registered in resource.cpp (full implementation) */
     /* IMM stubs */
     Thunk("ImmAssociateContext", 770, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] [STUB] ImmAssociateContext -> 0\n"); regs[0] = 0; return true;

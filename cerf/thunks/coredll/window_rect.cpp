@@ -24,7 +24,11 @@ void Win32Thunks::RegisterWindowRectHandlers() {
     Thunk("OffsetRect", 101, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         RECT rc; rc.left=mem.Read32(regs[0]); rc.top=mem.Read32(regs[0]+4);
         rc.right=mem.Read32(regs[0]+8); rc.bottom=mem.Read32(regs[0]+12);
-        OffsetRect(&rc,(int)regs[1],(int)regs[2]);
+        int dx = (int)regs[1], dy = (int)regs[2];
+        if (dy < -10000 || dy > 100000 || dx < -10000 || dx > 100000)
+            LOG(API, "[API] OffsetRect({%ld,%ld,%ld,%ld}, dx=%d, dy=%d) SUSPICIOUS\n",
+                rc.left, rc.top, rc.right, rc.bottom, dx, dy);
+        OffsetRect(&rc, dx, dy);
         mem.Write32(regs[0],rc.left); mem.Write32(regs[0]+4,rc.top);
         mem.Write32(regs[0]+8,rc.right); mem.Write32(regs[0]+12,rc.bottom);
         regs[0]=1; return true;

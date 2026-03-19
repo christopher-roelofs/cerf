@@ -14,7 +14,6 @@ struct ThreadContext {
     uint8_t kdata[0x1000] = {};  /* per-thread KData page (TLS, thread ID) */
     char process_name[32] = {};  /* human-readable name for log lines */
     char exe_path[512] = {};     /* host path to this process's EXE (for resources) */
-
     using CallbackExecutor = std::function<uint32_t(uint32_t addr, uint32_t* args, int nargs)>;
     CallbackExecutor callback_executor;
 };

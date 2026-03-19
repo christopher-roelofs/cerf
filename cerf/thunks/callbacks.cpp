@@ -8,6 +8,12 @@
 #pragma comment(lib, "comctl32")
 #pragma comment(lib, "dwmapi")
 
+/* Helpers split into callbacks_logging.cpp */
+void EmuWndProc_LogMessages(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                             uint32_t arm_wndproc, EmulatedMemory& emem);
+void EmuWndProc_LogPostDispatch(HWND hwnd, UINT msg, uint32_t result, EmulatedMemory& emem);
+bool EmuWndProc_HandleNcCalcSize(HWND hwnd, WPARAM wParam, LPARAM lParam, LRESULT& out);
+
 /* Static member definitions for callback infrastructure */
 std::map<HWND, uint32_t> Win32Thunks::hwnd_wndproc_map;
 std::map<HWND, WNDPROC> Win32Thunks::hwnd_native_wndproc_map;
@@ -83,34 +89,11 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     uint32_t arm_wndproc = it->second;
     LRESULT marshal_result = 0;
 
-    /* WM_NCCALCSIZE: compute WinCE non-client area for top-level captioned windows.
-       Since we create top-level WinCE windows as WS_POPUP (no native frame),
-       we must manually define the NC area to match WinCE metrics (1px border + caption). */
+    /* WM_NCCALCSIZE: compute WinCE non-client area — helper in callbacks_logging.cpp */
     if (msg == WM_NCCALCSIZE) {
-        auto sit = hwnd_wce_style_map.find(hwnd);
-        if (sit != hwnd_wce_style_map.end()) {
-            uint32_t ws = sit->second;
-            bool has_caption = (ws & WS_CAPTION) == WS_CAPTION;
-            bool has_border = (ws & WS_BORDER) != 0;
-            if (has_caption || has_border) {
-                int border = 1;
-                int caption = has_caption ? GetSystemMetrics(SM_CYCAPTION) : 0;
-                if (wParam) {
-                    NCCALCSIZE_PARAMS* ncp = (NCCALCSIZE_PARAMS*)lParam;
-                    ncp->rgrc[0].left += border;
-                    ncp->rgrc[0].top += border + caption;
-                    ncp->rgrc[0].right -= border;
-                    ncp->rgrc[0].bottom -= border;
-                } else {
-                    RECT* rc = (RECT*)lParam;
-                    rc->left += border;
-                    rc->top += border + caption;
-                    rc->right -= border;
-                    rc->bottom -= border;
-                }
-                return 0;
-            }
-        }
+        LRESULT r;
+        if (EmuWndProc_HandleNcCalcSize(hwnd, wParam, lParam, r))
+            return r;
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
@@ -126,8 +109,35 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         mmi->ptMaxSize.y = wa.bottom - wa.top;
         return 0;
     }
+    /* WM_SYSCOMMAND SC_CLOSE: native DefWindowProcW sends WM_CLOSE back through
+       the native message path, bypassing the ARM wndproc. The ARM BrowseWndProc
+       needs WM_CLOSE to call ExplorerList_t::RemoveExplorerWnd and clean up.
+       Translate SC_CLOSE into WM_CLOSE and dispatch to ARM directly. */
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xFFF0) == SC_CLOSE) {
+            LOG(API, "[API] EmuWndProc: SC_CLOSE → forwarding WM_CLOSE to ARM wndproc\n");
+            /* Fall through to ARM dispatch with WM_CLOSE instead */
+            msg = WM_CLOSE;
+            wParam = 0;
+            lParam = 0;
+            break; /* fall through to ARM dispatch below */
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+
+    /* WM_NCDESTROY: the window is being destroyed. If this is a top-level window
+       with an ARM wndproc, send WM_CLOSE to the ARM code first so it can clean up
+       (e.g. ExplorerList_t::RemoveExplorerWnd). The native X button bypasses
+       EmuWndProc's WM_SYSCOMMAND handler on some window styles, so WM_CLOSE
+       may never reach the ARM code unless we inject it here. */
+    case WM_NCDESTROY: {
+        HWND parent = GetParent(hwnd);
+        if (!parent && arm_wndproc && executor) {
+            uint32_t args[4] = { (uint32_t)(uintptr_t)hwnd, WM_CLOSE, 0, 0 };
+            executor(arm_wndproc, args, 4);
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
     /* Messages with native 64-bit pointers — route to DefWindowProcW */
-    case WM_NCDESTROY:
     case WM_SETICON:
     case WM_GETICON:
     case WM_COPYDATA:
@@ -139,6 +149,26 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     case WM_ENTERMENULOOP:
     case WM_EXITMENULOOP:
         return DefWindowProcW(hwnd, msg, wParam, lParam);
+
+    /* Edit control messages with native string pointers in lParam.
+       These come from the native combobox/edit system and carry 64-bit
+       string pointers that ARM code can't dereference. Marshal the string
+       into ARM emulated memory so the ARM wndproc can read it. */
+
+    case 0xB2 /* EM_REPLACESEL */: { /* lParam = LPCWSTR lpNewText */
+        if (lParam && (lParam >> 32) != 0) {
+            /* Native 64-bit pointer — marshal to ARM memory */
+            const wchar_t* text = (const wchar_t*)lParam;
+            size_t len = wcslen(text);
+            constexpr uint32_t EM_MARSHAL_ADDR = 0x3F008000;
+            s_instance->mem.Alloc(EM_MARSHAL_ADDR, 0x1000);
+            for (size_t i = 0; i <= len && i < 0x7FE; i++)
+                s_instance->mem.Write16(EM_MARSHAL_ADDR + (uint32_t)(i * 2), text[i]);
+            s_instance->mem.Write16(EM_MARSHAL_ADDR + (uint32_t)(len * 2), 0);
+            lParam = EM_MARSHAL_ADDR;
+        }
+        break; /* fall through to ARM dispatch with marshaled lParam */
+    }
 
     case WM_NOTIFY: {
         if (MarshalNotify(hwnd, wParam, lParam, arm_wndproc,
@@ -232,45 +262,8 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             lParam = 0;
     }
 
-    /* Debug logging for key messages */
-    if (msg == WM_PAINT || msg == WM_ERASEBKGND) {
-        wchar_t cls[64] = {};
-        GetClassNameW(hwnd, cls, 64);
-        LOG(API, "[API] EmuWndProc: msg=0x%04X (%s) hwnd=0x%p class='%ls'\n",
-            msg, msg == WM_PAINT ? "WM_PAINT" : "WM_ERASEBKGND", hwnd, cls);
-    }
-    if (msg == WM_CREATE || msg == WM_NCCREATE) {
-        wchar_t cls[64] = {};
-        GetClassNameW(hwnd, cls, 64);
-        LOG(API, "[API] EmuWndProc: msg=0x%04X (%s) hwnd=0x%p class='%ls' arm_wndproc=0x%08X lP=0x%X\n",
-            msg, msg == WM_CREATE ? "WM_CREATE" : "WM_NCCREATE", hwnd, cls, arm_wndproc, (uint32_t)lParam);
-    }
-    if (msg == WM_CLOSE || msg == WM_SYSCOMMAND || msg == WM_DESTROY) {
-        wchar_t cls[64] = {};
-        GetClassNameW(hwnd, cls, 64);
-        LOG(API, "[API] EmuWndProc CLOSE-PATH: msg=0x%04X hwnd=0x%p class='%ls' wP=0x%X lP=0x%X\n",
-            msg, hwnd, cls, (uint32_t)wParam, (uint32_t)lParam);
-    }
-    if (msg == WM_CHAR || msg == WM_KEYDOWN || msg == WM_SETTEXT ||
-        msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_CAPTURECHANGED ||
-        msg == WM_SETFOCUS || msg == WM_KILLFOCUS ||
-        msg == WM_INITMENUPOPUP || msg == WM_MENUSELECT) {
-        wchar_t cls[64] = {};
-        GetClassNameW(hwnd, cls, 64);
-        LOG(API, "[API] EmuWndProc: msg=0x%04X hwnd=0x%p class='%ls' wP=0x%X lP=0x%X\n",
-            msg, hwnd, cls, (uint32_t)wParam, (uint32_t)lParam);
-    }
-    if (msg == WM_NOTIFY) {
-        wchar_t cls[64] = {};
-        GetClassNameW(hwnd, cls, 64);
-        int32_t nmCode = 0;
-        EmulatedMemory& emem = s_instance->mem;
-        uint32_t lp32 = (uint32_t)lParam;
-        if (lp32 && emem.IsValid(lp32 + 8))
-            nmCode = (int32_t)emem.Read32(lp32 + 8);
-        LOG(API, "[API] EmuWndProc WM_NOTIFY: hwnd=0x%p class='%ls' code=%d lP=0x%X\n",
-            hwnd, cls, nmCode, lp32);
-    }
+    /* Debug logging — implementations in callbacks_logging.cpp */
+    EmuWndProc_LogMessages(hwnd, msg, wParam, lParam, arm_wndproc, s_instance->mem);
 
     uint32_t args[4] = {
         (uint32_t)(uintptr_t)hwnd,
@@ -281,9 +274,7 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 
     uint32_t result = s_instance->callback_executor(arm_wndproc, args, 4);
 
-    if (msg == WM_NOTIFY) {
-        LOG(API, "[API] EmuWndProc WM_NOTIFY result=%u (0x%X)\n", result, result);
-    }
+    EmuWndProc_LogPostDispatch(hwnd, msg, result, s_instance->mem);
 
     /* Copy back results from WM_MEASUREITEM */
     if (msg == WM_MEASUREITEM && native_lParam) {

@@ -46,6 +46,7 @@ enum {
 typedef std::function<bool(uint32_t addr, uint32_t* regs, EmulatedMemory& mem)> ThunkCallback;
 
 class GdbStub;  /* forward declaration for debugger integration */
+class TraceManager;  /* forward declaration for ARM trace points */
 
 class ArmCpu {
 public:
@@ -71,6 +72,7 @@ public:
 
     /* GDB stub — when non-null, Poll() is called every instruction */
     GdbStub* debugger = nullptr;
+    TraceManager* traces = nullptr;
 
     ArmCpu() : mem(nullptr), insn_count(0), halted(false), halt_code(0), trace(false) {
         Reset();

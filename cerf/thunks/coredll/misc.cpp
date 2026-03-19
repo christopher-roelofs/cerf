@@ -1,5 +1,6 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
+#include <atomic>
 /* Misc small stubs: debug, clipboard, caret, sound, RAS, IMM, gestures,
    C runtime.
    AI NOTE: Do NOT dump random thunks here. If a function belongs to a
@@ -9,6 +10,7 @@
 #include "../win32_thunks.h"
 #include "../../log.h"
 #include "../../loader/pe_loader.h"
+#include "../apiset.h"
 #include <cstdio>
 void Win32Thunks::RegisterMiscHandlers() {
     auto stub0 = [](const char* name) -> ThunkHandler {
@@ -69,58 +71,8 @@ void Win32Thunks::RegisterMiscHandlers() {
         LOG(API, "[API] RegisterDbgZones(hMod=0x%08X, lpdbgZones=0x%08X) -> TRUE (stub)\n", regs[0], regs[1]);
         regs[0] = 1; return true;
     });
-    /* Clipboard */
-    Thunk("OpenClipboard", 668, stub1("OpenClipboard"));
-    Thunk("CloseClipboard", 669, stub1("CloseClipboard"));
-    Thunk("EmptyClipboard", 677, stub1("EmptyClipboard"));
-    Thunk("GetClipboardData", 672, stub0("GetClipboardData"));
-    Thunk("SetClipboardData", 671, stub0("SetClipboardData"));
-    Thunk("IsClipboardFormatAvailable", 678, stub0("IsClipboardFormatAvailable"));
-    Thunk("EnumClipboardFormats", 675, stub0("EnumClipboardFormats"));
-    /* Caret — real implementations needed by RichEdit for the blinking cursor */
-    Thunk("CreateCaret", 658, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        HWND hw = (HWND)(intptr_t)(int32_t)regs[0];
-        HBITMAP hbm = (HBITMAP)(uintptr_t)regs[1];
-        regs[0] = CreateCaret(hw, hbm, (int)regs[2], (int)regs[3]);
-        return true;
-    });
-    Thunk("HideCaret", 660, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = HideCaret((HWND)(intptr_t)(int32_t)regs[0]);
-        return true;
-    });
-    Thunk("ShowCaret", 661, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = ShowCaret((HWND)(intptr_t)(int32_t)regs[0]);
-        return true;
-    });
-    Thunk("GetCaretBlinkTime", 664, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetCaretBlinkTime();
-        return true;
-    });
-    /* Sound */
-    Thunk("sndPlaySoundW", 377, stub1("sndPlaySoundW"));
-    Thunk("PlaySoundW", 378, stub1("PlaySoundW"));
-    Thunk("waveOutSetVolume", 382, stub0("waveOutSetVolume"));
-    /* RAS — wininet.dll dynamically loads these via GetProcAddress */
-    Thunk("RasDial", 342, stub0("RasDial"));
-    Thunk("RasHangup", stub0("RasHangup"));
-    thunk_handlers["RasHangUp"] = thunk_handlers["RasHangup"];
-    Thunk("RasEnumEntries", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        /* (reserved, phonebook, entries, cb, count) — 5th arg on stack */
-        uint32_t sp = regs[13];
-        uint32_t count_ptr = mem.Read32(sp);
-        if (count_ptr) mem.Write32(count_ptr, 0);
-        if (regs[3]) mem.Write32(regs[3], 0); /* *lpcb = 0 */
-        LOG(API, "[API] RasEnumEntries() -> 0 (no entries)\n");
-        regs[0] = 0; return true;
-    });
-    Thunk("RasEnumConnections", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        if (regs[2]) mem.Write32(regs[2], 0); /* *lpcConnections = 0 */
-        LOG(API, "[API] RasEnumConnections() -> 0 (none)\n");
-        regs[0] = 0; return true;
-    });
-    Thunk("RasGetConnectStatus", stub0("RasGetConnectStatus"));
-    Thunk("RasGetErrorString", stub0("RasGetErrorString"));
-    Thunk("RasGetEntryProperties", stub0("RasGetEntryProperties"));
+    /* Clipboard, caret, sound, RAS stubs — registered in misc_ui.cpp */
+    RegisterMiscUiHandlers();
     /* C runtime misc */
     Thunk("_purecall", 1092, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] _purecall\n"); regs[0] = 0; return true;
@@ -184,6 +136,10 @@ void Win32Thunks::RegisterMiscHandlers() {
            func: 1=EVENT_PULSE, 2=EVENT_RESET, 3=EVENT_SET */
         HANDLE hEvent = (HANDLE)(intptr_t)(int32_t)regs[0];
         uint32_t func = regs[1];
+        /* Memory fence: ensure all emulated memory writes from this ARM thread
+           are visible to other threads before signaling an event.  Without this,
+           cross-thread data (like CDwnStm EOF flags) may remain stale on x64. */
+        std::atomic_thread_fence(std::memory_order_seq_cst);
         BOOL result = FALSE;
         switch (func) {
             case 3: result = SetEvent(hEvent); break;    /* EVENT_SET */
@@ -250,27 +206,10 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("GetGestureInfo", 2925, stub0("GetGestureInfo"));
     Thunk("GetGestureExtraArguments", stub0("GetGestureExtraArguments"));
     Thunk("CloseGestureInfoHandle", 2924, stub0("CloseGestureInfoHandle"));
-    /* Clipboard */
-    Thunk("RegisterClipboardFormatW", 673, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        std::wstring fmt = ReadWStringFromEmu(mem, regs[0]);
-        LOG(API, "[API] RegisterClipboardFormatW('%ls')\n", fmt.c_str());
-        UINT id = RegisterClipboardFormatW(fmt.c_str());
-        regs[0] = id;
-        return true;
-    });
-    Thunk("GetClipboardOwner", 670, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] GetClipboardOwner() -> NULL (stub)\n");
-        regs[0] = 0;
-        return true;
-    });
     Thunk("CryptProtectData", 1599, stub0("CryptProtectData"));
     Thunk("EnumFontsW", 966, stub0("EnumFontsW"));
     Thunk("GetGweApiSetTables", 1867, stub0("GetGweApiSetTables"));
-    Thunk("GetSystemDefaultUILanguage", 1319, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 0x0409; /* US English */
-        return true;
-    });
-    Thunk("CeZeroPointer", 1907, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("CeZeroPointer", 1781, [](uint32_t* regs, EmulatedMemory&) -> bool {
         /* Identity no-op — kernel buffer unmapping not needed in emulator */
         LOG(API, "[API] CeZeroPointer(0x%08X) -> 0x%08X (identity)\n", regs[0], regs[0]);
         return true;
@@ -288,4 +227,33 @@ void Win32Thunks::RegisterMiscHandlers() {
         regs[0] = (uint32_t)-1;
         return true;
     });
+
+    /* WinCE kernel API Set system — CreateAPISet / RegisterAPISet.
+       Explorer.exe registers the shell API set (SH_SHELL=21) at startup.
+       When any process calls a trap in that set (e.g. SHBrowseToURL = method 9),
+       the kernel dispatches to the registered vtable in the registering process. */
+    /* Both names needed: "CreateAPISet" for W32 trap dispatch (trap_table.h),
+       "xxx_CreateAPISet" for coredll IAT dispatch (ordinal 559 in coredll.def) */
+    auto createApiSetImpl = [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* R0 = char acName[4], R1 = USHORT cFunctions,
+           R2 = const PFNVOID* ppfnMethods, R3 = const DWORD* pdwSig */
+        char name[5] = {};
+        for (int i = 0; i < 4; i++) name[i] = (char)mem.Read8(regs[0] + i);
+        uint16_t num_methods = (uint16_t)regs[1];
+        uint32_t vtable_addr = regs[2];
+        uint32_t sigtable_addr = regs[3];
+        regs[0] = GetApiSets().Create(name, num_methods, vtable_addr, sigtable_addr);
+        return true;
+    };
+    Thunk("CreateAPISet", 559, createApiSetImpl);
+    thunk_handlers["xxx_CreateAPISet"] = createApiSetImpl;
+
+    auto registerApiSetImpl = [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t handle = regs[0];
+        uint32_t set_id = regs[1];
+        regs[0] = GetApiSets().Register(handle, set_id, callback_executor) ? 1 : 0;
+        return true;
+    };
+    Thunk("RegisterAPISet", 635, registerApiSetImpl);
+    thunk_handlers["xxx_RegisterAPISet"] = registerApiSetImpl;
 }

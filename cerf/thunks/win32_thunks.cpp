@@ -1,6 +1,8 @@
 #define NOMINMAX
 #define _CRT_SECURE_NO_WARNINGS
 #include "win32_thunks.h"
+#include "class_bridge.h"
+#include "apiset.h"
 #include "../log.h"
 #include <cstdio>
 #include <cstring>
@@ -73,13 +75,32 @@ void Win32Thunks::RemoveHandle(uint32_t fake) {
 std::map<uint16_t, std::string> Win32Thunks::ordinal_map;
 
 void Win32Thunks::Thunk(const std::string& name, uint16_t ordinal, ThunkHandler handler) {
+    if (thunk_handlers.count(name))
+        duplicate_thunks.push_back(name + " (ordinal " + std::to_string(ordinal) + ")");
     thunk_handlers[name] = std::move(handler);
     if (ordinal > 0)
         ordinal_map[ordinal] = name;
 }
 
 void Win32Thunks::Thunk(const std::string& name, ThunkHandler handler) {
+    if (thunk_handlers.count(name))
+        duplicate_thunks.push_back(name);
     thunk_handlers[name] = std::move(handler);
+}
+
+void Win32Thunks::CheckDuplicateThunks() {
+    if (duplicate_thunks.empty()) return;
+    LOG_ERR("\n");
+    LOG_ERR("================================================================\n");
+    LOG_ERR("  FATAL: %d DUPLICATE thunk registrations detected!\n", (int)duplicate_thunks.size());
+    LOG_ERR("  The second registration silently overwrites the first.\n");
+    LOG_ERR("  Fix each duplicate by removing one of the two Thunk() calls.\n");
+    LOG_ERR("================================================================\n");
+    for (auto& d : duplicate_thunks)
+        LOG_ERR("  - %s\n", d.c_str());
+    LOG_ERR("================================================================\n\n");
+    Log::Close();
+    ExitProcess(1);
 }
 
 void Win32Thunks::ThunkOrdinal(const std::string& name, uint16_t ordinal) {
@@ -99,6 +120,8 @@ std::string Win32Thunks::ResolveOrdinal(uint16_t ordinal) {
 Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     : mem(mem), next_thunk_addr(THUNK_BASE), emu_hinstance(0) {
     s_instance = this;
+    class_bridge_ = new ClassBridge();
+    api_sets_ = new ApiSetManager();
     /* Allocate a memory region for thunk return stubs */
     mem.Alloc(THUNK_BASE, 0x100000);
     /* Register all thunk handlers (map-based dispatch).
@@ -147,8 +170,12 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterShellExecHandler();
     RegisterWininetDepsHandlers();
     RegisterSocketHandlers();
+    RegisterCrtExtraHandlers();
+    RegisterGdiMiscHandlers();
+    RegisterMiscMshtmlHandlers();
     RegisterDirectDrawHandlers();
     RegisterDirectDrawSurfaceHandlers();
+    CheckDuplicateThunks();
     /* WinCE UserKData page at fixed address 0xFFFFC800.
        ARM code reads GetCurrentThreadId/GetCurrentProcessId directly from here
        (PUserKData[SH_CURTHREAD] at offset +4, PUserKData[SH_CURPROC] at offset +8).
@@ -194,4 +221,16 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
         LOG(API, "[API] Pre-register WinCE class 'Menu' -> atom=%d (err=%d)\n",
             a, a ? 0 : GetLastError());
     }
+}
+
+ClassBridge& Win32Thunks::GetClassBridge() { return *class_bridge_; }
+ApiSetManager& Win32Thunks::GetApiSets() { return *api_sets_; }
+
+Win32Thunks::CallbackExecutor Win32Thunks::GetCallbackExecutor() const {
+    /* Per-thread executor takes priority — each ARM thread has its own CPU,
+       stack, and register state. Using the wrong executor would corrupt state.
+       Falls back to main thread executor if no thread context exists. */
+    if (t_ctx && t_ctx->callback_executor)
+        return t_ctx->callback_executor;
+    return main_callback_executor;
 }

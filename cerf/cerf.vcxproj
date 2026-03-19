@@ -145,6 +145,10 @@
     <ClInclude Include="patches.h" />
     <ClInclude Include="loader\pe_loader.h" />
     <ClInclude Include="thunks\win32_thunks.h" />
+    <ClInclude Include="thunks\win32_handles.h" />
+    <ClInclude Include="thunks\win32_registry_types.h" />
+    <ClInclude Include="thunks\win32_dll_types.h" />
+    <ClInclude Include="main_config.h" />
     <ClInclude Include="thunks\thread_context.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="cli_helpers.h" />
@@ -167,12 +171,14 @@
     <ClCompile Include="patches.cpp" />
     <!-- Entry point -->
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="main_config.cpp" />
     <ClCompile Include="cli_helpers.cpp" />
     <!-- Thunk infrastructure -->
     <ClCompile Include="thunks\win32_thunks.cpp" />
     <ClCompile Include="thunks\win32_thunks_util.cpp" />
     <ClCompile Include="thunks\registry_impl.cpp" />
     <ClCompile Include="thunks\callbacks.cpp" />
+    <ClCompile Include="thunks\callbacks_logging.cpp" />
     <ClCompile Include="thunks\callbacks_marshal.cpp" />
     <ClCompile Include="thunks\captionok.cpp" />
     <ClCompile Include="thunks\menubar.cpp" />
@@ -184,6 +190,7 @@
     <!-- COREDLL thunks -->
     <ClCompile Include="thunks\coredll\arm_runtime.cpp" />
     <ClCompile Include="thunks\coredll\memory.cpp" />
+    <ClCompile Include="thunks\coredll\memory_crt.cpp" />
     <ClCompile Include="thunks\coredll\crt.cpp" />
     <ClCompile Include="thunks\coredll\stdio.cpp" />
     <ClCompile Include="thunks\coredll\string.cpp" />
@@ -196,25 +203,33 @@
     <ClCompile Include="thunks\coredll\gdi_text.cpp" />
     <ClCompile Include="thunks\coredll\gdi_font.cpp" />
     <ClCompile Include="thunks\coredll\gdi_region.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_paint.cpp" />
     <ClCompile Include="thunks\coredll\window.cpp" />
     <ClCompile Include="thunks\coredll\window_layout.cpp" />
     <ClCompile Include="thunks\coredll\window_props.cpp" />
+    <ClCompile Include="thunks\coredll\window_class.cpp" />
+    <ClCompile Include="thunks\class_bridge.cpp" />
+    <ClCompile Include="thunks\apiset.cpp" />
     <ClCompile Include="thunks\coredll\dialog.cpp" />
     <ClCompile Include="thunks\coredll\message.cpp" />
+    <ClCompile Include="thunks\coredll\message_wait.cpp" />
     <ClCompile Include="thunks\coredll\menu.cpp" />
     <ClCompile Include="thunks\coredll\input.cpp" />
     <ClCompile Include="thunks\coredll\registry.cpp" />
     <ClCompile Include="thunks\coredll\file.cpp" />
+    <ClCompile Include="thunks\coredll\file_time.cpp" />
     <ClCompile Include="thunks\coredll\file_notify.cpp" />
     <ClCompile Include="thunks\coredll\system.cpp" />
     <ClCompile Include="thunks\coredll\sysinfo.cpp" />
     <ClCompile Include="thunks\coredll\locale.cpp" />
     <ClCompile Include="thunks\coredll\sync.cpp" />
     <ClCompile Include="thunks\coredll\resource.cpp" />
+    <ClCompile Include="thunks\coredll\resource_extract.cpp" />
     <ClCompile Include="thunks\coredll\process.cpp" />
     <ClCompile Include="thunks\coredll\child_process.cpp" />
     <ClCompile Include="thunks\coredll\filemapping.cpp" />
     <ClCompile Include="thunks\coredll\misc.cpp" />
+    <ClCompile Include="thunks\coredll\misc_ui.cpp" />
     <ClCompile Include="thunks\coredll\com.cpp" />
     <ClCompile Include="thunks\coredll\imagelist.cpp" />
     <ClCompile Include="thunks\coredll\dpa.cpp" />
@@ -233,11 +248,24 @@
     <ClCompile Include="thunks\theme_subclass.cpp" />
     <ClCompile Include="thunks\theme_nc_paint.cpp" />
     <ClCompile Include="thunks\coredll\dialog_template.cpp" />
+    <ClCompile Include="thunks\coredll\crt_extra.cpp" />
+    <ClCompile Include="thunks\coredll\gdi_misc.cpp" />
+    <ClCompile Include="thunks\coredll\misc_mshtml.cpp" />
     <ClCompile Include="thunks\thread_context.cpp" />
     <!-- GDB remote debugger -->
     <ClCompile Include="debugger\gdb_stub.cpp" />
     <ClCompile Include="debugger\gdb_server.cpp" />
     <ClCompile Include="debugger\gdb_commands.cpp" />
+    <!-- ARM trace point system -->
+    <ClCompile Include="tracing\trace_manager.cpp" />
+    <ClCompile Include="tracing\wince5\traces_webview.cpp" />
+    <ClCompile Include="tracing\wince5\traces_mshtml.cpp" />
+    <ClCompile Include="tracing\wince5\traces_mshtml_notify.cpp" />
+    <ClCompile Include="tracing\wince5\traces_mshtml_load.cpp" />
+    <ClCompile Include="tracing\wince5\traces_shdocvw.cpp" />
+    <ClCompile Include="tracing\wince5\traces_browser.cpp" />
+    <ClCompile Include="tracing\wince5\traces_explorer.cpp" />
+    <ClCompile Include="tracing\wince5\traces_urlmon.cpp" />
   </ItemGroup>
   <!-- Bundled device files — copied to devices/ next to cerf.exe -->
   <Target Name="CopyBundledFiles" AfterTargets="Build">
