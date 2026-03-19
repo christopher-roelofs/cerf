@@ -23,3 +23,9 @@
 
     /* DLLs that called DisableThreadLibraryCalls — skip DLL_THREAD_ATTACH */
     std::set<uint32_t> disable_thread_notify_bases;
+
+    /* LPC Port Manager — emulates the LPC1: kernel device driver.
+       Handles DeviceIoControl for LPCRT.dll's Nt* port operations. */
+    class LpcPortManager* lpc_manager_ = nullptr;
+    uint32_t lpc_device_handle_ = 0;
+    static constexpr uint32_t LPC_DEVICE_SENTINEL = 0xCE00BEEF;

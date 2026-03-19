@@ -274,6 +274,7 @@ public:
     void RegisterDpaHandlers();
     void RegisterDsaHandlers();
     void RegisterStdioHandlers();
+    void RegisterDeviceIoHandlers();
     void RegisterVfsHandlers();
     void RegisterShellExecHandler();
     void RegisterWininetDepsHandlers();

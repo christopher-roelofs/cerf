@@ -221,6 +221,9 @@
     <ClCompile Include="thunks\coredll\file_notify.cpp" />
     <ClCompile Include="thunks\coredll\system.cpp" />
     <ClCompile Include="thunks\coredll\seh_dispatch.cpp" />
+    <ClCompile Include="thunks\lpc_manager.cpp" />
+    <ClCompile Include="thunks\lpc_ioctls.cpp" />
+    <ClCompile Include="thunks\coredll\device_io.cpp" />
     <ClCompile Include="thunks\coredll\sysinfo.cpp" />
     <ClCompile Include="thunks\coredll\locale.cpp" />
     <ClCompile Include="thunks\coredll\sync.cpp" />
