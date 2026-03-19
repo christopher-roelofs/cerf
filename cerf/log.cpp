@@ -64,6 +64,11 @@ void Log::Close() {
     }
 }
 
+void CerfFatalExit(int code) {
+    Log::Close();
+    ExitProcess((UINT)code);
+}
+
 /* Thread-local process name for log prefix */
 thread_local const char* g_log_process_name = nullptr;
 thread_local DWORD g_log_process_id = 0;

@@ -188,8 +188,7 @@ bool Win32Thunks::SehDispatch(uint32_t* regs, EmulatedMemory& mem,
                 "(not implemented). Exception 0x%08X cannot be dispatched.\n"
                 "  Implement ThumbVirtualUnwind in seh_dispatch.cpp\n",
                 func_start, exc_code);
-            Log::Close();
-            ExitProcess(1);
+            CerfFatalExit(1);
         }
 
         LOG(API, "[SEH] frame %d: pc=0x%08X func=0x%08X prolog=%u handler=%d\n",
@@ -226,8 +225,7 @@ bool Win32Thunks::SehDispatch(uint32_t* regs, EmulatedMemory& mem,
                             "disposition %d (expected 0, 1, or -1).\n"
                             "  This may indicate the filter needs EXCEPTION_POINTERS "
                             "(not yet implemented).\n", filt_rt, disp);
-                        Log::Close();
-                        ExitProcess(1);
+                        CerfFatalExit(1);
                     }
                 }
 

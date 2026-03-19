@@ -176,8 +176,7 @@ void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,
                     ctx->thunk_call_count - start_thunk_count);
                 LOG(API, "[FATAL] ARM state is corrupt — exiting.\n");
                 LOG(API, "[FATAL] Fix the root cause before restarting.\n\n");
-                Log::Close();
-                ExitProcess(1);
+                CerfFatalExit(1);
             }
             cpu.Step();
         }

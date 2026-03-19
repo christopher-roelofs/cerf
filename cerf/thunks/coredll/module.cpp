@@ -229,10 +229,10 @@ void Win32Thunks::RegisterModuleHandlers() {
     Thunk("CacheSync", 577, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("CacheRangeFlush", 1765, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("ExitProcess", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] ExitProcess(%d)\n", regs[0]); ExitProcess(regs[0]); return true;
+        LOG(API, "[API] ExitProcess(%d)\n", regs[0]); CerfFatalExit(regs[0]); return true;
     });
     Thunk("TerminateProcess", 544, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] ExitProcess(%d)\n", regs[0]); ExitProcess(regs[0]); return true;
+        LOG(API, "[API] TerminateProcess(%d)\n", regs[0]); CerfFatalExit(regs[0]); return true;
     });
     Thunk("ExitThread", 6, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] ExitThread(%d)\n", regs[0]); ExitThread(regs[0]); return true;

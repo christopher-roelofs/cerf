@@ -84,8 +84,7 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
                         LOG(API, "\n[FATAL] Unhandled W32 kernel trap: set=0 method=%u addr=0x%08X LR=0x%08X\n",
                             method, addr, regs[14]);
                         LOG(API, "  Add this method to cerf/thunks/trap_table.h\n");
-                        Log::Close();
-                        ExitProcess(1);
+                        CerfFatalExit(1);
                     }
                 }
 
@@ -166,6 +165,5 @@ bool Win32Thunks::ExecuteThunk(ThunkEntry& entry, uint32_t* regs, EmulatedMemory
         LOG(API, "\n[FATAL] UNIMPLEMENTED: %s!%s (ordinal=%d) LR=0x%08X\n",
                entry.dll_name.c_str(), func.c_str(), entry.ordinal, regs[14]);
     }
-    Log::Close();
-    ExitProcess(1);
+    CerfFatalExit(1);
 }

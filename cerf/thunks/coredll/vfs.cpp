@@ -82,7 +82,7 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
     if (device_name.empty()) {
         LOG_ERR("[VFS] FATAL: No device configured. Set device= in cerf.ini or use --device=NAME.\n");
         LOG_ERR("[VFS] Expected cerf.ini at: %s\n", ini_path.c_str());
-        ExitProcess(1);
+        CerfFatalExit(1);
     }
 
     device_fs_root = cerf_dir + "devices\\" + device_name + "\\fs\\";
@@ -93,7 +93,7 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
     if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
         LOG_ERR("[VFS] FATAL: Device directory does not exist: %s\n", device_dir.c_str());
         LOG_ERR("[VFS] Check the device= setting in cerf.ini or use --device=NAME.\n");
-        ExitProcess(1);
+        CerfFatalExit(1);
     }
 
     LOG(VFS, "[VFS] Device: %s\n", device_name.c_str());

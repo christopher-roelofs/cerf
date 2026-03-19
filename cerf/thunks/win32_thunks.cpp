@@ -99,8 +99,7 @@ void Win32Thunks::CheckDuplicateThunks() {
     for (auto& d : duplicate_thunks)
         LOG_ERR("  - %s\n", d.c_str());
     LOG_ERR("================================================================\n\n");
-    Log::Close();
-    ExitProcess(1);
+    CerfFatalExit(1);
 }
 
 void Win32Thunks::ThunkOrdinal(const std::string& name, uint16_t ordinal) {

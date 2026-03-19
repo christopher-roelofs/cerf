@@ -78,7 +78,7 @@ void Win32Thunks::RegisterMiscHandlers() {
         LOG(API, "[API] _purecall\n"); regs[0] = 0; return true;
     });
     Thunk("terminate", 1556, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] terminate\n"); ExitProcess(3); return true;
+        LOG(API, "[API] terminate\n"); CerfFatalExit(3); return true;
     });
     Thunk("__security_gen_cookie", 1875, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0xBB40E64E; return true; });
     Thunk("__security_gen_cookie2", 2696, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0xBB40E64E; return true; });

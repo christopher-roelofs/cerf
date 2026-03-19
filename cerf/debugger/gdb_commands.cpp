@@ -40,7 +40,7 @@ void GdbStub::HandlePacket(const std::string& pkt) {
         connected = false;
         ResumeAll();
         LOG(DBG, "[GDB] Kill requested\n");
-        ExitProcess(0);
+        CerfFatalExit(0);
         break;
     case 'q': HandleQuery(pkt); break;
     case 'v':

@@ -168,7 +168,7 @@ int main(int argc, char* argv[]) {
     cpu.thunk_handler = [&thunks](uint32_t addr, uint32_t* regs, EmulatedMemory& mem_ref) -> bool {
         if (addr == 0xDEADDEAD) {
             LOG(EMU, "\n[EMU] Program returned from entry point with code %d\n", regs[0]);
-            ExitProcess(regs[0]);
+            CerfFatalExit(regs[0]);
             return true;
         }
         if (addr == 0xCAFEC000) { regs[15] = 0xCAFEC000; return true; }

@@ -45,3 +45,7 @@ namespace Log {
 #define LOG(cat, ...) do { if (Log::IsEnabled(Log::cat)) Log::Print(Log::cat, __VA_ARGS__); } while(0)
 #define LOG_ERR(...) Log::Err(__VA_ARGS__)
 #define LOG_RAW(...) Log::Raw(__VA_ARGS__)
+
+/* Fatal exit: flush logs, close log file, then terminate.
+   Always use this instead of bare ExitProcess() to avoid losing log output. */
+[[noreturn]] void CerfFatalExit(int code = 1);
