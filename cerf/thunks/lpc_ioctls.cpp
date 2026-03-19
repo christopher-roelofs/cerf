@@ -217,21 +217,23 @@ int32_t LpcPortManager::RequestWaitReplyPort(uint32_t port_handle,
            fails gracefully and the caller handles the error via SEH. */
         bool is_epmapper = (master_port->name == L"\\RPC Control\\epmapper");
         if (is_epmapper) {
-            /* Build a minimal LPC_REPLY with error status.
-               The reply body starts after the PORT_MESSAGE header (24 bytes).
-               RPCRT4 reads the NTSTATUS from the reply data. We set the
-               reply to indicate the endpoint was not found. */
-            ArmPortMessage reply_hdr = *hdr;
-            reply_hdr.Type = LPC_REPLY;
-            reply_hdr.DataLength = 4; /* 4 bytes of error data */
-            reply_hdr.TotalLength = sizeof(ArmPortMessage) + 4;
-            msg->data.resize(reply_hdr.TotalLength);
-            memcpy(msg->data.data(), &reply_hdr, sizeof(reply_hdr));
-            /* Write RPC_S_EPT_S_NOT_REGISTERED (0x6D9) as reply data */
-            uint32_t rpc_err = 0x6D9;
-            memcpy(msg->data.data() + sizeof(ArmPortMessage), &rpc_err, 4);
-            SetEvent(msg->hEvent);
-            LOG(API, "[LPC] epmapper auto-reply: EPT_S_NOT_REGISTERED\n");
+            /* Build WMSG Fault reply in-place. RPCRT4's SendReceive checks:
+               +24 (byte): MessageType — 4 = WMSG_FAULT
+               +48 (dword): Fault.RpcStatus — the RPC error code
+               DataLength=32, TotalLength=56 (from IDA analysis) */
+            constexpr uint8_t  WMSG_FAULT = 4;
+            constexpr uint16_t WMSG_FAULT_DATA_LEN = 32;
+            constexpr uint16_t WMSG_FAULT_TOTAL = 56;
+            constexpr uint32_t WMSG_RPCSTATUS_OFF = 0x30; /* offset 48 */
+            /* Return STATUS_PORT_CONNECTION_REFUSED — the epmapper has no
+               registered endpoints. RPCRT4's endpoint resolver checks the
+               NtStatus return code and maps it to RPC_S_SERVER_UNAVAILABLE
+               without trying to parse the reply data. */
+            CloseHandle(msg->hEvent);
+            delete msg;
+            constexpr int32_t STATUS_PORT_CONN_REFUSED = static_cast<int32_t>(0xC0000041u);
+            LOG(API, "[LPC] epmapper: returning PORT_CONNECTION_REFUSED\n");
+            return STATUS_PORT_CONN_REFUSED;
         } else {
             master_port->message_queue.push_back(msg);
             SetEvent(master_port->queue_event);
