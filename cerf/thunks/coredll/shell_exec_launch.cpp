@@ -69,12 +69,6 @@ bool Win32Thunks::LaunchArmChildProcess(
             ProcessHandleTable handle_table;
             t_handle_table = &handle_table;
 
-            /* Record DLLs that exist before child starts — only DLLs loaded
-               DURING the child's lifetime should get DLL_PROCESS_DETACH. */
-            std::set<uint32_t> pre_existing_dll_bases;
-            for (auto& pair : cpi->thunks->loaded_dlls)
-                pre_existing_dll_bases.insert(pair.second.base_addr);
-
             /* Load PE into the slot */
             PEInfo child_pe = {};
             uint32_t entry = PELoader::LoadIntoSlot(
@@ -184,11 +178,11 @@ bool Win32Thunks::LaunchArmChildProcess(
             handle_table.CloseAll();
             t_handle_table = nullptr;
 
-            /* Phase 2: DLL_PROCESS_DETACH only for DLLs loaded DURING this child's
-               lifetime. Pre-existing DLLs (loaded by parent) must NOT get DETACH
-               because their DllMain modifies SHARED global state. On real WinCE,
-               each process has hardware-MMU-isolated DLL data copies, so DETACH
-               only affects the exiting process. We lack that isolation. */
+            /* DLL_PROCESS_DETACH for all DLLs (reverse order).
+               ARM-side writes are isolated by ProcessSlot's DLL copy-on-write.
+               HOST-side state (cs_map, handles) is isolated by per-function checks
+               on EmulatedMemory::process_slot in each thunk (DeleteCriticalSection,
+               InitializeCriticalSection, FreeLibrary, CoUninitialize, etc.). */
             {
                 constexpr uint32_t DLL_PROCESS_DETACH_REASON = 0;
                 auto& dlls = thunks_ptr->loaded_dlls;
@@ -196,12 +190,9 @@ bool Win32Thunks::LaunchArmChildProcess(
                 for (auto& pair : dlls) {
                     auto& dll = pair.second;
                     if (dll.pe_info.entry_point_rva == 0) continue;
-                    /* Skip DLLs that existed before this child started */
-                    if (pre_existing_dll_bases.count(dll.base_addr)) continue;
-                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
-                    detach_list.push_back({entry, dll.base_addr});
+                    uint32_t ep = dll.base_addr + dll.pe_info.entry_point_rva;
+                    detach_list.push_back({ep, dll.base_addr});
                 }
-                /* Reverse order: last loaded → first detached */
                 for (auto it = detach_list.rbegin(); it != detach_list.rend(); ++it) {
                     LOG(API, "[PROC] DLL_PROCESS_DETACH: 0x%08X (base=0x%08X)\n",
                         it->first, it->second);

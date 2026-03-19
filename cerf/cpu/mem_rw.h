@@ -10,11 +10,36 @@
         if (process_slot && addr < ProcessSlot::SLOT_SIZE) {
             uint8_t* sp = process_slot->Translate(addr);
             if (sp) return sp;
+            /* Copy-on-write for slot-0 heap: auto-commit the page with a snapshot
+               of the parent's data. On real WinCE, each process has MMU-isolated
+               slot-0 pages. Without this, child writes to parent's heap objects
+               (e.g., zeroing vtable during operator delete in DLL_PROCESS_DETACH)
+               would corrupt the parent's shared heap. */
+            uint32_t page = addr & ~(PAGE_SIZE - 1);
+            if (page >= 0x10000) { /* skip null page */
+                uint8_t* global = nullptr;
+                for (auto& r : regions) {
+                    if (page >= r.base && page < r.base + r.size) {
+                        global = r.host_ptr + (page - r.base);
+                        break;
+                    }
+                }
+                if (global && process_slot->Commit(page, PAGE_SIZE)) {
+                    uint8_t* dst = process_slot->Translate(page);
+                    if (dst) {
+                        memcpy(dst, global, PAGE_SIZE);
+                        fprintf(stderr, "[MEM] Slot-0 heap CoW: page 0x%08X for addr 0x%08X\n", page, addr);
+                        return dst + (addr & (PAGE_SIZE - 1));
+                    }
+                }
+            }
         }
         /* DLL copy-on-write: if writing to a DLL writable section, create a
-           private page copy so the child process doesn't corrupt shared state. */
+           private page copy so the child process doesn't corrupt shared state.
+           Check the GLOBAL writable section list (not the ProcessSlot's snapshot)
+           because DLLs may be loaded on other threads during the child's lifetime. */
         if (process_slot && addr >= ProcessSlot::SLOT_SIZE
-            && process_slot->IsDllWritableAddr(addr)) {
+            && IsDllWritableAddr(addr)) {
             uint8_t* dp = process_slot->TranslateDllOverlay(addr);
             if (dp) return dp;
             uint8_t* global = nullptr;

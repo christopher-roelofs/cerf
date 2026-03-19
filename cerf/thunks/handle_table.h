@@ -42,11 +42,17 @@ public:
         handles_.clear();
     }
 
+    /* Check if a handle is tracked (owned by this process) */
+    bool IsTracked(HANDLE h) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return handles_.count(h) > 0;
+    }
+
     size_t Count() const { return handles_.size(); }
 
 private:
     std::set<HANDLE> handles_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
 };
 
 /* Get the current thread's process handle table (nullptr for main process).

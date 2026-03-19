@@ -16,6 +16,13 @@ struct ThreadContext {
     char exe_path[512] = {};     /* host path to this process's EXE (for resources) */
     using CallbackExecutor = std::function<uint32_t(uint32_t addr, uint32_t* args, int nargs)>;
     CallbackExecutor callback_executor;
+
+    /* ARM SEH: per-thread exception handler registered via SetExceptionHandler.
+       On WinCE, the CRT registers a handler at thread startup. When RaiseException
+       fires, the kernel calls this handler to dispatch to __except blocks.
+       Handler signature: EXCEPTION_DISPOSITION handler(
+           EXCEPTION_RECORD*, void* EstablisherFrame, CONTEXT*, DISPATCHER_CONTEXT*) */
+    uint32_t seh_handler = 0;
 };
 
 /* Current thread's context. Set at thread start, never null during ARM execution. */

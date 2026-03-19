@@ -57,6 +57,7 @@ inline const std::unordered_map<uint32_t, std::string>& GetW32TrapTable() {
         {127, "QueryPerformanceFrequency" },
         {131, "GetModuleHandleW" },
         {145, "GetCommandLineW" },
+        { 40, "SetExceptionHandler" },  /* per-thread SEH handler for RaiseException */
         {146, "DisableThreadLibraryCalls" },
         {147, "CreateSemaphoreW" },
         {171, "OpenEvent" },

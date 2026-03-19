@@ -122,6 +122,25 @@ void Win32Thunks::RegisterGdiDcHandlers() {
         return true;
     });
     Thunk("SetStretchBltMode", 920, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = SetStretchBltMode(GDI_HDC(regs[0]), regs[1]); return true; });
+    /* AlphaBlend(hdcDest, xDest, yDest, wDest, hDest,
+                  hdcSrc, xSrc, ySrc, wSrc, hSrc, blendFunc)
+       ARM: R0=hdcDest R1=xDest R2=yDest R3=wDest
+            Stack[0]=hDest [1]=hdcSrc [2]=xSrc [3]=ySrc [4]=wSrc [5]=hSrc [6]=blendFunc */
+    Thunk("AlphaBlend", 1883, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        int cyDest  = (int)ReadStackArg(regs, mem, 0);
+        HDC hdcSrc  = GDI_HDC(ReadStackArg(regs, mem, 1));
+        int xSrc    = (int)ReadStackArg(regs, mem, 2);
+        int ySrc    = (int)ReadStackArg(regs, mem, 3);
+        int cxSrc   = (int)ReadStackArg(regs, mem, 4);
+        int cySrc   = (int)ReadStackArg(regs, mem, 5);
+        BLENDFUNCTION bf;
+        uint32_t bfVal = ReadStackArg(regs, mem, 6);
+        memcpy(&bf, &bfVal, sizeof(bf));
+        regs[0] = ::AlphaBlend(
+            GDI_HDC(regs[0]), (int)regs[1], (int)regs[2], (int)regs[3], cyDest,
+            hdcSrc, xSrc, ySrc, cxSrc, cySrc, bf);
+        return true;
+    });
     Thunk("GetCurrentObject", 915, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = (uint32_t)(uintptr_t)GetCurrentObject(GDI_HDC(regs[0]), regs[1]); return true;
     });

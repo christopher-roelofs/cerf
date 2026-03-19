@@ -101,7 +101,19 @@ void RegisterUrlmonTraces(TraceManager& tm) {
         LOG(TRACE, "[TRACE] urlmon::CreateObject: this=0x%08X\n", r[0]);
     });
     tm.Add(DLL, 0x100495F4, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
-        LOG(TRACE, "[TRACE] urlmon::InstantiateObject: this=0x%08X fFull=%d\n", r[0], mem->Read32(r[13]+0));
+        /* Dump CLSID: R1=pclsid, R2=riidResult */
+        uint32_t clsid_ptr = r[1];
+        uint32_t d1 = mem->Read32(clsid_ptr);
+        uint16_t d2 = mem->Read16(clsid_ptr+4);
+        uint16_t d3 = mem->Read16(clsid_ptr+6);
+        LOG(TRACE, "[TRACE] urlmon::InstantiateObject: this=0x%08X "
+            "clsid={%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X} fFull=%d\n",
+            r[0], d1, d2, d3,
+            mem->Read8(clsid_ptr+8), mem->Read8(clsid_ptr+9),
+            mem->Read8(clsid_ptr+10), mem->Read8(clsid_ptr+11),
+            mem->Read8(clsid_ptr+12), mem->Read8(clsid_ptr+13),
+            mem->Read8(clsid_ptr+14), mem->Read8(clsid_ptr+15),
+            mem->Read32(r[13]+0));
     });
     tm.Add(DLL, 0x1005244C, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] urlmon::CTransData::OnDataReceived: this=0x%08X bscf=0x%X cur=%u max=%u\n", r[0], r[1], r[2], r[3]);

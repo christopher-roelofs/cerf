@@ -73,6 +73,14 @@ public:
         }
     }
 
+    /* Check if an address is in any DLL's writable section (global list).
+       Used by TranslateForWrite to trigger copy-on-write for child processes. */
+    bool IsDllWritableAddr(uint32_t addr) const {
+        for (auto& s : dll_writable_sections)
+            if (addr >= s.start && addr < s.start + s.size) return true;
+        return false;
+    }
+
     /* Register a DLL for slot-0 aliasing. Call after loading a DLL at base >= 0x04000000. */
     void AddDllAlias(uint32_t dll_base, uint32_t size_of_image) {
         if (dll_base < WINCE_DLL_REGION_START || dll_base >= WINCE_DLL_REGION_END) return;

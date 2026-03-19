@@ -176,7 +176,9 @@ std::wstring Win32Thunks::ResolveHKey(uint32_t hkey, const std::wstring& subkey)
     std::wstring full = root + L"\\" + sk;
     /* Remove trailing backslash */
     while (!full.empty() && full.back() == L'\\') full.pop_back();
-    return full;
+    /* Windows registry keys are case-insensitive — normalize to lowercase
+       so lookups match regardless of case used by ARM code vs .reg files */
+    return ToLowerW(full);
 }
 
 void Win32Thunks::EnsureParentKeys(const std::wstring& path) {

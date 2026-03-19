@@ -220,6 +220,7 @@
     <ClCompile Include="thunks\coredll\file_time.cpp" />
     <ClCompile Include="thunks\coredll\file_notify.cpp" />
     <ClCompile Include="thunks\coredll\system.cpp" />
+    <ClCompile Include="thunks\coredll\seh_dispatch.cpp" />
     <ClCompile Include="thunks\coredll\sysinfo.cpp" />
     <ClCompile Include="thunks\coredll\locale.cpp" />
     <ClCompile Include="thunks\coredll\sync.cpp" />
@@ -266,6 +267,7 @@
     <ClCompile Include="tracing\wince5\traces_browser.cpp" />
     <ClCompile Include="tracing\wince5\traces_explorer.cpp" />
     <ClCompile Include="tracing\wince5\traces_urlmon.cpp" />
+    <ClCompile Include="tracing\wince5\traces_wininet.cpp" />
   </ItemGroup>
   <!-- Bundled device files — copied to devices/ next to cerf.exe -->
   <Target Name="CopyBundledFiles" AfterTargets="Build">

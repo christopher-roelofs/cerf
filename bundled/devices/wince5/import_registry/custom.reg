@@ -2,4 +2,7 @@ REGEDIT4
 
 ; Custom registry entries for CERF emulator.
 ; This file imports LAST, after all sysgen .reg files.
-;
+; Can be used by CERF users to import custom data.
+; Entire proper and working CE registry is already imported in the 
+; rest of sysgen'ed files. Those should NOT be modified at all.
+

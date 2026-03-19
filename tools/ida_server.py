@@ -741,7 +741,9 @@ def ep_search(pattern, start_ea, direction, max_results):
     results = []
     cur = start_ea
     for _ in range(max_results):
-        found = ida_bytes.bin_search(cur, end_ea, compiled, search_flag)
+        raw = ida_bytes.bin_search(cur, end_ea, compiled, search_flag)
+        # IDA 9.0+ bin_search returns (ea, mask) tuple; older versions return ea
+        found = raw[0] if isinstance(raw, tuple) else raw
         if found == idaapi.BADADDR:
             break
         results.append({

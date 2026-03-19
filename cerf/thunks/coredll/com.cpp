@@ -201,6 +201,13 @@ void Win32Thunks::RegisterComHandlers() {
         regs[0] = 0xFFFFFFFF; /* all permissions */
         return true;
     });
+    /* CeGetCurrentTrust — returns trust level of current process.
+       OEM_CERTIFY_TRUST (2) = full trust, like a signed OEM binary. */
+    Thunk("CeGetCurrentTrust", 1357, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        constexpr uint32_t OEM_CERTIFY_TRUST = 2;
+        regs[0] = OEM_CERTIFY_TRUST;
+        return true;
+    });
     Thunk("CompactAllHeaps", 54, stub0("CompactAllHeaps"));
     Thunk("MapCallerPtr", 1602, [](uint32_t* regs, EmulatedMemory&) -> bool {
         /* MapCallerPtr just returns the pointer unchanged in our single-process model */

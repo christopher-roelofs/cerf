@@ -133,6 +133,57 @@ void Win32Thunks::RegisterCrtExtraHandlers() {
         regs[0] = (uint32_t)result.size();
         return true;
     });
+    /* _snprintf(buf, count, fmt, ...) — varargs C formatting with size limit.
+       R0=buf, R1=count, R2=fmt, R3+stack=varargs.
+       Uses same format parser as vsprintf above. */
+    Thunk("_snprintf", 729, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst_addr = regs[0];
+        uint32_t max_count = regs[1];
+        std::string fmt = ReadStringFromEmu(mem, regs[2]);
+        /* Varargs: R3 is first vararg, then stack */
+        uint32_t args[10] = { regs[3] };
+        for (int i = 1; i < 10; i++) args[i] = ReadStackArg(regs, mem, i - 1);
+        /* Format string */
+        std::string result;
+        int arg_idx = 0;
+        for (size_t i = 0; i < fmt.size(); i++) {
+            if (fmt[i] == '%' && i + 1 < fmt.size()) {
+                i++;
+                if (fmt[i] == '%') { result += '%'; continue; }
+                std::string spec_str = "%";
+                while (i < fmt.size() && !isalpha(fmt[i]) && fmt[i] != '%')
+                    { spec_str += fmt[i]; i++; }
+                if (i >= fmt.size()) break;
+                char spec = fmt[i]; spec_str += spec;
+                if (arg_idx >= 10) { result += '?'; continue; }
+                char buf[128];
+                if (spec == 'd' || spec == 'i') {
+                    snprintf(buf, sizeof(buf), spec_str.c_str(), (int)args[arg_idx++]);
+                    result += buf;
+                } else if (spec == 'u' || spec == 'x' || spec == 'X' || spec == 'o') {
+                    snprintf(buf, sizeof(buf), spec_str.c_str(), args[arg_idx++]);
+                    result += buf;
+                } else if (spec == 's') {
+                    std::string s = ReadStringFromEmu(mem, args[arg_idx++]);
+                    result += s;
+                } else if (spec == 'c') {
+                    result += (char)args[arg_idx++];
+                } else if (spec == 'p') {
+                    snprintf(buf, sizeof(buf), "%08X", args[arg_idx++]);
+                    result += buf;
+                } else { result += '?'; arg_idx++; }
+            } else result += fmt[i];
+        }
+        /* Write to ARM buffer with size limit */
+        uint8_t* dst = mem.Translate(dst_addr);
+        if (dst && max_count > 0) {
+            size_t copy = std::min((size_t)max_count - 1, result.size());
+            memcpy(dst, result.c_str(), copy);
+            dst[copy] = 0;
+        }
+        regs[0] = (uint32_t)result.size();
+        return true;
+    });
     /* StringCchCatNW(dst, cchDest, src, cchToAppend) -> HRESULT */
     Thunk("StringCchCatNW", 1744, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t dst = regs[0], cch = regs[1], src_ptr = regs[2], cchToAppend = regs[3];

@@ -13,6 +13,13 @@ static std::wstring NarrowToWide(const std::string& s) {
     return w;
 }
 
+/* Windows registry keys are case-insensitive — normalize to lowercase */
+static std::wstring ToLowerW(const std::wstring& s) {
+    std::wstring r = s;
+    for (auto& c : r) if (c >= L'A' && c <= L'Z') c += 32;
+    return r;
+}
+
 /* Map REGEDIT4 root names to our abbreviated forms */
 static std::wstring MapRegRoot(const std::wstring& key) {
     if (key.substr(0, 18) == L"HKEY_CLASSES_ROOT\\") return L"HKCR\\" + key.substr(18);
@@ -171,7 +178,7 @@ void Win32Thunks::ImportRegFile(const std::string& path) {
         /* Key: [HKEY_...] */
         if (line[0] == '[' && line.back() == ']') {
             std::string key_str = ResolveLocMacrosInKey(line.substr(1, line.size() - 2));
-            current_key = MapRegRoot(NarrowToWide(key_str));
+            current_key = ToLowerW(MapRegRoot(NarrowToWide(key_str)));
             registry[current_key];
             EnsureParentKeys(current_key);
             key_count++;

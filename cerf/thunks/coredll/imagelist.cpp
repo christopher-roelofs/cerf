@@ -226,4 +226,31 @@ void Win32Thunks::RegisterImageListHandlers() {
         regs[0] = ImageList_SetOverlayImage(h, (int)regs[1], (int)regs[2]);
         return true;
     });
+    /* WinCE-specific: copy an image between ImageLists with dithering for
+       disabled toolbar buttons. TODO: current implementation copies the icon
+       without dithering or offset — xOff/yOff are ignored and the disabled
+       appearance (ILD_BLEND50 dither pattern) is not applied. */
+    Thunk("ImageList_CopyDitherImage", 741, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        HIMAGELIST himlDst = (HIMAGELIST)UnwrapHandle(regs[0]);
+        int iDst = (int)(int16_t)regs[1]; /* WORD in WinCE */
+        int xOff = (int)regs[2];
+        int yOff = (int)regs[3];
+        HIMAGELIST himlSrc = (HIMAGELIST)UnwrapHandle(ReadStackArg(regs, mem, 0));
+        int iSrc = (int)(int16_t)ReadStackArg(regs, mem, 1);
+        UINT fStyle = ReadStackArg(regs, mem, 2);
+        LOG(API, "[API] ImageList_CopyDitherImage(dst=%p[%d] off=(%d,%d) src=%p[%d] style=0x%X)\n",
+            himlDst, iDst, xOff, yOff, himlSrc, iSrc, fStyle);
+        if (!himlDst || !himlSrc) { regs[0] = FALSE; return true; }
+        int cx, cy;
+        ImageList_GetIconSize(himlDst, &cx, &cy);
+        /* Draw source image into destination ImageList entry at (xOff, yOff)
+           using ILD_BLEND50 for the dithered/disabled appearance. */
+        HICON hIcon = ImageList_GetIcon(himlSrc, iSrc, fStyle | ILD_TRANSPARENT);
+        if (hIcon) {
+            ImageList_ReplaceIcon(himlDst, iDst, hIcon);
+            DestroyIcon(hIcon);
+        }
+        regs[0] = TRUE;
+        return true;
+    });
 }

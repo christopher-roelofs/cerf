@@ -38,6 +38,12 @@ struct PEInfo {
     /* Export directory */
     uint32_t export_rva;
     uint32_t export_size;
+
+    /* Exception directory (.pdata) — ARM SEH function table.
+       Each entry maps a function's PC range to its exception handler.
+       Used by RaiseException to dispatch to __except blocks. */
+    uint32_t pdata_rva;
+    uint32_t pdata_size;
 };
 
 class PELoader {

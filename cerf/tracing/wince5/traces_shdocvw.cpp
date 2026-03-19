@@ -45,14 +45,85 @@ void RegisterShdocvwTraces(TraceManager& tm) {
     });
 
     /* shdocvw navigation traces */
-    tm.Add(DLL, 0x100419B8, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
-        LOG(TRACE, "[TRACE] shdocvw::_NavigateHelper: this=0x%08X url=0x%08X\n", r[0], r[1]);
+    tm.Add(DLL, 0x100419B8, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char url[120] = {};
+        if (r[1]) { for (int i=0;i<119;i++) { uint16_t c=mem->Read16(r[1]+i*2); if(!c)break; url[i]=(char)c; } }
+        LOG(TRACE, "[TRACE] shdocvw::_NavigateHelper: this=0x%08X url='%s'\n", r[0], url);
     });
-    tm.Add(DLL, 0x100418A0, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
-        LOG(TRACE, "[TRACE] shdocvw::Navigate: this=0x%08X url=0x%08X\n", r[0], r[1]);
+    tm.Add(DLL, 0x100418A0, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char url[80] = {};
+        if (r[1]) { for (int i=0;i<79;i++) { uint16_t c=mem->Read16(r[1]+i*2); if(!c)break; url[i]=(char)c; } }
+        LOG(TRACE, "[TRACE] shdocvw::Navigate: this=0x%08X url='%s'\n", r[0], url);
     });
     tm.Add(DLL, 0x10042A84, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] shdocvw::Navigate2: this=0x%08X\n", r[0]);
+    });
+    /* _BrowseObject — shell namespace navigation via PIDL */
+    tm.Add(DLL, 0x1004885C, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] shdocvw::_BrowseObject: pidl=0x%08X flags=0x%X\n", r[1], r[2]);
+    });
+    /* InitPSFInternet — creates Internet URL shell folder */
+    tm.Add(DLL, 0x100505F0, [](uint32_t pc, const uint32_t* r, EmulatedMemory* mem) {
+        LOG(TRACE, "[TRACE] shdocvw::InitPSFInternet called\n");
+        /* Dump the QI table (qit_2) at IDA 0x100084D4 */
+        constexpr uint32_t IDA_BASE = 0x10000000;
+        constexpr uint32_t INIT_IDA = 0x100505F0;
+        uint32_t base = pc - (INIT_IDA - IDA_BASE);
+        uint32_t qit = base + (0x100084D4 - IDA_BASE);
+        LOG(TRACE, "[TRACE]   QI table at 0x%08X:\n", qit);
+        for (int i = 0; i < 4; i++) {
+            uint32_t iid_ptr = mem->Read32(qit + i * 8);
+            uint32_t offset = mem->Read32(qit + i * 8 + 4);
+            LOG(TRACE, "[TRACE]     [%d] iid_ptr=0x%08X offset=%u\n", i, iid_ptr, offset);
+        }
+    });
+    /* _GetInternetRoot — gets Internet shell folder for URL PIDL creation */
+    tm.Add(DLL, 0x1005075C, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] _GetInternetRoot: ppsfRoot=0x%08X\n", r[0]);
+    });
+    /* After _GetInternetRoot returns inside IECreateFromPathCPWithBCW: R0 = HRESULT.
+       Also dump the g_psfInternet vtable to see which ParseDisplayName is called. */
+    tm.Add(DLL, 0x10051AD8, [](uint32_t pc, const uint32_t* r, EmulatedMemory* mem) {
+        LOG(TRACE, "[TRACE] IECreateFromPath: _GetInternetRoot returned hr=0x%08X\n", r[0]);
+        /* Read g_psfInternet from shdocvw .data (IDA 0x100DFA94) */
+        constexpr uint32_t IDA_BASE = 0x10000000;
+        constexpr uint32_t CALL_IDA = 0x10051AD8;
+        uint32_t rt_base = pc - (CALL_IDA - IDA_BASE);
+        uint32_t g_psf_addr = rt_base + (0x100DFA94 - IDA_BASE);
+        uint32_t g_psf = mem->Read32(g_psf_addr);
+        if (g_psf) {
+            uint32_t vtbl = mem->Read32(g_psf);
+            uint32_t pdn = mem->Read32(vtbl + 12); /* ParseDisplayName = vtable[3] */
+            LOG(TRACE, "[TRACE]   g_psfInternet=0x%08X vtbl=0x%08X ParseDisplayName=0x%08X\n",
+                g_psf, vtbl, pdn);
+        } else {
+            LOG(TRACE, "[TRACE]   g_psfInternet=NULL!\n");
+        }
+    });
+    /* IECreateFromPathCPWithBCW — the main PIDL-from-URL function */
+    tm.Add(DLL, 0x10051880, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char url[80] = {};
+        if (r[1]) { for (int i=0;i<79;i++) { uint16_t c=mem->Read16(r[1]+i*2); if(!c)break; url[i]=(char)c; } }
+        LOG(TRACE, "[TRACE] IECreateFromPathCPWithBCW(cp=%u, '%s')\n", r[0], url);
+    });
+    /* _ValidateURL — checks if URL is valid for navigation */
+    tm.Add(DLL, 0x1004D9F4, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char url[80] = {};
+        if (r[0]) { for (int i=0;i<79;i++) { uint16_t c=mem->Read16(r[0]+i*2); if(!c)break; url[i]=(char)c; } }
+        LOG(TRACE, "[TRACE] _ValidateURL('%s', flags=0x%X)\n", url, r[1]);
+    });
+    /* UrlToPidl — creates simple PIDL from URL string */
+    tm.Add(DLL, 0x1004DEB4, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char url[80] = {};
+        if (r[1]) { for (int i=0;i<79;i++) { uint16_t c=mem->Read16(r[1]+i*2); if(!c)break; url[i]=(char)c; } }
+        LOG(TRACE, "[TRACE] UrlToPidl(cp=%u, '%s')\n", r[0], url);
+    });
+    /* _PidlFromUrlEtc — creates PIDL from URL string */
+    tm.Add(DLL, 0x10080E24, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char url[80] = {};
+        uint32_t urlp = r[2]; /* 3rd arg: pszUrl */
+        if (urlp) { for (int i=0;i<79;i++) { uint16_t c=mem->Read16(urlp+i*2); if(!c)break; url[i]=(char)c; } }
+        LOG(TRACE, "[TRACE] shdocvw::_PidlFromUrlEtc: url='%s' ppidl=0x%08X\n", url, r[3]);
     });
     tm.Add(DLL, 0x10048E68, [](uint32_t, const uint32_t*, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] shdocvw::HlinkFrameNavigate\n");
@@ -127,26 +198,9 @@ void RegisterShdocvwTraces(TraceManager& tm) {
             r[0], vt, lVal);
     });
 
-    /* _Navigate (no-arg) — sends SHDVID command to browser to activate document.
-       Checks _pmsoctBrowser at this+0x13C (approximate — from IDA decompilation). */
-    tm.Add(DLL, 0x100B4EF8, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
-        /* Find _pmsoctBrowser offset. From decompilation, it's accessed via 'thisa->_pmsoctBrowser'.
-           Let's scan likely offsets around the DOH structure. */
-        uint32_t pdoh = r[0];
-        /* Try several offsets to find the IOleCommandTarget pointer */
-        for (uint32_t off = 0x120; off <= 0x160; off += 4) {
-            uint32_t val = mem->Read32(pdoh + off);
-            if (val > 0x10000 && val < 0x20000000) {
-                /* Check if it looks like a COM vtable ptr */
-                uint32_t vtbl = mem->Read32(val);
-                if (vtbl > 0x10000000 && vtbl < 0x20000000) {
-                    LOG(TRACE, "[TRACE] _Navigate: pdoh=0x%08X offset=0x%X ptr=0x%08X (vtbl=0x%08X)\n",
-                        pdoh, off, val, vtbl);
-                }
-            }
-        }
-        /* Also just log the basic call */
-        LOG(TRACE, "[TRACE] DOH::_Navigate: pdoh=0x%08X\n", pdoh);
+    /* _Navigate (no-arg) — sends SHDVID command to browser to activate document */
+    tm.Add(DLL, 0x100B4EF8, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] DOH::_Navigate: pdoh=0x%08X\n", r[0]);
     });
 
     /* ActivatePendingView — should switch from current to pending document */
@@ -175,16 +229,57 @@ void RegisterShdocvwTraces(TraceManager& tm) {
         LOG(TRACE, "[TRACE] DOH::_CancelPendingNavigation: pdoh=0x%08X\n", r[0]);
     });
 
-    /* _OnReadyState — the trigger for NavigateComplete when state reaches 4.
-       Reads _psb at pdoh+0x24 and flags at pdoh+0xC0 to check prerequisites. */
+    /* _OnReadyState — the trigger for NavigateComplete when state reaches 4. */
     tm.Add(DLL, 0x100B4474, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
         constexpr uint32_t PSB_OFFSET = 0x24;
         constexpr uint32_t FLAGS_OFFSET = 0xC0;
-        constexpr uint32_t PSV_OFFSET = 0x28; /* _psv is typically near _psb */
+        constexpr uint32_t PSV_OFFSET = 0x28;
         uint32_t psb = mem->Read32(r[0] + PSB_OFFSET);
         uint32_t flags = mem->Read32(r[0] + FLAGS_OFFSET);
         uint32_t psv = mem->Read32(r[0] + PSV_OFFSET);
-        LOG(TRACE, "[TRACE] DOH::_OnReadyState: pdoh=0x%08X rs=%d hist=%d _psb=0x%08X _psv=0x%08X flags=0x%08X (bit5=%d)\n",
+        LOG(TRACE, "[TRACE] DOH::_OnReadyState: pdoh=0x%08X rs=%d hist=%d "
+            "_psb=0x%08X _psv=0x%08X flags=0x%08X (bit5=%d)\n",
             r[0], (int)r[1], (int)r[2], psb, psv, flags, (flags >> 5) & 1);
+    });
+
+    /* === VIEW ACTIVATION CHAIN traces === */
+
+    /* CDocObjectHost field offsets (verified from IDA disassembly):
+       _hwnd    = 0x3C    _uState  = 0xA8    _pole    = 0x110
+       _pmsov   = 0x134   _rcView  = 0x144   flags    = 0xC0 */
+    constexpr uint32_t DOH_HWND = 0x3C, DOH_USTATE = 0xA8, DOH_FLAGS = 0xC0;
+    constexpr uint32_t DOH_POLE = 0x110, DOH_PMSOV = 0x134;
+
+    tm.Add(DLL, 0x100A176C, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        LOG(TRACE, "[TRACE] DOH::UIActivate: pdoh=0x%08X uState=%u uStatePrev=%u "
+            "_pole=0x%08X _pmsov=0x%08X _hwnd=0x%08X\n",
+            r[0], r[1], mem->Read32(r[0] + DOH_USTATE),
+            mem->Read32(r[0] + DOH_POLE), mem->Read32(r[0] + DOH_PMSOV),
+            mem->Read32(r[0] + DOH_HWND));
+    });
+    tm.Add(DLL, 0x100A3068, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        LOG(TRACE, "[TRACE] DOH::_EnsureActivateMsoView: pdoh=0x%08X _pole=0x%08X "
+            "_pmsov=0x%08X\n", r[0], mem->Read32(r[0]+DOH_POLE), mem->Read32(r[0]+DOH_PMSOV));
+    });
+    tm.Add(DLL, 0x100B980C, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        uint32_t flags = mem->Read32(r[0] + DOH_FLAGS);
+        LOG(TRACE, "[TRACE] DOH::DocCanHandleNavigation: pdoh=0x%08X flags=0x%08X "
+            "result=%d (0x1000000=%d 0x800000=%d)\n",
+            r[0], flags, (flags&0x1000000)&&(flags&0x800000), (flags>>24)&1, (flags>>23)&1);
+    });
+    tm.Add(DLL, 0x100A1F4C, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        LOG(TRACE, "[TRACE] DOH::_ShowMsoView: pdoh=0x%08X _pmsov=0x%08X _hwnd=0x%08X\n",
+            r[0], mem->Read32(r[0] + DOH_PMSOV), mem->Read32(r[0] + DOH_HWND));
+    });
+
+    /* DOH::_ActivateMsoView — creates the IOleDocumentView */
+    tm.Add(DLL, 0x100A2304, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] DOH::_ActivateMsoView: pdoh=0x%08X\n", r[0]);
+    });
+
+    /* CBaseBrowser2::_UIActivateView — calls _bbd._psv->UIActivate(uState) */
+    tm.Add(DLL, 0x1006498C, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] CBaseBrowser2::_UIActivateView: this=0x%08X uState=%u\n",
+            r[0], r[1]);
     });
 }

@@ -12,23 +12,42 @@ void Win32Thunks::RegisterSystemHandlers() {
     Thunk("SetLastError", 517, [](uint32_t* regs, EmulatedMemory&) -> bool {
         SetLastError(regs[0]); return true;
     });
+    /* SetExceptionHandler — register per-thread SEH handler.
+       Called by CRT at thread startup to register the handler that walks
+       .pdata scope tables and dispatches to __except blocks. */
+    Thunk("SetExceptionHandler", 583, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        if (t_ctx) {
+            t_ctx->seh_handler = regs[0];
+            LOG(API, "[API] SetExceptionHandler(0x%08X)\n", regs[0]);
+        }
+        return true;
+    });
+
     Thunk("RaiseException", 543, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t code = regs[0], flags = regs[1];
         LOG(API, "[API] RaiseException(0x%08X, flags=0x%X, nArgs=%u) from LR=0x%08X\n",
             code, flags, regs[2], regs[14]);
-        /* For non-continuable exceptions, try longjmp to the most recent setjmp buffer.
-           This emulates SEH __except recovery for code that uses setjmp/longjmp (like MFC). */
-        if ((flags & 1) && !setjmp_stack.empty()) { /* EXCEPTION_NONCONTINUABLE */
+
+        /* 1. Try ARM SEH dispatch via .pdata scope tables.
+           This is the proper WinCE exception dispatch path. On real WinCE,
+           the kernel walks the call stack using .pdata function entries to
+           find __except handlers and transfers control to JumpTarget. */
+        if (SehDispatch(regs, mem, code, flags))
+            return true;
+
+        /* 2. Fallback: setjmp/longjmp for non-continuable exceptions (MFC) */
+        if ((flags & 1) && !setjmp_stack.empty()) {
             uint32_t buf = setjmp_stack.back();
             setjmp_stack.pop_back();
             for (int i = 4; i <= 11; i++) regs[i] = mem.Read32(buf + (i - 4) * 4);
-            regs[13] = mem.Read32(buf + 8 * 4); /* SP */
-            regs[14] = mem.Read32(buf + 9 * 4); /* LR */
-            regs[0] = 1; /* setjmp returns non-zero on longjmp */
-            LOG(API, "[API]   -> longjmp to buf=0x%08X, LR=0x%08X (recovery)\n", buf, regs[14]);
-        } else {
-            LOG(API, "[API]   -> ignoring (continuable or no setjmp buffer)\n");
+            regs[13] = mem.Read32(buf + 8 * 4);
+            regs[14] = mem.Read32(buf + 9 * 4);
+            regs[0] = 1;
+            LOG(API, "[API]   -> longjmp to buf=0x%08X, LR=0x%08X\n", buf, regs[14]);
+            return true;
         }
+
+        LOG(API, "[API]   -> unhandled (no SEH handler or setjmp buffer)\n");
         return true;
     });
     Thunk("GetSystemMetrics", 885, [this](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -157,6 +176,12 @@ void Win32Thunks::RegisterSystemHandlers() {
         regs[0] = 0x0400000A; return true;
     });
     Thunk("GetOwnerProcess", 606, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = GetCurrentProcessId(); return true;
+    });
+    /* GetCallerProcess: returns the process handle of the caller.
+       On real WinCE, this returns the HPROCESS of the calling process.
+       In our single-process emulation, return the current process ID. */
+    Thunk("GetCallerProcess", 607, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetCurrentProcessId(); return true;
     });
     Thunk("GetStartupInfoW", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

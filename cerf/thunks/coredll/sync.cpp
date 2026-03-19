@@ -92,23 +92,29 @@ void Win32Thunks::RegisterSyncHandlers() {
        raw ARM-address casts would hit the global page instead of the
        child process's private copy, corrupting COM refcounts etc. */
     Thunk("InterlockedIncrement", 10, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        volatile LONG* ptr = (volatile LONG*)mem.Translate(regs[0]);
+        /* Use TranslateForWrite for all Interlocked ops — they modify memory.
+           TranslateForWrite triggers copy-on-write for child process isolation. */
+        volatile LONG* ptr = (volatile LONG*)mem.TranslateForWrite(regs[0]);
+        if (!ptr) ptr = (volatile LONG*)(mem.AutoAlloc(regs[0]) + (regs[0] & (EmulatedMemory::PAGE_SIZE - 1)));
         regs[0] = ptr ? (uint32_t)InterlockedIncrement(ptr) : 0;
         return true;
     });
     ThunkOrdinal("InterlockedDecrement", 11);
     Thunk("InterlockedDecrement", [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        volatile LONG* ptr = (volatile LONG*)mem.Translate(regs[0]);
+        volatile LONG* ptr = (volatile LONG*)mem.TranslateForWrite(regs[0]);
+        if (!ptr) ptr = (volatile LONG*)(mem.AutoAlloc(regs[0]) + (regs[0] & (EmulatedMemory::PAGE_SIZE - 1)));
         regs[0] = ptr ? (uint32_t)InterlockedDecrement(ptr) : 0;
         return true;
     });
     Thunk("InterlockedExchange", 12, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        volatile LONG* ptr = (volatile LONG*)mem.Translate(regs[0]);
+        volatile LONG* ptr = (volatile LONG*)mem.TranslateForWrite(regs[0]);
+        if (!ptr) ptr = (volatile LONG*)(mem.AutoAlloc(regs[0]) + (regs[0] & (EmulatedMemory::PAGE_SIZE - 1)));
         regs[0] = ptr ? (uint32_t)InterlockedExchange(ptr, (LONG)regs[1]) : 0;
         return true;
     });
     Thunk("InterlockedCompareExchange", 1492, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        volatile LONG* ptr = (volatile LONG*)mem.Translate(regs[0]);
+        volatile LONG* ptr = (volatile LONG*)mem.TranslateForWrite(regs[0]);
+        if (!ptr) ptr = (volatile LONG*)(mem.AutoAlloc(regs[0]) + (regs[0] & (EmulatedMemory::PAGE_SIZE - 1)));
         LONG original = ptr ? InterlockedCompareExchange(ptr, (LONG)regs[1], (LONG)regs[2]) : 0;
         regs[0] = (uint32_t)original;
         return true;
@@ -155,8 +161,20 @@ void Win32Thunks::RegisterSyncHandlers() {
     });
     Thunk("CloseHandle", 553, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t fake = regs[0]; HANDLE h = UnwrapHandle(fake);
-        /* Untrack from per-process handle table (so it's not double-closed on exit) */
         auto* ht = GetProcessHandleTable();
+        /* In a child process (ProcessSlot active), only close handles that the
+           child owns. On real WinCE, each process has its own handle table —
+           closing handle X in process B doesn't affect process A's handle X. */
+        if (EmulatedMemory::process_slot && ht) {
+            if (ht->IsTracked(h)) {
+                ht->Untrack(h);
+                regs[0] = CloseHandle(h); RemoveHandle(fake);
+            } else {
+                regs[0] = 1; /* belongs to parent — don't close */
+            }
+            return true;
+        }
+        /* Main process: close normally */
         if (ht) ht->Untrack(h);
         regs[0] = CloseHandle(h); RemoveHandle(fake); return true;
     });

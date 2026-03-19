@@ -124,6 +124,12 @@ public:
     static thread_local HWND tls_paint_hwnd; /* last WM_PAINT target per thread */
     std::vector<uint32_t> setjmp_stack;    /* RaiseException recovery */
 
+    /* ARM SEH dispatch — walks .pdata with prologue-based unwinding.
+       Implementation in seh_dispatch.cpp. Internal helpers use LoadedDll
+       but are declared there, not here, to avoid forward-decl issues. */
+    bool SehDispatch(uint32_t* regs, EmulatedMemory& mem,
+        uint32_t exc_code, uint32_t exc_flags);
+
     static LRESULT CALLBACK EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static INT_PTR CALLBACK EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK MenuBarWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

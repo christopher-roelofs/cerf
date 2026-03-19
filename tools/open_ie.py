@@ -51,57 +51,51 @@ REG = "Z:/build/Release/x64/devices/wince5/registry.reg"
 if os.path.exists(REG):
     os.remove(REG)
 
-# 3. Start cerf + explorer with GDB stub
-print(f"[2] Starting cerf + explorer (gdb port={GDB_PORT})...")
+# 3. Start cerf + explorer
+print(f"[2] Starting cerf + explorer...")
 try: os.remove(LOG)
 except: pass
 log_f = open(LOG, "w")
 proc = subprocess.Popen(
-    [CERF, "--flush-outputs", "--log=API,PE,EMU,DBG,REG",
-     f"--gdb-port={GDB_PORT}", EXPLORER],
+    [CERF, "--flush-outputs", "--log=API,PE,TRACE",
+     EXPLORER],
     stdout=log_f, stderr=log_f, cwd="Z:/")
 print(f"    PID={proc.pid}")
-time.sleep(2)
 
-# 4. Connect debugger and continue
-gdb = GdbClient(port=GDB_PORT)
-print("[3] Debugger connected. Continuing...")
-gdb.cont()
-time.sleep(5)
+def check_alive(step=""):
+    """Check if cerf.exe is still running. Exit if dead."""
+    if proc.poll() is not None:
+        print(f"[CRASH] cerf.exe died (code={proc.returncode}) {step}")
+        print(f"  Check log: {LOG}")
+        # Show last few lines
+        try:
+            with open(LOG) as f:
+                lines = f.readlines()
+                for l in lines[-5:]:
+                    print(f"  {l.rstrip()}")
+        except: pass
+        sys.exit(1)
 
-# 5. Open IE via double-click on desktop icon
-print("[4] Opening IE...")
-interact("dclick", "35", "333")
 time.sleep(7)
+check_alive("after startup")
+
+# 4. Open IE via double-click on desktop icon
+print("[3] Opening IE...")
+interact("dclick", "35", "333")
+time.sleep(10)
+check_alive("after IE open")
 
 hwnd = find_ie_hwnd()
 if not hwnd:
-    print("ERROR: IE did not open!")
-    gdb.detach(); gdb.close()
+    check_alive("IE window search")
+    print("ERROR: IE did not open (but cerf is alive)")
     sys.exit(1)
 print(f"    IE hwnd={hwnd}")
 
-# 6. Find mshtml.dll base from log
-mshtml_base = None
-with open(LOG, "r") as f:
-    for line in f:
-        m = re.search(r"Loaded ARM DLL 'mshtml\.dll' at (0x[0-9a-fA-F]+)", line)
-        if m:
-            mshtml_base = int(m.group(1), 16)
-            break
-if mshtml_base:
-    IDA_BASE = 0x10000000
-    rebase = mshtml_base - IDA_BASE
-    print(f"    mshtml.dll at 0x{mshtml_base:08X} (rebase +0x{rebase:08X})")
-else:
-    rebase = 0
-    print("    WARNING: mshtml.dll not loaded yet")
-
-# 7. Navigate to URL (only if explicitly given)
+# 5. Navigate to URL (only if explicitly given)
 if URL:
-    interact("focus", hwnd)
-    time.sleep(0.3)
-    print(f"[5] Navigating to {URL}")
+    check_alive("before navigate")
+    print(f"[4] Navigating to {URL}")
     interact("click", "300", "37")
     time.sleep(0.3)
     VK_END, VK_BACK = 0x23, 0x08
@@ -112,26 +106,20 @@ if URL:
     interact("type", URL)
     time.sleep(0.05)
     interact("key", "enter")
-    print("    Navigated. Waiting 5s for load...")
-    time.sleep(5)
+    print("    Navigated. Waiting for load...")
+    time.sleep(15)
+    check_alive("after navigate")
 else:
-    print("[5] No URL given — IE shows default.htm")
+    print("[4] No URL given — IE shows default.htm")
     time.sleep(2)
 
-# 8. Screenshot
-print("[6] Taking screenshot...")
+# 6. Screenshot
+print("[5] Taking screenshot...")
 interact("screenshot")
 print("    Saved to tmp/screenshot.png")
 
-# 9. Check log for file access to default.htm
-print("[7] Checking log for default.htm access...")
-with open(LOG, "r") as f:
-    for line in f:
-        if "default.htm" in line.lower():
-            print(f"    LOG: {line.rstrip()}")
-
 if MODE == "repl":
-    print("[8] Entering debug REPL (type 'help' for commands)...")
+    print("[6] Entering debug REPL (type 'help' for commands)...")
     while True:
         try:
             cmd = input("gdb> ").strip()
@@ -218,8 +206,3 @@ if proc.poll() is None:
     print(f"[OK] cerf.exe running (PID={proc.pid}). Log: {LOG}")
 else:
     print(f"[CRASH] cerf.exe exited ({proc.returncode}). Log: {LOG}")
-
-print("Detaching debugger...")
-try: gdb.detach()
-except: pass
-gdb.close()

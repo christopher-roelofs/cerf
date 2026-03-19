@@ -60,6 +60,10 @@ bool PELoader::ParseHeaders(const uint8_t* data, size_t size, PEInfo& info) {
         info.export_rva = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
         info.export_size = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].Size;
     }
+    if (oh.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_EXCEPTION) {
+        info.pdata_rva = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress;
+        info.pdata_size = oh.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size;
+    }
 
     /* Parse section headers */
     auto* sections = (IMAGE_SECTION_HEADER*)((uint8_t*)&nt->OptionalHeader + fh.SizeOfOptionalHeader);

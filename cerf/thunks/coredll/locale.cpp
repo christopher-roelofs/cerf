@@ -19,6 +19,9 @@ void Win32Thunks::RegisterLocaleHandlers() {
     Thunk("GetUserDefaultLCID", 215, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetUserDefaultLCID(); return true;
     });
+    Thunk("IsValidLocale", 209, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = IsValidLocale((LCID)regs[0], regs[1]); return true;
+    });
     Thunk("GetSystemDefaultLCID", 213, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = GetSystemDefaultLCID(); return true;
     });
