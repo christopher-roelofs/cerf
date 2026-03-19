@@ -128,6 +128,48 @@ The stub runs in-process (no separate thread). `ArmCpu::Step()` calls `GdbStub::
 
 For IDA: load the ARM binary first (File -> Open), then Debugger -> Select debugger -> Remote GDB debugger, set hostname/port in Process options, then Attach.
 
+### ARM Trace Point System
+
+Per-DLL C++ trace handlers in `cerf/tracing/`, auto-rebased at DLL load time, CRC32-verified against wrong builds. In `ArmCpu::Step()`, a single hash lookup fires matching traces.
+
+```
+cerf/tracing/
+  trace_manager.h/.cpp          — core: Add/OnDllLoad/Check, CRC32 verification
+  register_all.h                — per-device dispatch
+  wince5/                       — WinCE 5.0 ARM DLL traces
+    traces_webview.cpp           — HTML rendering pipeline (21 traces)
+    traces_mshtml.cpp            — tokenizer, layout, paint (29 traces)
+    traces_mshtml_notify.cpp     — notifications, layout tasks (28 traces)
+    traces_mshtml_load.cpp       — document loading, data binding (20 traces)
+    traces_shdocvw.cpp           — navigation, PIDL resolution (9 traces)
+    traces_browser.cpp           — CViewerSite activation (2 traces)
+    traces_explorer.cpp          — browser window creation (1 trace)
+    traces_urlmon.cpp            — URL binding, data transport (33 traces)
+```
+
+**Adding traces for a new DLL:** Create `cerf/tracing/wince5/traces_newdll.cpp`:
+```cpp
+#include "../trace_manager.h"
+#include "../../cpu/mem.h"
+#include "../../log.h"
+void RegisterNewdllTraces(TraceManager& tm) {
+    const char* DLL = "newdll.dll";
+    tm.SetIdaBase(DLL, 0x10000000);
+    tm.SetCRC32(DLL, 0xABCD1234); // python3 -c "import zlib; print(hex(zlib.crc32(open('x.dll','rb').read())&0xFFFFFFFF))"
+    tm.Add(DLL, 0x10012345, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        LOG(TRACE, "[TRACE] MyFunc: this=0x%08X field=0x%08X\n", r[0], mem->Read32(r[0]+0x10));
+    });
+}
+```
+Then add to `register_all.h` and `cerf.vcxproj`. Rebase is computed automatically at DLL load.
+
+**For other devices:** Create `cerf/tracing/wm6/` with device-specific traces. CRC32 ensures
+traces from one device are silently skipped for another (different DLL builds = different CRC).
+
+- Use `--log=TRACE` to enable trace output (separate from API/PE/EMU)
+- `grep "\[TRACE\]" log.txt` to filter
+- Complex traces (PIDL dumps, struct walks) use full C++ — not limited to format strings
+
 ## References
 
 The `references/` directory (gitignored) holds local WinCE SDK materials including `coredll.def` (ordinal map) and ARM DLL builds. See `references/README.md` for setup.
