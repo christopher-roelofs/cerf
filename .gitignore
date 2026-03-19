@@ -273,6 +273,9 @@ __pycache__/
 
 run_claude.md
 
+# AI-generated checklists (working docs, not source of truth)
+docs/ai_checklists/
+
 # IDA Pro database files (only in bundled/ directory)
 bundled/**/*.i64
 bundled/**/*.id*
