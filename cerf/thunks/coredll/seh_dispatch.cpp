@@ -29,8 +29,10 @@ constexpr uint32_t SUB_SP_IMM_MASK = 0xFFFFF000;
 constexpr uint32_t SUB_SP_IMM_INST = 0xE24DD000; /* SUB SP, SP, #imm */
 constexpr uint32_t SUB_SP_REG_MASK = 0xFFFFFFF0;
 constexpr uint32_t SUB_SP_REG_INST = 0xE04DD000; /* SUB SP, SP, Rm */
-constexpr uint32_t LDR_PC_MASK     = 0xFFFF0000;
-constexpr uint32_t LDR_PC_INST     = 0xE59FC000; /* LDR R12, [PC, #imm] */
+constexpr uint32_t ADD_SP_REG_MASK = 0xFFFFFFF0;
+constexpr uint32_t ADD_SP_REG_INST = 0xE08DD000; /* ADD SP, SP, Rm */
+constexpr uint32_t LDR_R12_PC_MASK  = 0xFFFFF000; /* cond + opcode + Rn(PC) + Rd(R12) */
+constexpr uint32_t LDR_R12_PC_INST  = 0xE59FC000; /* LDR R12, [PC, #imm12] */
 constexpr uint32_t STR_LR_PUSH_MASK = 0xFFFFFFFF;
 constexpr uint32_t STR_LR_PUSH_INST = 0xE52DE004; /* STR LR, [SP, #-4]! */
 
@@ -90,10 +92,26 @@ static uint32_t UnwindFrame(EmulatedMemory& mem, uint32_t func_start,
             uint32_t rm = instr & 0xF;
             if (rm == 12) {
                 for (int j = i - 1; j >= 0; j--) {
-                    if ((prolog[j] & LDR_PC_MASK) == LDR_PC_INST) {
+                    if ((prolog[j] & LDR_R12_PC_MASK) == LDR_R12_PC_INST) {
                         uint32_t offset = prolog[j] & 0xFFF;
                         uint32_t ldr_pc = func_start + j * 4 + 8;
                         cur_sp += mem.Read32(ldr_pc + offset);
+                        break;
+                    }
+                }
+            }
+
+        } else if ((instr & ADD_SP_REG_MASK) == ADD_SP_REG_INST) {
+            /* ADD SP, SP, Rm — large stack allocation via negative constant.
+               e.g., LDR R12, =0xFFFFFAE8; ADD SP, SP, R12 (subtracts 0x518).
+               Reverse: subtract the register value to undo the addition. */
+            uint32_t rm = instr & 0xF;
+            if (rm == 12) {
+                for (int j = i - 1; j >= 0; j--) {
+                    if ((prolog[j] & LDR_R12_PC_MASK) == LDR_R12_PC_INST) {
+                        uint32_t offset = prolog[j] & 0xFFF;
+                        uint32_t ldr_pc = func_start + j * 4 + 8;
+                        cur_sp -= mem.Read32(ldr_pc + offset);
                         break;
                     }
                 }
@@ -115,7 +133,7 @@ bool Win32Thunks::SehDispatch(uint32_t* regs, EmulatedMemory& mem,
 {
     uint32_t pc = regs[14];
     uint32_t sp = regs[13];
-    constexpr int MAX_FRAMES = 16;
+    constexpr int MAX_FRAMES = 32;
 
     LOG(API, "[SEH] Dispatch: code=0x%08X flags=0x%X pc=0x%08X sp=0x%08X\n",
         exc_code, exc_flags, pc, sp);
