@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kill cerf, start fresh explorer with GDB stub, open IE.
+"""Kill cerf, start fresh boot sequence, open IE.
 
 Usage:
     python3 tools/open_ie.py              Open IE (loads default.htm)
@@ -19,7 +19,6 @@ for a in args:
 GDB_PORT = 1234
 LOG = "Z:/tmp/ie_log.txt"
 CERF = "Z:/build/Release/x64/cerf.exe"
-EXPLORER = "Z:/references/wce5_sysgen_armv4/explorer.exe"
 
 sys.path.insert(0, "Z:/tools")
 from debug import GdbClient
@@ -51,14 +50,13 @@ REG = "Z:/build/Release/x64/devices/wince5/registry.reg"
 if os.path.exists(REG):
     os.remove(REG)
 
-# 3. Start cerf + explorer
-print(f"[2] Starting cerf + explorer...")
+# 3. Start cerf (boot sequence launches explorer automatically)
+print(f"[2] Starting cerf...")
 try: os.remove(LOG)
 except: pass
 log_f = open(LOG, "w")
 proc = subprocess.Popen(
-    [CERF, "--flush-outputs", "--log=API,PE,TRACE",
-     EXPLORER],
+    [CERF, "--flush-outputs", "--log=API,PE,TRACE"],
     stdout=log_f, stderr=log_f, cwd="Z:/")
 print(f"    PID={proc.pid}")
 
