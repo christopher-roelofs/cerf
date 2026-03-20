@@ -27,30 +27,8 @@ void Win32Thunks::RegisterGdiPaintHandlers() {
            WinCE stores this region in SCREEN coordinates, but desktop
            GetUpdateRgn returns CLIENT coordinates — convert by offsetting
            to the window's screen position. */
-        /* WinCE mshtml's CView::RenderView sets VL_RENDERINPROGRESS (0x10)
-           in CView._grfLock during rendering and clears it via CLock destructor.
-           If the first render triggers an ARM exception (common during init),
-           our emulator doesn't support ARM SEH stack unwinding, so the CLock
-           destructor never runs and the lock stays set forever.  This blocks
-           ALL subsequent EnsureView calls, preventing any rendering.
-           Fix: detect and clear the stuck lock for IE_Server windows. */
-        {
-            char cls[64]; GetClassNameA(hw, cls, sizeof(cls));
-            if (strstr(cls, "Internet Explorer_Server")) {
-                /* CView is at CDoc+0x1CC, _grfLock is at CView+0x20 = CDoc+0x1EC */
-                constexpr uint32_t CDOC_TO_GRFLOCK = 0x1EC;
-                constexpr uint32_t VL_RENDERINPROGRESS = 0x10;
-                uint32_t cdoc_ptr = (uint32_t)GetWindowLongW(hw, -21);
-                if (cdoc_ptr) {
-                    uint32_t lock_addr = cdoc_ptr + CDOC_TO_GRFLOCK;
-                    uint32_t locks = mem.Read32(lock_addr);
-                    if (locks & VL_RENDERINPROGRESS) {
-                        mem.Write32(lock_addr, locks & ~VL_RENDERINPROGRESS);
-                        LOG(API, "[API] BeginPaint: cleared stuck VL_RENDERINPROGRESS on IE_Server 0x%p\n", hw);
-                    }
-                }
-            }
-        }
+        /* VL_RENDERINPROGRESS hack removed — ARM SEH dispatch now properly
+           unwinds CLock destructors via SehDispatch in seh_dispatch.cpp. */
         /* CS_OWNDC windows retain the DC between paint calls. Reset the
            viewport origin to (0,0) before BeginPaint so that the system
            computes rcPaint correctly (in client coordinates, not shifted
