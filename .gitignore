@@ -1,6 +1,7 @@
 [Tt]mp/
 .mcp.json
 local_files/
+.claude/*.lock
 
 
 # Reference materials (WinCE SDK, Platform Builder sources, etc.)
