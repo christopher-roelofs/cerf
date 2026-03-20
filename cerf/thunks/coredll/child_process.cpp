@@ -3,6 +3,7 @@
 /* CreateProcessW thunk: launches ARM PE child processes with ProcessSlot isolation,
    or falls back to native CreateProcessW for non-ARM executables. */
 #include "../win32_thunks.h"
+#include "../../cpu/slab_alloc.h"
 #include "../../log.h"
 #include "../../debugger/gdb_stub.h"
 #include <cstdio>
@@ -62,6 +63,7 @@ void Win32Thunks::RegisterChildProcessHandler() {
                     /* Create per-process virtual address space */
                     ProcessSlot slot;
                     slot.has_own_allocators = true;
+                    slot.proc_slab = new SlabAllocator(0x00C00000, 0x00300000, cpi->mem);
                     if (!slot.buffer) {
                         LOG(API, "[API] CreateProcessW: ProcessSlot alloc failed\n");
                         delete cpi; t_ctx = nullptr; return 1;
@@ -163,6 +165,8 @@ void Win32Thunks::RegisterChildProcessHandler() {
                     uint32_t exit_code = cpu.r[0];
                     LOG(API, "[PROC] Child process exited with code %u\n", exit_code);
                     thunks_ptr->EraseProcessHandles(&slot);
+                    delete slot.proc_slab;
+                    slot.proc_slab = nullptr;
                     EmulatedMemory::process_slot = nullptr;
                     EmulatedMemory::kdata_override = nullptr;
                     t_ctx = nullptr;

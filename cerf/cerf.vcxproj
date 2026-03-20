@@ -185,6 +185,7 @@
     <ClCompile Include="thunks\menubar.cpp" />
     <ClCompile Include="thunks\dll_loader.cpp" />
     <ClCompile Include="thunks\dll_init.cpp" />
+    <ClCompile Include="cpu\slab_alloc.cpp" />
     <ClCompile Include="thunks\dispatch.cpp" />
     <ClCompile Include="thunks\resource_helpers.cpp" />
     <ClCompile Include="thunks\dlgproc.cpp" />

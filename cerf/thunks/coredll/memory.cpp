@@ -1,268 +1,298 @@
-/* Memory allocation thunks: VirtualAlloc, Heap*, Local*, malloc/free */
+/* Memory allocation thunks: VirtualAlloc, Heap*, Local* — backed by SlabAllocator.
+   Matches WinCE heap semantics: malloc → LocalAlloc → HeapAlloc chain,
+   per-process isolation via ProcessSlot, kernel threads at 0x30000000+. */
 #define NOMINMAX
 #include "../win32_thunks.h"
+#include "../../cpu/slab_alloc.h"
 #include "../../log.h"
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
-#include <atomic>
 #include <mutex>
-#include <unordered_map>
+#include <map>
 
-/* Track allocation sizes so LocalSize/HeapSize/_msize return correct values
-   and realloc variants copy the correct number of bytes. */
-static std::mutex g_alloc_mutex;
-static std::unordered_map<uint32_t, uint32_t> g_alloc_sizes;
+/* === Global heap instances === */
 
-void TrackAlloc(uint32_t addr, uint32_t size) {
-    std::lock_guard<std::mutex> lk(g_alloc_mutex);
-    g_alloc_sizes[addr] = size;
-}
-uint32_t GetAllocSize(uint32_t addr) {
-    std::lock_guard<std::mutex> lk(g_alloc_mutex);
-    auto it = g_alloc_sizes.find(addr);
-    return (it != g_alloc_sizes.end()) ? it->second : 0;
-}
-void FreeAlloc(uint32_t addr) {
-    std::lock_guard<std::mutex> lk(g_alloc_mutex);
-    g_alloc_sizes.erase(addr);
-}
+/* Main process heap: 0x00C00000-0x00EFFFFF (before stack) + 0x01000000-0x01BFFFFF (after) */
+static SlabAllocator* g_main_heap = nullptr;
 
-/* All allocator bases MUST be below 0x02000000 (32MB slot boundary).
-   WinCE ARM code applies slot masking (AND addr, #0x01FFFFFF) to pointers.
-   Any address >= 0x02000000 gets corrupted to a different address.
+/* Kernel heap: 0x30000000+ (above slot-0, for driver threads like lpcd/dcomssd) */
+static SlabAllocator* g_kernel_heap = nullptr;
 
-   DLL slot-0 aliases (dll_addr & 0x01FFFFFF) can span up to 0x01FFFFFF.
-   Late-loaded DLLs (e.g. webview.dll at 0x10C10000) alias into the heap
-   range. CommitPages() uses HasCommittedRegion() to avoid confusing DLL
-   alias pages with committed heap pages — once committed, the global
-   region takes priority over the alias in Translate().
+/* Multiple heaps from HeapCreate: handle → allocator */
+static std::map<uint32_t, SlabAllocator*> g_heap_map;
+static std::mutex g_heap_map_mutex;
+static std::atomic<uint32_t> g_next_heap_handle{0x00BF1000};
 
-   Address space layout (allocator ranges — may shadow DLL aliases after commit):
-     VirtualAlloc:  0x00B00000  (grows up, ~1MB for app VirtualAlloc calls)
-     HeapAlloc:     0x00C00000  (grows up, ~3MB for heap blocks)
-     Stack:         0x00F00000-0x01000000  (1MB, grows down from STACK_BASE)
-     HeapReAlloc:   0x01000000  (grows up, ~1MB for heap realloc)
-     malloc etc:    0x01100000  (grows up, ~3MB for malloc/calloc/realloc)
-     LocalAlloc:    0x01400000  (grows up, ~4MB for small heap allocations)
-     LocalReAlloc:  0x01800000  (grows up, ~4MB for reallocation buffers)
-     VirtualAlloc2: 0x01C00000  (overflow, ~4MB additional VirtualAlloc space)
-   Sub-page allocation: blocks <= 4032 bytes use 16-byte alignment within
-   shared pages, giving ~50x address space savings for small allocations. */
+/* VirtualAlloc tracking: base → size (active allocations) */
+static std::map<uint32_t, uint32_t> g_valloc_map;
+/* VirtualFree'd ranges available for reuse: size → set of base addrs */
+static std::map<uint32_t, std::set<uint32_t>> g_valloc_free;
+static std::mutex g_valloc_mutex;
 
-/* Commit pages covering [addr, addr+size). Skips already-committed pages.
-   Uses HasCommittedRegion() which checks actual committed regions only —
-   NOT DLL slot-0 aliases. DLL aliases map (dll_base & 0x01FFFFFF) back to
-   DLL .text/.data, so IsValid() returns true for heap addresses that shadow
-   a DLL alias (e.g. heap 0x00C12000 aliased to webview.dll 0x10C12000).
-   Without this, the allocator skips committing the page, and subsequent
-   memset/Translate writes to the DLL's code pages instead of the heap. */
-void CommitPages(EmulatedMemory& mem, uint32_t addr, uint32_t size) {
-    for (uint32_t p = addr & ~0xFFFu; p < addr + size; p += 0x1000) {
-        if (!mem.HasCommittedRegion(p))
-            mem.Alloc(p, 0x1000);
-    }
-}
+/* Fake process heap struct address (ARM code dereferences the handle) */
+static constexpr uint32_t FAKE_PROCESS_HEAP = 0x00BF0000;
 
-/* Get the appropriate allocator counter for the current process context.
-   Child processes (with active ProcessSlot) use per-process counters to avoid
-   address overlap with the parent's allocations. */
-/* Kernel heap counters — used by driver threads (lpcd.dll, dcomssd.dll).
-   Allocated above 0x02000000 (shared DLL space) so they don't conflict
-   with user process ProcessSlot overlays on slot-0. On real WinCE,
-   device.exe has its own slot — this is the equivalent. */
-static std::atomic<uint32_t> g_kernel_heap{0x30000000};
-static std::atomic<uint32_t> g_kernel_malloc{0x32000000};
-
-std::atomic<uint32_t>& GetHeapCounter(std::atomic<uint32_t>& global_counter) {
+/* Get the correct SlabAllocator for the current thread context. */
+SlabAllocator* GetSlab() {
     if (t_ctx && t_ctx->is_kernel_thread)
         return g_kernel_heap;
     auto* slot = EmulatedMemory::process_slot;
-    if (slot && slot->has_own_allocators)
-        return slot->proc_heap_counter;
-    return global_counter;
+    if (slot && slot->has_own_allocators && slot->proc_slab)
+        return slot->proc_slab;
+    return g_main_heap;
 }
 
-std::atomic<uint32_t>& GetMallocCounter(std::atomic<uint32_t>& global_counter) {
-    if (t_ctx && t_ctx->is_kernel_thread)
-        return g_kernel_malloc;
-    auto* slot = EmulatedMemory::process_slot;
-    if (slot && slot->has_own_allocators)
-        return slot->proc_malloc_counter;
-    return global_counter;
-}
-
-/* Bump-allocate with sub-page packing for small allocations. */
-uint32_t BumpAlloc(std::atomic<uint32_t>& counter, EmulatedMemory& mem,
-                          uint32_t size) {
-    uint32_t alloc_size = size > 0 ? size : 0x10;
-    /* Small: 16-byte aligned (pack into shared pages). Large: page-aligned. */
-    uint32_t step = (alloc_size <= 0xFC0)
-        ? std::max((alloc_size + 0xFu) & ~0xFu, 0x10u)
-        : std::max((alloc_size + 0xFFFu) & ~0xFFFu, 0x1000u);
-    uint32_t addr = counter.fetch_add(step);
-    CommitPages(mem, addr, step);
-    return addr;
+/* Get slab for a specific heap handle (HeapAlloc's first arg). */
+static SlabAllocator* GetSlabForHeap(uint32_t hHeap) {
+    if (hHeap == FAKE_PROCESS_HEAP || hHeap == 0)
+        return GetSlab();
+    std::lock_guard<std::mutex> lock(g_heap_map_mutex);
+    auto it = g_heap_map.find(hHeap);
+    return (it != g_heap_map.end()) ? it->second : GetSlab();
 }
 
 void Win32Thunks::RegisterMemoryHandlers() {
-    /* Pre-reserve address ranges for each allocator so that page-by-page
-       commits within these ranges succeed (Windows requires 64KB-aligned
-       addresses for MEM_RESERVE, but MEM_COMMIT works within reservations). */
-    mem.Reserve(0x00B00000, 0x00100000); /* VirtualAlloc: 0x00B00000-0x00BFFFFF (1MB) */
-    mem.Reserve(0x00C00000, 0x00300000); /* HeapAlloc:    0x00C00000-0x00EFFFFF (3MB) */
-    /* Stack at 0x00F00000-0x01000000 is reserved by AllocStack() */
-    mem.Reserve(0x01000000, 0x00100000); /* HeapReAlloc:  0x01000000-0x010FFFFF (1MB) */
-    mem.Reserve(0x01100000, 0x00300000); /* malloc etc:   0x01100000-0x013FFFFF (3MB) */
-    mem.Reserve(0x01400000, 0x00400000); /* LocalAlloc:   0x01400000-0x017FFFFF (4MB) */
-    mem.Reserve(0x01800000, 0x00400000); /* LocalReAlloc: 0x01800000-0x01BFFFFF (4MB) */
-    mem.Reserve(0x01C00000, 0x00400000); /* VirtualAlloc overflow: 0x01C00000-0x01FFFFFF */
-    mem.Reserve(0x3F000000, 0x00010000); /* Marshaling scratch buffers (callbacks/dlgproc) */
+    /* Reserve address ranges (unchanged from before) */
+    mem.Reserve(0x00B00000, 0x00100000); /* VirtualAlloc: 1MB */
+    mem.Reserve(0x00C00000, 0x00300000); /* Heap range A: 3MB (before stack) */
+    mem.Reserve(0x01000000, 0x00C00000); /* Heap range B: 12MB (after stack) */
+    mem.Reserve(0x01C00000, 0x00400000); /* VirtualAlloc overflow: 4MB */
+    mem.Reserve(0x3F000000, 0x00010000); /* Marshaling scratch buffers */
+
+    /* Initialize global heap allocators.
+       Range A (0x00C00000-0x00EFFFFF) and B (0x01000000-0x01BFFFFF) are
+       managed as one logical slab starting at A, overflowing into B.
+       We use range A only; if it fills, range B starts as a second slab. */
+    /* Range A: 0x00C00000-0x00EFFFFF (3MB, before stack gap at 0x00F00000)
+       Range B: 0x01000000-0x01BFFFFF (12MB, after stack) — used for HeapCreate.
+       Main slab covers range A only (3MB). With free+coalesce this handles
+       typical WinCE apps. TODO: if 3MB proves tight for IE/mshtml, extend
+       the main slab to also cover a portion of range B. */
+    g_main_heap = new SlabAllocator(0x00C00000, 0x00300000, &mem);
+    mem.Reserve(0x30000000, 0x04000000);
+    g_kernel_heap = new SlabAllocator(0x30000000, 0x04000000, &mem);
+
+    /* Register the process heap in the heap map */
+    {
+        std::lock_guard<std::mutex> lock(g_heap_map_mutex);
+        g_heap_map[FAKE_PROCESS_HEAP] = g_main_heap;
+    }
+
+    /* -- VirtualAlloc / VirtualFree --
+       Known differences from real WinCE (OK to skip for now):
+       - MEM_RESERVE without MEM_COMMIT still commits pages (real WinCE only
+         reserves address space; pages fault until committed)
+       - MEM_DECOMMIT zeros pages but doesn't truly decommit (pages remain
+         readable; real WinCE would fault on access to decommitted pages)
+       - MEM_RELEASE doesn't enforce size==0 requirement
+       - VirtualFree'd ranges are not coalesced with adjacent freed ranges
+         (fragmentation possible under heavy VirtualAlloc/VirtualFree churn) */
 
     Thunk("VirtualAlloc", 524, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t addr_arg = regs[0], size = regs[1];
+        uint32_t addr_arg = regs[0], size = regs[1], type = regs[2];
         static std::atomic<uint32_t> next_valloc{0x00B00000};
-        uint32_t aligned = std::max((size + 0xFFF) & ~0xFFF, 0x1000u);
-        uint32_t base = addr_arg ? addr_arg : next_valloc.fetch_add(aligned);
-        uint8_t* ptr = mem.Alloc(base, size, regs[3]);
-        regs[0] = ptr ? base : 0;
-        if (regs[0]) TrackAlloc(regs[0], size);
-        LOG(API, "[API] VirtualAlloc(0x%08X, 0x%X) -> 0x%08X\n", addr_arg, size, regs[0]);
-        return true;
-    });
-    Thunk("VirtualFree", 525, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[STUB] VirtualFree(0x%08X) -> 1 (leak)\n", regs[0]);
-        regs[0] = 1; return true;
-    });
-    Thunk("LocalAlloc", 33, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        static std::atomic<uint32_t> next_local{0x01400000};
-        uint32_t flags = regs[0], size = regs[1];
-        uint32_t addr = BumpAlloc(next_local, mem, size);
-        TrackAlloc(addr, size);
-        if ((flags & 0x0040u /* LMEM_ZEROINIT */) && size > 0) {
-            /* Zero page-by-page to handle non-contiguous host backing */
-            for (uint32_t off = 0; off < size; ) {
-                uint32_t page_rem = 0x1000 - ((addr + off) & 0xFFF);
-                uint32_t chunk = std::min(page_rem, size - off);
-                uint8_t* host = mem.Translate(addr + off);
-                if (host) memset(host, 0, chunk);
-                off += chunk;
+        static constexpr uint32_t VALLOC_LIMIT = 0x00C00000; /* don't overflow into heap */
+        uint32_t aligned = std::max((size + 0xFFF) & ~0xFFFu, 0x1000u);
+        uint32_t base;
+        /* MEM_COMMIT on existing reservation: just commit the pages */
+        if (addr_arg && (type & 0x1000 /* MEM_COMMIT */) && !(type & 0x2000 /* MEM_RESERVE */)) {
+            std::lock_guard<std::mutex> lock(g_valloc_mutex);
+            if (g_valloc_map.count(addr_arg)) {
+                mem.Alloc(addr_arg, size, regs[3]);
+                regs[0] = addr_arg;
+                LOG(API, "[API] VirtualAlloc(0x%08X, 0x%X, COMMIT) -> 0x%08X\n",
+                    addr_arg, size, regs[0]);
+                return true;
             }
         }
-        regs[0] = addr;
-        return true;
-    });
-    thunk_handlers["LocalAllocTrace"] = thunk_handlers["LocalAlloc"];
-    Thunk("LocalReAlloc", 34, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t old_ptr = regs[0], new_size = regs[1];
-        static std::atomic<uint32_t> next_lrealloc{0x01800000};
-        uint32_t addr = BumpAlloc(next_lrealloc, mem, new_size);
-        uint8_t* old_host = mem.Translate(old_ptr);
-        uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) {
-            uint32_t old_size = GetAllocSize(old_ptr);
-            uint32_t copy_size = old_size ? std::min(old_size, new_size) : new_size;
-            memcpy(new_host, old_host, copy_size);
+        std::lock_guard<std::mutex> lock(g_valloc_mutex);
+        if (addr_arg) {
+            base = addr_arg;
+        } else {
+            /* Check free list for a reusable range (best-fit) */
+            base = 0;
+            auto fit = g_valloc_free.lower_bound(aligned);
+            if (fit != g_valloc_free.end() && !fit->second.empty()) {
+                base = *fit->second.begin();
+                uint32_t free_size = fit->first;
+                fit->second.erase(fit->second.begin());
+                if (fit->second.empty()) g_valloc_free.erase(fit);
+                /* Split excess back into free list */
+                if (free_size > aligned) {
+                    uint32_t remainder = free_size - aligned;
+                    g_valloc_free[remainder].insert(base + aligned);
+                }
+            }
+            if (!base) {
+                base = next_valloc.fetch_add(aligned);
+                if (base + aligned > VALLOC_LIMIT) {
+                    /* Overflow: try VirtualAlloc overflow range */
+                    static std::atomic<uint32_t> next_valloc2{0x01C00000};
+                    base = next_valloc2.fetch_add(aligned);
+                }
+            }
         }
-        TrackAlloc(addr, new_size);
-        regs[0] = addr;
+        uint8_t* ptr = mem.Alloc(base, size, regs[3]);
+        regs[0] = ptr ? base : 0;
+        if (regs[0]) g_valloc_map[regs[0]] = aligned;
+        LOG(API, "[API] VirtualAlloc(0x%08X, 0x%X, 0x%X) -> 0x%08X\n",
+            addr_arg, size, type, regs[0]);
         return true;
     });
-    Thunk("LocalFree", 36, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        FreeAlloc(regs[0]);
-        regs[0] = 0; return true;
-    });
-    Thunk("LocalSize", 35, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        uint32_t size = GetAllocSize(regs[0]);
-        if (!size) size = 0x1000; /* fallback for untracked allocations */
-        regs[0] = size;
+    Thunk("VirtualFree", 525, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t addr = regs[0], size = regs[1], type = regs[2];
+        LOG(API, "[API] VirtualFree(0x%08X, 0x%X, 0x%X)\n", addr, size, type);
+        std::lock_guard<std::mutex> lock(g_valloc_mutex);
+        auto it = g_valloc_map.find(addr);
+        if (it != g_valloc_map.end()) {
+            uint8_t* p = mem.Translate(addr);
+            if (p) memset(p, 0, it->second);
+            if (type & 0x8000 /* MEM_RELEASE */) {
+                g_valloc_free[it->second].insert(addr);
+                g_valloc_map.erase(it);
+            }
+        }
+        regs[0] = 1;
         return true;
     });
+
+    /* -- GetProcessHeap / HeapCreate / HeapDestroy -- */
+
     Thunk("GetProcessHeap", 50, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        /* Return a pointer to a fake heap structure in emulated memory.
-           ARM code (mshtml, OLE) dereferences the heap handle to validate it.
-           Returning a dummy value like 0xDEAD0001 causes HeapString allocation
-           failures because the handle doesn't point to readable memory. */
-        constexpr uint32_t FAKE_PROCESS_HEAP = 0x00BF0000;
+        /* Keep fake struct for ARM code that dereferences the handle */
         static bool initialized = false;
         if (!initialized) {
             mem.Alloc(FAKE_PROCESS_HEAP, 0x1000);
-            mem.Write32(FAKE_PROCESS_HEAP, 0x48454150); /* "HEAP" signature */
-            mem.Write32(FAKE_PROCESS_HEAP + 4, 0x00C00000); /* base addr */
-            mem.Write32(FAKE_PROCESS_HEAP + 8, 0x00300000); /* max size */
+            mem.Write32(FAKE_PROCESS_HEAP, 0x50616548); /* "HeaP" signature */
+            mem.Write32(FAKE_PROCESS_HEAP + 4, 0x00C00000);
+            mem.Write32(FAKE_PROCESS_HEAP + 8, 0x00300000);
             initialized = true;
         }
         regs[0] = FAKE_PROCESS_HEAP;
         return true;
     });
-    auto heapAllocImpl = [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        static std::atomic<uint32_t> next_heap{0x00C00000};
-        auto& heap_ctr = GetHeapCounter(next_heap);
-        uint32_t hHeap = regs[0], flags = regs[1], size = regs[2];
-        regs[0] = BumpAlloc(heap_ctr, mem, size);
-        TrackAlloc(regs[0], size);
-        if (flags & 0x08u /* HEAP_ZERO_MEMORY */) {
-            /* Zero page-by-page to handle non-contiguous host backing */
-            for (uint32_t off = 0; off < size; ) {
-                uint32_t page_rem = 0x1000 - ((regs[0] + off) & 0xFFF);
-                uint32_t chunk = std::min(page_rem, size - off);
-                uint8_t* host = mem.Translate(regs[0] + off);
-                if (host) memset(host, 0, chunk);
-                off += chunk;
-            }
+    Thunk("HeapCreate", 44, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* Each created heap gets its own sub-range within 0x01000000-0x01BFFFFF.
+           Sub-ranges are 1MB each, supporting up to 12 custom heaps. */
+        static std::atomic<uint32_t> next_heap_base{0x01000000};
+        uint32_t heap_base = next_heap_base.fetch_add(0x00100000);
+        if (heap_base >= 0x01C00000) {
+            LOG(API, "[API] HeapCreate: out of heap address space\n");
+            regs[0] = FAKE_PROCESS_HEAP; /* fallback to process heap */
+            return true;
         }
-        LOG(API, "[API] HeapAlloc(heap=0x%08X, flags=0x%X, size=%u) -> 0x%08X\n",
+        uint32_t handle = g_next_heap_handle.fetch_add(0x100);
+        mem.Alloc(handle, 0x100);
+        mem.Write32(handle, 0x50616548); /* "HeaP" signature */
+        auto* slab = new SlabAllocator(heap_base, 0x00100000, &mem);
+        {
+            std::lock_guard<std::mutex> lock(g_heap_map_mutex);
+            g_heap_map[handle] = slab;
+        }
+        LOG(API, "[API] HeapCreate(0x%X, 0x%X, 0x%X) -> 0x%08X\n",
+            regs[0], regs[1], regs[2], handle);
+        regs[0] = handle;
+        return true;
+    });
+    Thunk("HeapDestroy", 45, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t handle = regs[0];
+        LOG(API, "[API] HeapDestroy(0x%08X)\n", handle);
+        std::lock_guard<std::mutex> lock(g_heap_map_mutex);
+        auto it = g_heap_map.find(handle);
+        if (it != g_heap_map.end() && it->second != g_main_heap) {
+            it->second->DestroyAll();
+            delete it->second;
+            g_heap_map.erase(it);
+        }
+        regs[0] = 1;
+        return true;
+    });
+
+    /* -- HeapAlloc / HeapFree / HeapReAlloc / HeapSize / HeapValidate -- */
+
+    auto heapAllocImpl = [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t hHeap = regs[0], flags = regs[1], size = regs[2];
+        bool zero = (flags & 0x08u /* HEAP_ZERO_MEMORY */) != 0;
+        SlabAllocator* slab = GetSlabForHeap(hHeap);
+        regs[0] = slab ? slab->Alloc(size, zero) : 0;
+        LOG(API, "[API] HeapAlloc(0x%08X, 0x%X, %u) -> 0x%08X\n",
             hHeap, flags, size, regs[0]);
         return true;
     };
     Thunk("HeapAlloc", 46, heapAllocImpl);
     Thunk("HeapAllocTrace", 20, heapAllocImpl);
-    Thunk("HeapCreate", 44, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        constexpr uint32_t HEAP_STRUCT_BASE = 0x00BF1000;
-        constexpr uint32_t HEAP_STRUCT_SIZE = 0x100;
-        static std::atomic<uint32_t> next_offset{0};
-        uint32_t offset = next_offset.fetch_add(HEAP_STRUCT_SIZE);
-        uint32_t addr = HEAP_STRUCT_BASE + offset;
-        mem.Alloc(addr, HEAP_STRUCT_SIZE);
-        mem.Write32(addr, 0x48454150); /* "HEAP" signature */
-        LOG(API, "[API] HeapCreate(0x%X, 0x%X, 0x%X) -> 0x%08X\n",
-            regs[0], regs[1], regs[2], addr);
-        regs[0] = addr;
+    Thunk("HeapFree", 49, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t hHeap = regs[0], addr = regs[2];
+        SlabAllocator* slab = GetSlabForHeap(hHeap);
+        regs[0] = (slab && slab->Free(addr)) ? 1 : 0;
         return true;
     });
-    Thunk("HeapFree", 49, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        FreeAlloc(regs[2]); /* regs[2] = lpMem (after hHeap, dwFlags) */
-        regs[0] = 1; return true;
-    });
-    Thunk("HeapDestroy", 45, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] HeapDestroy(0x%08X) -> 1 (stub)\n", regs[0]);
-        regs[0] = 1; return true;
-    });
-    Thunk("HeapReAlloc", 47, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        uint32_t old_ptr = regs[2], new_size = regs[3];
-        static std::atomic<uint32_t> next_hrealloc{0x01000000};
-        uint32_t addr = BumpAlloc(next_hrealloc, mem, new_size);
-        uint8_t* old_host = mem.Translate(old_ptr);
-        uint8_t* new_host = mem.Translate(addr);
-        if (old_host && new_host) {
-            uint32_t old_size = GetAllocSize(old_ptr);
-            uint32_t copy_size = old_size ? std::min(old_size, new_size) : new_size;
-            memcpy(new_host, old_host, copy_size);
+    Thunk("HeapReAlloc", 47, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t hHeap = regs[0], flags = regs[1], old_ptr = regs[2], new_size = regs[3];
+        SlabAllocator* slab = GetSlabForHeap(hHeap);
+        if (!slab) { regs[0] = 0; return true; }
+        bool in_place_only = (flags & 0x10 /* HEAP_REALLOC_IN_PLACE_ONLY */) != 0;
+        bool zero_growth = (flags & 0x08 /* HEAP_ZERO_MEMORY */) != 0;
+        uint32_t old_size = slab->Size(old_ptr);
+        uint32_t result;
+        if (in_place_only) {
+            result = slab->ReallocInPlace(old_ptr, new_size);
+        } else {
+            result = slab->Realloc(old_ptr, new_size);
         }
-        TrackAlloc(addr, new_size);
-        regs[0] = addr;
+        if (zero_growth && result && new_size > old_size && old_size != (uint32_t)-1) {
+            uint8_t* p = mem.Translate(result + old_size);
+            if (p) memset(p, 0, new_size - old_size);
+        }
+        regs[0] = result;
         return true;
     });
     Thunk("HeapSize", 48, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        uint32_t size = GetAllocSize(regs[2]); /* regs[2] = lpMem */
-        if (!size) size = 0x1000; /* fallback for untracked */
-        regs[0] = size;
+        uint32_t hHeap = regs[0], addr = regs[2];
+        SlabAllocator* slab = GetSlabForHeap(hHeap);
+        regs[0] = slab ? slab->Size(addr) : (uint32_t)-1;
         return true;
     });
     Thunk("HeapValidate", 51, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = 1; return true;
+        uint32_t hHeap = regs[0], addr = regs[2];
+        SlabAllocator* slab = GetSlabForHeap(hHeap);
+        regs[0] = (slab && slab->Validate(addr)) ? 1 : 0;
+        return true;
     });
-    /* CRT allocators (malloc/calloc/realloc/new/free/delete/_msize)
-       and memory validation — registered in memory_crt.cpp */
+
+    /* -- LocalAlloc / LocalFree / LocalReAlloc / LocalSize -- */
+
+    Thunk("LocalAlloc", 33, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t flags = regs[0], size = regs[1];
+        bool zero = (flags & 0x0040u /* LMEM_ZEROINIT */) != 0;
+        SlabAllocator* slab = GetSlab();
+        regs[0] = slab ? slab->Alloc(size, zero) : 0;
+        return true;
+    });
+    thunk_handlers["LocalAllocTrace"] = thunk_handlers["LocalAlloc"];
+    /* TODO: LocalReAlloc should check LMEM_MOVEABLE flag — without it,
+       real WinCE only allows in-place realloc (same as HEAP_REALLOC_IN_PLACE_ONLY).
+       Currently we always allow moving. */
+    Thunk("LocalReAlloc", 34, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t old_ptr = regs[0], new_size = regs[1];
+        SlabAllocator* slab = GetSlab();
+        regs[0] = slab ? slab->Realloc(old_ptr, new_size) : 0;
+        return true;
+    });
+    Thunk("LocalFree", 36, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t hMem = regs[0];
+        SlabAllocator* slab = GetSlab();
+        bool ok = !hMem || (slab && slab->Free(hMem));
+        regs[0] = ok ? 0 : hMem; /* NULL on success, handle on failure */
+        return true;
+    });
+    Thunk("LocalSize", 35, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        SlabAllocator* slab = GetSlab();
+        uint32_t size = slab ? slab->Size(regs[0]) : (uint32_t)-1;
+        regs[0] = (size == (uint32_t)-1) ? 0 : size;
+        return true;
+    });
+
     RegisterCrtMemoryHandlers();
 }

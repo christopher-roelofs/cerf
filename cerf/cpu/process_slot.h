@@ -198,10 +198,9 @@ struct ProcessSlot {
     std::vector<DllWritableSection> dll_writable_sections;
 
     /* Per-process allocator state.
-       Child processes get their own heap/malloc counters so allocations
+       Child processes get their own SlabAllocator so allocations
        don't overlap with the parent's address space. */
-    std::atomic<uint32_t> proc_heap_counter{0x00C00000};
-    std::atomic<uint32_t> proc_malloc_counter{0x01100000};
+    struct SlabAllocator* proc_slab = nullptr; /* created when has_own_allocators */
     bool has_own_allocators = false;
     uint32_t fake_pid = 0;           /* unique emulated PID */
     uint32_t proc_struct_addr = 0;   /* address of fake WinCE PROCESS struct in emu memory */

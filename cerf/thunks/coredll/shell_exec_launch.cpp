@@ -4,6 +4,7 @@
    with its own ProcessSlot, ThreadContext, ArmCpu, and isolated address space. */
 #include "../win32_thunks.h"
 #include "../handle_table.h"
+#include "../../cpu/slab_alloc.h"
 #include "../../log.h"
 #include "../../debugger/gdb_stub.h"
 #include <cstdio>
@@ -55,7 +56,8 @@ bool Win32Thunks::LaunchArmChildProcess(
 
             /* Create per-process virtual address space */
             ProcessSlot slot;
-            slot.has_own_allocators = true; /* Phase 4: per-process heap */
+            slot.has_own_allocators = true;
+            slot.proc_slab = new SlabAllocator(0x00C00000, 0x00300000, cpi->mem);
             if (!slot.buffer) {
                 LOG(API, "[API] ShellExecuteEx: ProcessSlot alloc failed\n");
                 delete cpi; t_ctx = nullptr; return 1;
@@ -239,6 +241,8 @@ bool Win32Thunks::LaunchArmChildProcess(
 
             /* Free per-process handle map */
             thunks_ptr->EraseProcessHandles(&slot);
+            delete slot.proc_slab;
+            slot.proc_slab = nullptr;
 
             /* Free per-process DLL data page copies */
             slot.FreeDllOverlay();
