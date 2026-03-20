@@ -145,6 +145,32 @@ static bool ParseRegFileValue(const std::string& rest, Win32Thunks::RegValue& va
         val.data.resize((ws.size() + 1) * 2);
         memcpy(val.data.data(), ws.c_str(), val.data.size());
         return true;
+    } else if (rest.size() > 10 && rest.substr(0, 9) == "multi_sz:") {
+        /* REG_MULTI_SZ: multi_sz:"str1","str2",... — double-null-terminated wide string list.
+           WinCE .reg format: multi_sz:"ncacn_ip_tcp","ncalrpc" */
+        val.type = REG_MULTI_SZ;
+        size_t pos = 9;
+        while (pos < rest.size()) {
+            while (pos < rest.size() && (rest[pos] == ',' || rest[pos] == ' ')) pos++;
+            if (pos >= rest.size() || rest[pos] != '"') break;
+            size_t end = rest.find('"', pos + 1);
+            if (end == std::string::npos) break;
+            std::string raw = rest.substr(pos + 1, end - pos - 1);
+            /* Each string gets null-terminated in wide chars */
+            for (char c : raw) {
+                uint16_t wc = (uint16_t)(unsigned char)c;
+                val.data.push_back((uint8_t)(wc & 0xFF));
+                val.data.push_back((uint8_t)(wc >> 8));
+            }
+            /* Null terminator for this string */
+            val.data.push_back(0);
+            val.data.push_back(0);
+            pos = end + 1;
+        }
+        /* Final null terminator (empty string = end of list) */
+        val.data.push_back(0);
+        val.data.push_back(0);
+        return true;
     } else if (rest.substr(0, 4) == "hex:") {
         val.type = REG_BINARY;
         std::string hex = rest.substr(4);

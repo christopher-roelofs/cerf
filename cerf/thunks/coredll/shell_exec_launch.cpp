@@ -105,6 +105,12 @@ bool Win32Thunks::LaunchArmChildProcess(
 
             MakeCallbackExecutor(&ctx, *cpi->mem, *cpi->thunks, 0xCAFEC000);
             cpi->mem->Alloc(ctx.marshal_base, 0x10000);
+
+            /* Per-process DLL_PROCESS_ATTACH: currently disabled because it
+               corrupts DLL .data state (overwriting main thread's initialization).
+               The PE/DllMain split in LoadArmDll + DLL CoW provides sufficient
+               isolation for device.exe's driver DLLs. */
+
             cpi->thunks->InstallThunks(child_pe, ctx.process_name);
             cpi->thunks->CallDllEntryPoints();
 

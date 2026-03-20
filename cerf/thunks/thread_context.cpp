@@ -7,6 +7,7 @@
 thread_local ThreadContext* t_ctx = nullptr;
 thread_local uint8_t* EmulatedMemory::kdata_override = nullptr;
 thread_local ProcessSlot* EmulatedMemory::process_slot = nullptr;
+thread_local ProcessSlot* EmulatedMemory::apiset_caller_slot = nullptr;
 std::atomic<int> g_next_thread_index{0};
 
 /* Child process thread tracking */

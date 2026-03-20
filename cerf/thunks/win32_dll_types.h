@@ -7,6 +7,11 @@
         uint32_t base_addr;
         PEInfo pe_info;
         HMODULE native_rsrc_handle;
+        /* Tracks which ProcessSlots have received DLL_PROCESS_ATTACH. */
+        std::set<ProcessSlot*> dllmain_called_slots;
+        /* True if this DLL was first loaded by device.exe's boot services.
+           Device.exe DLLs don't fire DLL_THREAD_ATTACH on other processes' threads. */
+        bool loaded_by_device = false;
     };
     std::map<std::wstring, LoadedDll> loaded_dlls;
     LoadedDll* LoadArmDll(const std::string& dll_name);
@@ -24,8 +29,4 @@
     /* DLLs that called DisableThreadLibraryCalls — skip DLL_THREAD_ATTACH */
     std::set<uint32_t> disable_thread_notify_bases;
 
-    /* LPC Port Manager — emulates the LPC1: kernel device driver.
-       Handles DeviceIoControl for LPCRT.dll's Nt* port operations. */
-    class LpcPortManager* lpc_manager_ = nullptr;
-    uint32_t lpc_device_handle_ = 0;
-    static constexpr uint32_t LPC_DEVICE_SENTINEL = 0xCE00BEEF;
+    /* (LPC mock removed — replaced by real lpcd.dll via DeviceManager) */

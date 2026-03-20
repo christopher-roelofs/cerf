@@ -273,5 +273,9 @@ bool Win32Thunks::SehDispatch(uint32_t* regs, EmulatedMemory& mem,
     }
 
     LOG(API, "[SEH] Dispatch FAILED: no handler found for exception 0x%08X\n", exc_code);
+    /* Store the final unwound SP so RaiseException can use it for recovery
+       instead of scanning the stack for magic patterns. */
+    last_unhandled_sp = sp;
+    last_unhandled_pc = pc;
     return false;
 }

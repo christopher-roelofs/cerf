@@ -156,10 +156,9 @@ struct ProcessSlot {
     /* Registered writable sections across all DLLs */
     std::vector<DllWritableSection> dll_writable_sections;
 
-    /* Per-process allocator state (Phase 4).
+    /* Per-process allocator state.
        Child processes get their own heap/malloc counters so allocations
-       don't overlap with the parent's address space.
-       Uses offset ranges within slot 0 that don't conflict with the parent. */
+       don't overlap with the parent's address space. */
     std::atomic<uint32_t> proc_heap_counter{0x00C00000};
     std::atomic<uint32_t> proc_malloc_counter{0x01100000};
     bool has_own_allocators = false;

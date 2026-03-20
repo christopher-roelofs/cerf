@@ -44,6 +44,9 @@ public:
        resolve through this overlay instead of the global regions. This implements
        WinCE's per-process virtual address space (slot 0). */
     static thread_local ProcessSlot* process_slot;
+    /* Saved caller ProcessSlot during API set dispatch. CreateThread reads
+       this to inherit the caller's real slot, not the apiset-cleared nullptr. */
+    static thread_local ProcessSlot* apiset_caller_slot;
 
     /* DLL slot-0 alias: maps (dll_base & SLOT_MASK) back to dll_base in Translate(). */
     struct DllAlias {
@@ -155,6 +158,15 @@ public:
             /* First try MEM_COMMIT only (works if address is within a pre-reserved range) */
             ptr = (uint8_t*)VirtualAlloc((LPVOID)(uintptr_t)base, size,
                                          MEM_COMMIT, PAGE_READWRITE);
+            /* DEBUG: detect overlapping allocations that destroy DLL data */
+            if (ptr && base >= 0x10000000 && base < 0x70000000) {
+                for (auto& r : regions) {
+                    if (r.base != base && base < r.base + r.size && base + size > r.base) {
+                        fprintf(stderr, "[MEM] WARNING: Alloc(0x%08X+0x%X) OVERLAPS region 0x%08X+0x%X!\n",
+                                base, size, r.base, r.size);
+                    }
+                }
+            }
             if (!ptr) {
                 /* Not within a reservation — try full MEM_COMMIT | MEM_RESERVE
                    (only succeeds at 64KB-aligned addresses) */
@@ -205,10 +217,12 @@ public:
             }
         }
         /* WinCE slot-0 DLL aliasing: DLLs loaded at global addresses (0x04000000+)
-           are also accessible via slot 0 at (dll_base & 0x1FFFFFF). ARM code uses
-           these aliases for instruction fetch and data access. Safe because
-           allocator address ranges are above the DLL alias range, preventing
-           heap/DLL data overlap. */
+           are also accessible via slot 0 at (dll_base & 0x01FFFFFF). ARM code uses
+           these aliases for instruction fetch and data access.
+           NOTE: Alias addresses CAN overlap with allocator ranges (e.g.
+           webview.dll at 0x10C10000 aliases to 0x00C10000, inside heap range).
+           Allocators must use HasCommittedRegion() instead of IsValid() to
+           avoid confusing DLL aliases with committed heap pages. */
         if (addr <= WINCE_SLOT_MASK && !dll_aliases.empty()) {
             for (auto& alias : dll_aliases) {
                 if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
@@ -225,6 +239,22 @@ public:
 
     bool IsValid(uint32_t addr) const {
         return Translate(addr) != nullptr;
+    }
+
+    /* Check if addr falls in an actual committed region (ignores DLL slot-0
+       aliases and process slot overlays).  Used by allocators to decide
+       whether a page needs explicit VirtualAlloc — IsValid() would return
+       true for DLL alias pages that shadow the heap range. */
+    bool HasCommittedRegion(uint32_t addr) const {
+        if (process_slot && addr < ProcessSlot::SLOT_SIZE) {
+            if (process_slot->IsPageCommitted(addr & ~(PAGE_SIZE - 1)))
+                return true;
+        }
+        for (auto& r : regions) {
+            if (addr >= r.base && addr < r.base + r.size)
+                return true;
+        }
+        return false;
     }
 
     uint8_t Read8(uint32_t addr) const {

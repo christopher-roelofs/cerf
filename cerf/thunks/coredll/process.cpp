@@ -40,10 +40,12 @@ void Win32Thunks::RegisterProcessHandlers() {
             char parent_process[32];
             char parent_exe_path[512];
             ProcessSlot* parent_slot;
+            bool parent_is_kernel;
         };
         auto* info = new ThreadStartInfo{
             lpStartAddress, lpParameter, &mem, this, 0xCAFEC000, {}, {},
-            EmulatedMemory::process_slot
+            EmulatedMemory::process_slot,
+            t_ctx ? t_ctx->is_kernel_thread : false
         };
         if (t_ctx) {
             snprintf(info->parent_process, 32, "%s", t_ctx->process_name);
@@ -68,6 +70,7 @@ void Win32Thunks::RegisterProcessHandlers() {
                          info->parent_exe_path);
                 Log::SetProcessName(ctx.process_name, GetCurrentThreadId());
                 EmulatedMemory::process_slot = info->parent_slot;
+                ctx.is_kernel_thread = info->parent_is_kernel;
 
                 /* Allocate per-thread stack in emulated memory */
                 uint32_t stack_size = 0x100000; /* 1MB */
@@ -127,21 +130,47 @@ void Win32Thunks::RegisterProcessHandlers() {
                 LOG(API, "[THREAD] Started thread %d: PC=0x%08X SP=0x%08X param=0x%08X\n",
                     thread_idx, cpu.r[REG_PC], stack_top, info->parameter);
 
-                /* Send DLL_THREAD_ATTACH to all loaded ARM DLLs (unless they
-                   called DisableThreadLibraryCalls). WinCE does this at the kernel
-                   level; we must do it explicitly for mshtml's THREADSTATE init. */
+                /* Send DLL_THREAD_ATTACH to loaded ARM DLLs. On real WinCE, only
+                   DLLs loaded in the SAME PROCESS get THREAD_ATTACH. DLLs loaded
+                   by device.exe shouldn't fire on explorer's threads.
+                   Skip if: DisableThreadLibraryCalls was called, or the DLL was
+                   loaded by a different process (ProcessSlot not in dllmain set). */
                 constexpr uint32_t DLL_THREAD_ATTACH_REASON = 2;
                 auto* thunks = info->thunks;
+                ProcessSlot* thread_slot = EmulatedMemory::process_slot;
                 for (auto& pair : thunks->loaded_dlls) {
                     auto& dll = pair.second;
                     if (dll.pe_info.entry_point_rva == 0) continue;
-                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
                     if (thunks->disable_thread_notify_bases.count(dll.base_addr))
                         continue;
+                    /* Skip DLLs loaded exclusively by device.exe. On real WinCE,
+                       device.exe's DLLs don't fire DLL_THREAD_ATTACH on other processes. */
+                    if (dll.loaded_by_device && !ctx.is_kernel_thread)
+                        continue;
+                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
                     LOG(API, "[THREAD] DLL_THREAD_ATTACH: 0x%08X (base=0x%08X)\n",
                         entry, dll.base_addr);
                     uint32_t dllargs[3] = { dll.base_addr, DLL_THREAD_ATTACH_REASON, 0 };
                     ctx.callback_executor(entry, dllargs, 3);
+                }
+
+                /* DEBUG: check if vtable page survived DLL_THREAD_ATTACH.
+                   Only check after webview.dll is loaded (base >= 0x10C00000). */
+                for (auto& [n, d] : thunks->loaded_dlls) {
+                    if (d.base_addr >= 0x10C00000 && d.base_addr <= 0x10D00000 &&
+                        d.pe_info.size_of_image > 0x12000) {
+                        uint32_t vt_addr = d.base_addr + 0x28B4;
+                        uint8_t* host = info->mem->Translate(vt_addr);
+                        uint32_t native_val = *(uint32_t*)(uintptr_t)vt_addr;
+                        uint32_t emu_val = host ? *(uint32_t*)host : 0xDEAD;
+                        if (emu_val == 0 || native_val != emu_val) {
+                            LOG_ERR("[THREAD] VTABLE ISSUE on thread %d! "
+                                    "native@%p=0x%08X emu@%p=0x%08X\n",
+                                    thread_idx, (void*)(uintptr_t)vt_addr, native_val,
+                                    host, emu_val);
+                        }
+                        break;
+                    }
                 }
 
                 delete info;
@@ -157,9 +186,12 @@ void Win32Thunks::RegisterProcessHandlers() {
                 for (auto& pair : thunks->loaded_dlls) {
                     auto& dll = pair.second;
                     if (dll.pe_info.entry_point_rva == 0) continue;
-                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
                     if (thunks->disable_thread_notify_bases.count(dll.base_addr))
                         continue;
+                    /* Same process filter as THREAD_ATTACH */
+                    if (dll.loaded_by_device && !ctx.is_kernel_thread)
+                        continue;
+                    uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
                     LOG(API, "[THREAD] DLL_THREAD_DETACH: 0x%08X (base=0x%08X)\n",
                         entry, dll.base_addr);
                     uint32_t detach_args[3] = { dll.base_addr, DLL_THREAD_DETACH_REASON, 0 };

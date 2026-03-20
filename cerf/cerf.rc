@@ -1,0 +1,2 @@
+// Application icon — lowest ID so it becomes the default exe icon
+1 ICON "cerf.ico"

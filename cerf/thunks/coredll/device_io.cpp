@@ -1,14 +1,14 @@
-/* DeviceIoControl thunk — handles console IOCTLs and LPC device routing.
-   Split from stdio.cpp for file size compliance. */
+/* DeviceIoControl thunk — routes to registered stream device drivers
+   (via DeviceManager) and handles console IOCTLs. */
 #define NOMINMAX
 #include "../win32_thunks.h"
-#include "../lpc_manager.h"
+#include "../device_manager.h"
 #include "../../log.h"
 #include <cstdio>
 
 void Win32Thunks::RegisterDeviceIoHandlers() {
     /* DeviceIoControl — ordinal 179
-       Console IOCTLs + LPC device routing for COM marshaling. */
+       Routes to registered stream device drivers or handles console IOCTLs. */
     Thunk("DeviceIoControl", 179, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t handle = regs[0];
         uint32_t ioctl = regs[1];
@@ -17,14 +17,20 @@ void Win32Thunks::RegisterDeviceIoHandlers() {
         uint32_t outsize = ReadStackArg(regs, mem, 1);
         uint32_t bytes_ret = ReadStackArg(regs, mem, 2);
 
-        /* LPC device — route to LpcPortManager */
-        if (handle == lpc_device_handle_ && lpc_manager_) {
-            regs[0] = (uint32_t)lpc_manager_->HandleIoctl(
-                ioctl, inbuf, insize, outbuf, outsize, bytes_ret, mem);
+        /* Stream device driver — route to registered ARM driver */
+        if (device_mgr.IsDeviceHandle(handle)) {
+            int32_t result = device_mgr.IOControl(
+                handle, ioctl, inbuf, insize, outbuf, outsize, bytes_ret);
+            /* WinCE DeviceIoControl returns BOOL (TRUE=success), but the
+               driver's XXX_IOControl returns the actual result value.
+               LPCRT.dll reads the NTSTATUS directly from the return value,
+               not through DeviceIoControl's BOOL. The ARM calling convention
+               returns the result in R0 regardless. */
+            regs[0] = (uint32_t)result;
             return true;
         }
 
-        LOG(API, "[API] DeviceIoControl(ioctl=0x%08X)\n", ioctl);
+        LOG(API, "[API] DeviceIoControl(handle=0x%08X, ioctl=0x%08X)\n", handle, ioctl);
 
         /* Console IOCTLs */
         CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -45,8 +51,8 @@ void Win32Thunks::RegisterDeviceIoHandlers() {
                     mem.Write32(outbuf, cols);
                 }
                 regs[0] = 1; return true;
-            case 0x1020020: /* Set Ctrl-C handler — stub */
-                LOG(API, "[API]   Console: set Ctrl-C handler (stub)\n");
+            case 0x1020020: /* Set Ctrl-C handler */
+                LOG(API, "[API]   Console: set Ctrl-C handler\n");
                 regs[0] = 1; return true;
             case 0x102000C: /* Set console title */
                 if (inbuf && insize > 0) {
@@ -58,7 +64,7 @@ void Win32Thunks::RegisterDeviceIoHandlers() {
                 }
                 regs[0] = 1; return true;
             default:
-                LOG(API, "[API]   DeviceIoControl(0x%08X) -> stub\n", ioctl);
+                LOG(API, "[API]   DeviceIoControl(0x%08X) unhandled\n", ioctl);
                 regs[0] = 0; return true;
         }
     });

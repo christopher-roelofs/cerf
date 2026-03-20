@@ -21,6 +21,7 @@
 #include <mutex>
 
 class EmulatedMemory;
+struct ProcessSlot;
 
 /* API set IDs (from WinCE kfuncs.h) */
 constexpr uint32_t WINCE_SH_WIN32    = 0;
@@ -46,6 +47,11 @@ struct ApiSetEntry {
     /* The callback executor captured from the registering thread.
        Calls ARM code in the registering process's context. */
     std::function<uint32_t(uint32_t, uint32_t*, int)> executor;
+
+    /* ProcessSlot of the registering process — used to switch context
+       during cross-process API set dispatch (matches real WinCE kernel
+       behavior of switching to the target process's address space). */
+    ProcessSlot* process_slot = nullptr;
 };
 
 class ApiSetManager {

@@ -24,6 +24,7 @@ void Win32Thunks::RegisterComHandlers() {
         LOG(API, "[API] CoInitializeEx(pMalloc=0x%08X, flags=0x%X)\n", regs[0], regs[1]);
         /* Init native COM for host-side operations */
         CoInitializeEx(NULL, regs[1]);
+
         /* Forward to ARM ole32 — each real thread has its own COM apartment */
         uint32_t arm_func = resolveOle32(mem, "CoInitializeEx");
         if (arm_func && callback_executor) {

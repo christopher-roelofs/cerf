@@ -89,6 +89,13 @@ bool PELoader::LoadSections(const uint8_t* data, size_t size, EmulatedMemory& me
     /* Allocate the entire image region */
     uint8_t* image = mem.Alloc(info.image_base, info.size_of_image);
     if (!image) return false;
+    /* Verify identity mapping */
+    uint8_t* check = mem.Translate(info.image_base);
+    if (check != image) {
+        LOG_ERR("[PE] WARNING: DLL at 0x%08X not identity-mapped! image=%p Translate=%p\n",
+                info.image_base, image, check);
+    }
+    /* (vtable check moved after section copy) */
 
     /* Copy headers */
     uint32_t hdr_copy = std::min((uint32_t)size, info.size_of_headers);
@@ -109,6 +116,14 @@ bool PELoader::LoadSections(const uint8_t* data, size_t size, EmulatedMemory& me
         DWORD vsize = s.Misc.VirtualSize ? s.Misc.VirtualSize : raw_size;
         uint32_t copy_size = (raw_size < vsize) ? raw_size : vsize;
         memcpy(image + s.VirtualAddress, data + s.PointerToRawData, copy_size);
+    }
+
+    /* Debug: verify vtable content for webview.dll-sized DLLs */
+    if (info.size_of_image > 0x150000 && info.image_base >= 0x10000000) {
+        uint32_t vt_offset = 0x128B4;
+        uint32_t vt_val = *(uint32_t*)(image + vt_offset);
+        LOG(PE, "[PE] Post-load vtable at 0x%08X+0x%X: 0x%08X\n",
+            info.image_base, vt_offset, vt_val);
     }
 
     return true;
@@ -236,6 +251,15 @@ uint32_t PELoader::Load(const char* path, EmulatedMemory& mem, PEInfo& info) {
     if (!ParseHeaders(data.data(), size, info)) return 0;
     if (!LoadSections(data.data(), size, mem, info)) return 0;
     if (!ProcessRelocations(mem, info, info.image_base)) return 0;
+
+    /* Debug: check vtable after relocation */
+    if (info.size_of_image > 0x150000 && info.image_base >= 0x10000000) {
+        uint8_t* p = mem.Translate(info.image_base + 0x128B4);
+        uint32_t v = p ? *(uint32_t*)p : 0xDEAD;
+        LOG(PE, "[PE] Post-reloc vtable at 0x%08X: 0x%08X (via Translate=%p)\n",
+            info.image_base + 0x128B4, v, p);
+    }
+
     if (!ResolveImports(data.data(), size, mem, info)) return 0;
 
     uint32_t entry = info.image_base + info.entry_point_rva;

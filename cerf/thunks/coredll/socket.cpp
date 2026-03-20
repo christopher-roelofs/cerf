@@ -81,7 +81,23 @@ constexpr uint32_t PI_SZPROTO = 116, PI_SIZE = 628;
 void Win32Thunks::RegisterSocketHandlers() {
     /* WSAStartup deferred to first actual socket use, not constructor time */
 
-    /* ---- SH_COMM (set 19) provider management traps ---- */
+    /* ---- SH_COMM (set 19) provider management traps ----
+       On real WinCE, the networking stack (AFD/NDIS) registers SH_COMM via
+       CreateAPISet/RegisterAPISet. Since we thunk sockets directly instead
+       of loading the networking drivers, we provide these trap handlers as
+       driver registration replacements — thunking driver-registered APIs. */
+
+    /* NETbios (method 24): NetBIOS interface for name resolution.
+       On real WinCE, registered by the NetBIOS driver via SH_COMM API set.
+       Called by dcomssd.dll for remote DCOM transport. Not needed for local
+       COM (ncalrpc). Return NRC_ENVNOTDEF (0x34) = "NetBIOS environment not defined".
+       Args: R0=x1 R1=dwOpCode R2=pNCB R3=cBuf1 stk0=pBuf1 stk1=cBuf2 stk2=pBuf2 */
+    Thunk("NETbios", TRAP(WINCE_SH_COMM, 24),
+        [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] NETbios(opcode=%u) -> NRC_ENVNOTDEF\n", regs[1]);
+        regs[0] = 0x34; /* NRC_ENVNOTDEF: NetBIOS environment not defined */
+        return true;
+    });
 
     /* PMFindProvider (method 28): ws2.dll asks which provider DLL handles a
        given (af, type, protocol).  We fill WSAPROTOCOL_INFOW and return the

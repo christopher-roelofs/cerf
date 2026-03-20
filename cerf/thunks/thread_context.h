@@ -17,6 +17,12 @@ struct ThreadContext {
     using CallbackExecutor = std::function<uint32_t(uint32_t addr, uint32_t* args, int nargs)>;
     CallbackExecutor callback_executor;
 
+    /* Kernel thread flag: set for threads spawned by boot service drivers
+       (lpcd.dll, dcomssd.dll). Kernel threads use a separate heap above
+       0x02000000 so their allocations don't conflict with user process
+       ProcessSlot overlays on slot-0 (0x00000000-0x01FFFFFF). */
+    bool is_kernel_thread = false;
+
     /* ARM SEH: per-thread exception handler registered via SetExceptionHandler.
        On WinCE, the CRT registers a handler at thread startup. When RaiseException
        fires, the kernel calls this handler to dispatch to __except blocks.

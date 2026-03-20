@@ -18,7 +18,6 @@ extern uint32_t BumpAlloc(std::atomic<uint32_t>& counter, EmulatedMemory& mem, u
 extern std::atomic<uint32_t>& GetMallocCounter(std::atomic<uint32_t>& global_counter);
 
 void Win32Thunks::RegisterCrtMemoryHandlers() {
-    /* Shared atomic counter for malloc/calloc/realloc/new to prevent overlap */
     static std::atomic<uint32_t> next_malloc{0x01100000};
     Thunk("malloc", 1041, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t size = regs[0];

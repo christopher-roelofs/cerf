@@ -160,6 +160,7 @@
     <!-- CPU emulation -->
     <ClCompile Include="cpu\arm_cpu.cpp" />
     <ClCompile Include="cpu\arm_insn.cpp" />
+    <ClCompile Include="cpu\arm_insn_ops.cpp" />
     <ClCompile Include="cpu\thumb_insn.cpp" />
     <ClCompile Include="cpu\mem.cpp" />
     <!-- PE loader -->
@@ -221,9 +222,11 @@
     <ClCompile Include="thunks\coredll\file_notify.cpp" />
     <ClCompile Include="thunks\coredll\system.cpp" />
     <ClCompile Include="thunks\coredll\seh_dispatch.cpp" />
-    <ClCompile Include="thunks\lpc_manager.cpp" />
-    <ClCompile Include="thunks\lpc_ioctls.cpp" />
+    <ClCompile Include="thunks\boot_services.cpp" />
+    <!-- lpc_manager.cpp and lpc_ioctls.cpp removed: replaced by real lpcd.dll via DeviceManager -->
     <ClCompile Include="thunks\coredll\device_io.cpp" />
+    <ClCompile Include="thunks\coredll\kernel_api.cpp" />
+    <ClCompile Include="thunks\device_manager.cpp" />
     <ClCompile Include="thunks\coredll\sysinfo.cpp" />
     <ClCompile Include="thunks\coredll\locale.cpp" />
     <ClCompile Include="thunks\coredll\sync.cpp" />
@@ -271,6 +274,15 @@
     <ClCompile Include="tracing\wince5\traces_explorer.cpp" />
     <ClCompile Include="tracing\wince5\traces_urlmon.cpp" />
     <ClCompile Include="tracing\wince5\traces_wininet.cpp" />
+    <ClCompile Include="tracing\wince5\traces_ole32.cpp" />
+    <ClCompile Include="tracing\wince5\traces_rpcrt4.cpp" />
+    <ClCompile Include="tracing\wince5\traces_dcomssd.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="cerf.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="cerf.ico" />
   </ItemGroup>
   <!-- Bundled device files — copied to devices/ next to cerf.exe -->
   <Target Name="CopyBundledFiles" AfterTargets="Build">

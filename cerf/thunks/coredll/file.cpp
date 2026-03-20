@@ -1,7 +1,7 @@
 /* File I/O thunks: CreateFile, ReadFile, WriteFile, Find*, directory ops */
 #include "../win32_thunks.h"
 #include "../handle_table.h"
-#include "../lpc_manager.h"
+#include "../device_manager.h"
 #include "../../log.h"
 #include <cstdio>
 #include <vector>
@@ -44,16 +44,16 @@ void Win32Thunks::RegisterFileHandlers() {
         uint32_t access = regs[1], share = regs[2];
         uint32_t creation = ReadStackArg(regs, mem, 0), flags = ReadStackArg(regs, mem, 1);
 
-        /* LPC1: device — emulated kernel device for COM LPC transport.
-           LPCRT.dll opens this to access the LPC port manager. */
-        if (wce_path == L"LPC1:" || wce_path == L"lpc1:") {
-            if (!lpc_manager_) {
-                lpc_manager_ = new LpcPortManager();
-                lpc_device_handle_ = LPC_DEVICE_SENTINEL;
+        /* Stream device driver routing (RegisterDevice).
+           Device names like "LPC1:" are matched against registered drivers. */
+        {
+            RegisteredDevice* dev = device_mgr.FindDeviceByName(wce_path);
+            if (dev) {
+                regs[0] = device_mgr.Open(dev, access, share);
+                LOG(API, "[API] CreateFileW('%ls') -> device handle=0x%08X\n",
+                    wce_path.c_str(), regs[0]);
+                return true;
             }
-            regs[0] = lpc_device_handle_;
-            LOG(API, "[API] CreateFileW('LPC1:') -> LPC device handle=0x%08X\n", regs[0]);
-            return true;
         }
 
         std::wstring host_path = MapWinCEPath(wce_path);

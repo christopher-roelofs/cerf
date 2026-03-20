@@ -10,6 +10,7 @@
 #include "../cpu/mem.h"
 #include "../loader/pe_loader.h"
 #include "thread_context.h"
+#include "device_manager.h"
 
 /* GDI handles are UNSIGNED 32-bit values that must be ZERO-extended to 64-bit.
    On 64-bit Windows, GDI handles regularly have bit 31 set (e.g., HDC 0xA9011628).
@@ -80,6 +81,9 @@ public:
 
     /* Trace manager for ARM instruction-level tracing */
     void SetTraceManager(class TraceManager* tm) { trace_mgr_ = tm; }
+    void ActivateTracesForLoadedDlls(class TraceManager& tm);
+    void StartBootServices(EmulatedMemory& mem);
+    void RunPerProcessDllInit();
     class TraceManager* GetTraceManager() const { return trace_mgr_; }
 
     void InitVFS(const std::string& device_override = "");
@@ -129,6 +133,11 @@ public:
        but are declared there, not here, to avoid forward-decl issues. */
     bool SehDispatch(uint32_t* regs, EmulatedMemory& mem,
         uint32_t exc_code, uint32_t exc_flags);
+    /* Set by SehDispatch when no handler is found — the final unwound
+       PC and SP from the stack walk. Used by RaiseException to unwind
+       to the callback_executor boundary without scanning for magic values. */
+    uint32_t last_unhandled_sp = 0;
+    uint32_t last_unhandled_pc = 0;
 
     static LRESULT CALLBACK EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static INT_PTR CALLBACK EmuDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -175,6 +184,8 @@ public:
     uint32_t os_build = 1;
     std::string os_build_date = "Jan  1 2008";
     uint32_t fake_total_phys = 0;  /* fake memory; 0 = use real host memory */
+    std::set<std::string> boot_service_dlls; /* from cerf.ini boot_services= */
+    DeviceManager device_mgr; /* stream device driver manager (RegisterDevice etc.) */
     /* WinCE theming */
     bool enable_theming = false;
     bool disable_uxtheme = false;
@@ -201,6 +212,9 @@ private:
 
     /* DLL loader and resource types — in win32_dll_types.h */
 #include "win32_dll_types.h"
+public:
+    LoadedDll* FindLoadedDll(const std::wstring& name_lower);
+private:
 
     /* Ordinal to function name mapping */
     static std::map<uint16_t, std::string> ordinal_map;
@@ -275,6 +289,7 @@ public:
     void RegisterDsaHandlers();
     void RegisterStdioHandlers();
     void RegisterDeviceIoHandlers();
+    void RegisterKernelApiHandlers();
     void RegisterVfsHandlers();
     void RegisterShellExecHandler();
     void RegisterWininetDepsHandlers();

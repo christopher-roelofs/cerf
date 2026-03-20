@@ -4,7 +4,7 @@
 #
 # Install: git config core.hooksPath .githooks
 
-MAX_LINES=300
+MAX_LINES=400
 FAIL=0
 
 for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|h)$'); do

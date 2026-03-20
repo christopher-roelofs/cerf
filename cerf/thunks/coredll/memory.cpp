@@ -32,13 +32,13 @@ void FreeAlloc(uint32_t addr) {
    WinCE ARM code applies slot masking (AND addr, #0x01FFFFFF) to pointers.
    Any address >= 0x02000000 gets corrupted to a different address.
 
-   CRITICAL: Allocator ranges must NOT overlap with DLL slot-0 aliases.
-   DLLs loaded at 0x10000000+ have aliases at (dll_addr & 0x01FFFFFF), spanning
-   roughly 0x00100000-0x00AE0000. On real WinCE, the kernel's MMU prevents
-   this overlap. In our emulation, we place allocators above 0x00B00000.
+   DLL slot-0 aliases (dll_addr & 0x01FFFFFF) can span up to 0x01FFFFFF.
+   Late-loaded DLLs (e.g. webview.dll at 0x10C10000) alias into the heap
+   range. CommitPages() uses HasCommittedRegion() to avoid confusing DLL
+   alias pages with committed heap pages — once committed, the global
+   region takes priority over the alias in Translate().
 
-   Address space layout (non-overlapping ranges):
-     0x00010000-0x00AFFFFF: DLL slot-0 alias zone (RESERVED — do not allocate)
+   Address space layout (allocator ranges — may shadow DLL aliases after commit):
      VirtualAlloc:  0x00B00000  (grows up, ~1MB for app VirtualAlloc calls)
      HeapAlloc:     0x00C00000  (grows up, ~3MB for heap blocks)
      Stack:         0x00F00000-0x01000000  (1MB, grows down from STACK_BASE)
@@ -51,23 +51,32 @@ void FreeAlloc(uint32_t addr) {
    shared pages, giving ~50x address space savings for small allocations. */
 
 /* Commit pages covering [addr, addr+size). Skips already-committed pages.
-   When a ProcessSlot overlay is active, check the slot's own bitmap rather than
-   global memory — otherwise parent process pages shadow the commit check. */
+   Uses HasCommittedRegion() which checks actual committed regions only —
+   NOT DLL slot-0 aliases. DLL aliases map (dll_base & 0x01FFFFFF) back to
+   DLL .text/.data, so IsValid() returns true for heap addresses that shadow
+   a DLL alias (e.g. heap 0x00C12000 aliased to webview.dll 0x10C12000).
+   Without this, the allocator skips committing the page, and subsequent
+   memset/Translate writes to the DLL's code pages instead of the heap. */
 void CommitPages(EmulatedMemory& mem, uint32_t addr, uint32_t size) {
     for (uint32_t p = addr & ~0xFFFu; p < addr + size; p += 0x1000) {
-        if (EmulatedMemory::process_slot && p < ProcessSlot::SLOT_SIZE) {
-            if (!EmulatedMemory::process_slot->IsPageCommitted(p))
-                mem.Alloc(p, 0x1000);
-        } else {
-            if (!mem.IsValid(p)) mem.Alloc(p, 0x1000);
-        }
+        if (!mem.HasCommittedRegion(p))
+            mem.Alloc(p, 0x1000);
     }
 }
 
 /* Get the appropriate allocator counter for the current process context.
    Child processes (with active ProcessSlot) use per-process counters to avoid
    address overlap with the parent's allocations. */
+/* Kernel heap counters — used by driver threads (lpcd.dll, dcomssd.dll).
+   Allocated above 0x02000000 (shared DLL space) so they don't conflict
+   with user process ProcessSlot overlays on slot-0. On real WinCE,
+   device.exe has its own slot — this is the equivalent. */
+static std::atomic<uint32_t> g_kernel_heap{0x30000000};
+static std::atomic<uint32_t> g_kernel_malloc{0x32000000};
+
 std::atomic<uint32_t>& GetHeapCounter(std::atomic<uint32_t>& global_counter) {
+    if (t_ctx && t_ctx->is_kernel_thread)
+        return g_kernel_heap;
     auto* slot = EmulatedMemory::process_slot;
     if (slot && slot->has_own_allocators)
         return slot->proc_heap_counter;
@@ -75,6 +84,8 @@ std::atomic<uint32_t>& GetHeapCounter(std::atomic<uint32_t>& global_counter) {
 }
 
 std::atomic<uint32_t>& GetMallocCounter(std::atomic<uint32_t>& global_counter) {
+    if (t_ctx && t_ctx->is_kernel_thread)
+        return g_kernel_malloc;
     auto* slot = EmulatedMemory::process_slot;
     if (slot && slot->has_own_allocators)
         return slot->proc_malloc_counter;
@@ -176,8 +187,6 @@ void Win32Thunks::RegisterMemoryHandlers() {
         static bool initialized = false;
         if (!initialized) {
             mem.Alloc(FAKE_PROCESS_HEAP, 0x1000);
-            /* Fill with plausible heap metadata (zeroed is fine for most
-               validation checks — the important thing is it's readable). */
             mem.Write32(FAKE_PROCESS_HEAP, 0x48454150); /* "HEAP" signature */
             mem.Write32(FAKE_PROCESS_HEAP + 4, 0x00C00000); /* base addr */
             mem.Write32(FAKE_PROCESS_HEAP + 8, 0x00300000); /* max size */
@@ -209,8 +218,6 @@ void Win32Thunks::RegisterMemoryHandlers() {
     Thunk("HeapAlloc", 46, heapAllocImpl);
     Thunk("HeapAllocTrace", 20, heapAllocImpl);
     Thunk("HeapCreate", 44, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        /* Return a valid pointer to a fake heap structure so ARM code
-           that dereferences heap handles doesn't crash. */
         constexpr uint32_t HEAP_STRUCT_BASE = 0x00BF1000;
         constexpr uint32_t HEAP_STRUCT_SIZE = 0x100;
         static std::atomic<uint32_t> next_offset{0};

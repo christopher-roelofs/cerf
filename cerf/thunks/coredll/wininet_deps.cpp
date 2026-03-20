@@ -234,7 +234,11 @@ void Win32Thunks::RegisterWininetDepsHandlers() {
     Thunk("PostThreadMessageW", 290, [](uint32_t* regs, EmulatedMemory&) -> bool {
         DWORD tid = regs[0]; UINT msg = regs[1];
         WPARAM wp = (WPARAM)regs[2]; LPARAM lp = (LPARAM)(int32_t)regs[3];
-        regs[0] = ::PostThreadMessageW(tid, msg, wp, lp);
+        BOOL result = ::PostThreadMessageW(tid, msg, wp, lp);
+        DWORD err = result ? 0 : GetLastError();
+        LOG(API, "[API] PostThreadMessageW(tid=%u, msg=0x%04X, wP=0x%X, lP=0x%X) -> %d (err=%lu)\n",
+            tid, msg, wp, lp, result, err);
+        regs[0] = result;
         return true;
     });
 

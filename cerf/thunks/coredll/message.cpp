@@ -126,7 +126,7 @@ void Win32Thunks::RegisterMessageHandlers() {
            SHCreateExplorerInstance directly via main_callback_executor.) */
         auto it = hwnd_wndproc_map.find(hwnd);
         if (it != hwnd_wndproc_map.end() && callback_executor) {
-            if (message == WM_CHAR || message == WM_KEYDOWN || message == WM_LBUTTONDOWN) {
+            if (message == WM_CHAR || message == WM_KEYDOWN || message == WM_LBUTTONDOWN || message == 0x1475) {
                 wchar_t cls[64] = {};
                 GetClassNameW(hwnd, cls, 64);
                 LOG(API, "[API] Dispatch->ARM: msg=0x%04X hwnd=0x%p class='%ls' wP=0x%X lP=0x%X\n",

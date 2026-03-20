@@ -88,6 +88,18 @@ void Win32Thunks::RegisterCrtExtraHandlers() {
         regs[0] = dst;
         return true;
     });
+    /* _itoa(value, str, radix) -> char* str */
+    Thunk("_itoa", 1025, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        int val = (int)regs[0];
+        uint32_t dst = regs[1];
+        int radix = (int)regs[2];
+        char buf[36];
+        _itoa(val, buf, radix);
+        uint8_t* p = mem.Translate(dst);
+        if (p) strcpy((char*)p, buf);
+        regs[0] = dst;
+        return true;
+    });
     /* vsprintf(buf, format, va_list) -> int chars written
        On ARM, va_list is a pointer to args in emulated memory */
     Thunk("vsprintf", 1146, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

@@ -115,9 +115,10 @@ int main(int argc, char* argv[]) {
     cpu.traces = &trace_mgr;
     thunks.SetTraceManager(&trace_mgr);
 
-    /* Activate traces for the main EXE (it's loaded by PELoader::Load, not LoadArmDll,
-       so the OnDllLoad hook in dll_loader.cpp doesn't fire for it) */
+    /* Activate traces for the main EXE and all DLLs loaded during PE dependency
+       resolution. These loaded before SetTraceManager, so OnDllLoad didn't fire. */
     trace_mgr.OnDllLoad(exe_path, exe_path, pe_info.image_base);
+    thunks.ActivateTracesForLoadedDlls(trace_mgr);
 
     /* Set up initial register state */
     cpu.r[REG_SP] = stack_top;
@@ -206,6 +207,20 @@ int main(int argc, char* argv[]) {
 
     /* Call DllMain for any loaded ARM DLLs (must happen after callback_executor is set up) */
     thunks.CallDllEntryPoints();
+
+    /* Wire up device manager's callback executor for ARM driver calls */
+    thunks.device_mgr.SetCallbackExecutor(
+        [](uint32_t addr, uint32_t* args, int nargs) -> uint32_t {
+            if (!t_ctx || !t_ctx->callback_executor) return 0;
+            return t_ctx->callback_executor(addr, args, nargs);
+        });
+
+    /* Load WinCE built-in device services (from HKLM\Drivers\BuiltIn\*).
+       On real WinCE, device.exe reads this registry key at boot and loads
+       each service DLL in order. Services include LPCD (LPC driver, order 7),
+       DCOMSSD (DCOM service, order 8), NDIS, etc. Must run AFTER
+       callback_executor and DllMain are ready. */
+    thunks.StartBootServices(mem);
 
     ApplyRuntimePatches(mem);
     LOG(EMU, "\n[EMU] Starting at 0x%08X (%s), SP=0x%08X hInst=0x%08X\n",

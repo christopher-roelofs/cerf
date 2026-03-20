@@ -23,6 +23,9 @@ void RegisterBrowserTraces(TraceManager& tm);
 void RegisterExplorerTraces(TraceManager& tm);
 void RegisterUrlmonTraces(TraceManager& tm);
 void RegisterWininetTraces(TraceManager& tm);
+void RegisterOle32Traces(TraceManager& tm);
+void RegisterRpcrt4Traces(TraceManager& tm);
+void register_traces_dcomssd(TraceManager& tm);
 
 /* Register all traces for a specific device profile */
 inline void RegisterTracesForDevice(const std::string& device, TraceManager& tm) {
@@ -36,6 +39,9 @@ inline void RegisterTracesForDevice(const std::string& device, TraceManager& tm)
         RegisterExplorerTraces(tm);
         RegisterUrlmonTraces(tm);
         RegisterWininetTraces(tm);
+        RegisterOle32Traces(tm);
+        RegisterRpcrt4Traces(tm);
+        register_traces_dcomssd(tm);
     }
     /* Future: else if (device == "wm6") { RegisterWM6Traces(tm); } */
 }

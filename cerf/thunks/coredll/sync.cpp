@@ -160,6 +160,11 @@ void Win32Thunks::RegisterSyncHandlers() {
         }
     });
     Thunk("CloseHandle", 553, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        /* Stream device driver handles — route to DeviceManager */
+        if (device_mgr.IsDeviceHandle(regs[0])) {
+            regs[0] = device_mgr.Close(regs[0]) ? 1 : 0;
+            return true;
+        }
         uint32_t fake = regs[0]; HANDLE h = UnwrapHandle(fake);
         auto* ht = GetProcessHandleTable();
         /* In a child process (ProcessSlot active), only close handles that the

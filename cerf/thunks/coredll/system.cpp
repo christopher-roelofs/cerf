@@ -47,7 +47,24 @@ void Win32Thunks::RegisterSystemHandlers() {
             return true;
         }
 
-        LOG(API, "[API]   -> unhandled (no SEH handler or setjmp buffer)\n");
+        /* 3. Unhandled exception — on real WinCE the kernel catches this at the
+           thread boundary and terminates the call (or the thread). We unwind
+           to the callback_executor boundary using the final SP/PC from
+           SehDispatch's stack walk, and return an error HRESULT. This matches
+           the kernel's behavior of catching unhandled exceptions at the
+           process/thread boundary. */
+        LOG(API, "[API]   -> unhandled exception 0x%08X, unwinding to callback boundary\n", code);
+        uint32_t hr = (code <= 0xFFFF) ? (0x80070000 | code) : code;
+        if (last_unhandled_sp) {
+            regs[0] = hr;
+            regs[13] = last_unhandled_sp;
+            regs[15] = last_unhandled_pc;
+            LOG(API, "[API]   -> resuming at SP=0x%08X PC=0x%08X R0=0x%08X\n",
+                last_unhandled_sp, last_unhandled_pc, hr);
+        } else {
+            regs[0] = hr;
+            LOG(API, "[API]   -> no unwind state, R0=0x%08X\n", hr);
+        }
         return true;
     });
     Thunk("GetSystemMetrics", 885, [this](uint32_t* regs, EmulatedMemory&) -> bool {

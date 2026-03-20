@@ -73,6 +73,25 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
                 int n = atoi(v.c_str());
                 if (n > 0) fake_total_phys = (uint32_t)n;
             }
+            /* Boot services whitelist (semicolon-separated DLL names) */
+            auto parseDllList = [](const std::string& v, std::set<std::string>& out) {
+                out.clear();
+                size_t pos = 0;
+                while (pos < v.size()) {
+                    size_t end = v.find(';', pos);
+                    if (end == std::string::npos) end = v.size();
+                    std::string dll = v.substr(pos, end - pos);
+                    while (!dll.empty() && dll.back() == ' ') dll.pop_back();
+                    while (!dll.empty() && dll.front() == ' ') dll.erase(dll.begin());
+                    if (!dll.empty()) {
+                        for (auto& c : dll) if (c >= 'A' && c <= 'Z') c += 32;
+                        out.insert(dll);
+                    }
+                    pos = end + 1;
+                }
+            };
+            if (!(v = getval("boot_services=")).empty())
+                parseDllList(v, boot_service_dlls);
         }
     }
     /* CLI override takes priority */

@@ -12,6 +12,12 @@ static bool IsThunkedDll(const std::string& dll_name) {
     return FindThunkedDll(dll_name) != nullptr;
 }
 
+/* Look up an already-loaded ARM DLL by lowercase wide name. */
+Win32Thunks::LoadedDll* Win32Thunks::FindLoadedDll(const std::wstring& name_lower) {
+    auto it = loaded_dlls.find(name_lower);
+    return it != loaded_dlls.end() ? &it->second : nullptr;
+}
+
 /* Try to find and load an ARM DLL by name.
    Returns pointer to LoadedDll if found, or nullptr.
    Searches: loaded_dlls cache, exe_dir, wince_sys_dir. */
@@ -20,9 +26,30 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
     std::wstring wlower(lower.begin(), lower.end());
 
-    /* Already loaded? */
+    /* Already loaded? On real WinCE, each process gets its own
+       DLL_PROCESS_ATTACH even for shared DLLs. If this DLL was loaded
+       exclusively by device.exe and the current (non-kernel) process hasn't
+       had DllMain yet, run it now. Essential for DLLs like WS2.dll whose
+       DllMain initializes per-process state (WSAStartup depends on it).
+       Only applies to device-loaded DLLs — main-thread DLLs already have
+       their DllMain state in global and don't need re-running. */
     auto it = loaded_dlls.find(wlower);
-    if (it != loaded_dlls.end()) return &it->second;
+    if (it != loaded_dlls.end()) {
+        LoadedDll& dll = it->second;
+        ProcessSlot* cur_slot = EmulatedMemory::process_slot;
+        if (dll.loaded_by_device && callback_executor &&
+            dll.pe_info.entry_point_rva != 0 &&
+            !dll.dllmain_called_slots.count(cur_slot)) {
+            uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
+            LOG(API, "[API] LoadArmDll: Running DllMain for device-loaded '%s' "
+                "(base=0x%08X, new process slot=%p)\n",
+                dll_name.c_str(), dll.base_addr, cur_slot);
+            uint32_t args[3] = { dll.base_addr, 1 /* DLL_PROCESS_ATTACH */, 0 };
+            callback_executor(entry, args, 3);
+            dll.dllmain_called_slots.insert(cur_slot);
+        }
+        return &dll;
+    }
 
     /* Try to find the ARM DLL file.
        Search order: wince_sys_dir first (canonical system DLLs — guaranteed
@@ -78,9 +105,24 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     }
     fclose(f);
 
+    /* PE loading (image, relocations, IAT) writes to GLOBAL (shared).
+       DllMain runs with the ORIGINAL ProcessSlot (per-process CoW).
+       During recursive LoadArmDll (InstallThunks loading dependencies),
+       process_slot is already nullptr from the parent call. We track the
+       original slot in a thread-local so recursive calls restore correctly. */
+    static thread_local ProcessSlot* s_original_slot = nullptr;
+    static thread_local int s_load_depth = 0;
+    bool is_outermost = (s_load_depth == 0);
+    if (is_outermost)
+        s_original_slot = EmulatedMemory::process_slot;
+    s_load_depth++;
+    EmulatedMemory::process_slot = nullptr;
+
     PEInfo dll_info = {};
     uint32_t entry = PELoader::LoadDll(dll_path.c_str(), mem, dll_info);
     if (entry == 0 && dll_info.image_base == 0) {
+        s_load_depth--;
+        if (is_outermost) EmulatedMemory::process_slot = s_original_slot;
         LOG(API, "[API] LoadArmDll: Failed to load ARM DLL: %s\n", dll_path.c_str());
         return nullptr;
     }
@@ -88,14 +130,10 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     LOG(API, "[API] LoadArmDll: Loaded ARM DLL '%s' at 0x%08X (exports: RVA=0x%X size=0x%X)\n",
            dll_name.c_str(), dll_info.image_base, dll_info.export_rva, dll_info.export_size);
 
-    /* Activate ARM trace points for this DLL (auto-rebase, CRC32 verification) */
     if (trace_mgr_)
         trace_mgr_->OnDllLoad(dll_name, dll_path, dll_info.image_base);
 
-    /* Register slot-0 alias so WinCE slot-masked addresses resolve to this DLL */
     mem.AddDllAlias(dll_info.image_base, dll_info.size_of_image);
-
-    /* Register writable sections for per-process copy-on-write */
     mem.RegisterDllWritableSections(dll_info.image_base, dll_info.sections);
 
     LoadedDll loaded;
@@ -105,18 +143,22 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
     loaded.native_rsrc_handle = NULL;
     loaded_dlls[wlower] = loaded;
 
-    /* Recursively install thunks for this DLL's own imports */
+    /* Install thunks in GLOBAL context (IAT is shared) */
     InstallThunks(loaded_dlls[wlower].pe_info, dll_name.c_str());
 
-    /* Call DLL entry point (DllMain) — immediately if callback_executor is
-       available (runtime LoadLibrary), otherwise queue for deferred init
-       (initial PE loading before the CPU is set up). */
+    /* Restore ORIGINAL ProcessSlot — DllMain runs per-process.
+       Even for recursive calls, DllMain gets the original slot (not nullptr). */
+    EmulatedMemory::process_slot = s_original_slot;
+    s_load_depth--;
+
+    /* DLL_PROCESS_ATTACH: per-process initialization */
     if (entry != 0 && dll_info.entry_point_rva != 0) {
         if (callback_executor) {
             LOG(API, "[API] LoadArmDll: Calling DllMain at 0x%08X (base=0x%08X, DLL_PROCESS_ATTACH) immediately\n",
                    entry, dll_info.image_base);
             uint32_t args[3] = { dll_info.image_base, 1 /* DLL_PROCESS_ATTACH */, 0 };
             uint32_t result = callback_executor(entry, args, 3);
+            loaded_dlls[wlower].dllmain_called_slots.insert(EmulatedMemory::process_slot);
             LOG(API, "[API] DllMain returned %d\n", result);
         } else {
             LOG(API, "[API] LoadArmDll: DLL has entry point at 0x%08X - queued for init\n", entry);
@@ -270,19 +312,56 @@ void Win32Thunks::InstallThunks(PEInfo& info, const char* module_name) {
     }
 }
 
+void Win32Thunks::RunPerProcessDllInit() {
+    /* On real WinCE, each process gets DLL_PROCESS_ATTACH for every loaded DLL.
+       Re-run DllMain only for DLLs that were first loaded by a DIFFERENT PROCESS
+       (different ProcessSlot). DLLs loaded by the main thread (ProcessSlot=nullptr)
+       have their state in GLOBAL and are correct for all processes — re-running
+       their DllMain would corrupt the global state via CoW. */
+    ProcessSlot* cur_slot = EmulatedMemory::process_slot;
+    if (!callback_executor || !cur_slot) return;
+
+    for (auto& [name, dll] : loaded_dlls) {
+        if (dll.pe_info.entry_point_rva == 0) continue;
+        if (dll.dllmain_called_slots.count(cur_slot)) continue;
+        /* Skip DLLs loaded by the main thread (slot=nullptr in their set).
+           Their .data is in global and correct for all processes. */
+        if (dll.dllmain_called_slots.count(nullptr)) continue;
+
+        uint32_t entry = dll.base_addr + dll.pe_info.entry_point_rva;
+        LOG(API, "[API] RunPerProcessDllInit: DllMain for %ls at 0x%08X (slot=%p)\n",
+            name.c_str(), entry, cur_slot);
+        uint32_t args[3] = { dll.base_addr, 1 /* DLL_PROCESS_ATTACH */, 0 };
+        callback_executor(entry, args, 3);
+        dll.dllmain_called_slots.insert(cur_slot);
+    }
+}
+
 void Win32Thunks::CallDllEntryPoints() {
     if (!callback_executor || pending_dll_inits.empty()) return;
 
     for (auto& init : pending_dll_inits) {
         LOG(API, "[API] Calling DllMain at 0x%08X (base=0x%08X, DLL_PROCESS_ATTACH)\n",
                init.entry_point, init.base_addr);
-        /* DllMain(hinstDLL, DLL_PROCESS_ATTACH, lpvReserved)
-           R0 = hinstDLL (DLL base address)
-           R1 = fdwReason = 1 (DLL_PROCESS_ATTACH)
-           R2 = lpvReserved = 0 */
         uint32_t args[3] = { init.base_addr, 1, 0 };
         uint32_t result = callback_executor(init.entry_point, args, 3);
+        /* Record which ProcessSlot ran DllMain for this DLL */
+        for (auto& [name, dll] : loaded_dlls) {
+            if (dll.base_addr == init.base_addr) {
+                dll.dllmain_called_slots.insert(EmulatedMemory::process_slot);
+                break;
+            }
+        }
         LOG(API, "[API] DllMain returned %d\n", result);
     }
     pending_dll_inits.clear();
+}
+
+/* Retroactively activate traces for DLLs loaded before TraceManager was set.
+   Called once from main() after SetTraceManager + RegisterTracesForDevice. */
+void Win32Thunks::ActivateTracesForLoadedDlls(TraceManager& tm) {
+    for (auto& [name, dll] : loaded_dlls) {
+        std::string narrow_name(name.begin(), name.end());
+        tm.OnDllLoad(narrow_name, dll.path, dll.base_addr);
+    }
 }

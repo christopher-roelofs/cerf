@@ -28,6 +28,7 @@ bool ApiSetManager::Register(uint32_t handle, uint32_t set_id,
     }
     it->second.set_id = set_id;
     it->second.executor = std::move(executor);
+    it->second.process_slot = EmulatedMemory::process_slot;
     sets_by_id_[set_id] = handle;
     LOG(API, "[API] RegisterAPISet('%.*s', set_id=%u) -> OK\n",
         4, it->second.name.c_str(), set_id);
@@ -80,16 +81,12 @@ bool ApiSetManager::Dispatch(uint32_t set_id, uint32_t method,
     LOG(API, "[API] APISet '%.*s' dispatch: method=%u func=0x%08X\n",
         4, entry.name.c_str(), method, func_addr);
 
-    /* Call the function using the registered process's executor.
-       Args are in R0-R3 (ARM calling convention). */
-    uint32_t args[4] = { regs[0], regs[1], regs[2], regs[3] };
     /* Temporarily clear ProcessSlot so the call runs in the registering
        process's context (no overlay = main process). */
+    uint32_t args[4] = { regs[0], regs[1], regs[2], regs[3] };
     ProcessSlot* saved_slot = EmulatedMemory::process_slot;
     EmulatedMemory::process_slot = nullptr;
-
     uint32_t result = entry.executor(func_addr, args, 4);
-
     EmulatedMemory::process_slot = saved_slot;
     regs[0] = result;
     return true;

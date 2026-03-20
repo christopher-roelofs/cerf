@@ -174,6 +174,7 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     RegisterMiscMshtmlHandlers();
     RegisterDirectDrawHandlers();
     RegisterDirectDrawSurfaceHandlers();
+    RegisterKernelApiHandlers();
     CheckDuplicateThunks();
     /* WinCE UserKData page at fixed address 0xFFFFC800.
        ARM code reads GetCurrentThreadId/GetCurrentProcessId directly from here

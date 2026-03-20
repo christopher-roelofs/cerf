@@ -135,6 +135,22 @@ void Win32Thunks::SaveRegistry() {
                                 val.data.size() / 2);
                 if (!ws.empty() && ws.back() == L'\0') ws.pop_back();
                 f << "\"" << EscapeRegString(WideToNarrow(ws)) << "\"\n";
+            } else if (val.type == REG_MULTI_SZ) {
+                /* multi_sz:"str1","str2",... */
+                f << "multi_sz:";
+                const wchar_t* p = (const wchar_t*)val.data.data();
+                size_t total = val.data.size() / 2;
+                bool first = true;
+                for (size_t i = 0; i < total; ) {
+                    if (p[i] == 0) break; /* end of list */
+                    size_t len = wcslen(p + i);
+                    if (!first) f << ",";
+                    std::wstring ws(p + i, len);
+                    f << "\"" << EscapeRegString(WideToNarrow(ws)) << "\"";
+                    first = false;
+                    i += len + 1;
+                }
+                f << "\n";
             } else {
                 f << "hex:";
                 for (size_t i = 0; i < val.data.size(); i++) {

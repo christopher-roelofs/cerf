@@ -25,7 +25,13 @@ void RegisterUrlmonTraces(TraceManager& tm) {
     tm.Add(DLL, 0x10057D94, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] urlmon::CTransaction::Switch: this=0x%08X\n", r[0]);
     });
-    tm.Add(DLL, 0x10045D00, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+    tm.Add(DLL, 0x10045D00, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        /* CBinding at r[0]. Check binding flags. _fBindToObject at some offset,
+           _grfBINDF at another. Let me read some key offsets: */
+        uint32_t this_ptr = r[0];
+        /* From IDA analysis of CBinding::ReportData:
+           _OperationState at this+0x50 (approximate)
+           _grfBINDF stored in _grfInternalFlags area */
         LOG(TRACE, "[TRACE] urlmon::CBinding::StartBinding: this=0x%08X url=0x%08X\n", r[0], r[1]);
     });
     tm.Add(DLL, 0x1004AB08, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
@@ -40,7 +46,8 @@ void RegisterUrlmonTraces(TraceManager& tm) {
                 url[i] = (c < 128) ? (char)c : '?';
             }
         }
-        LOG(TRACE, "[TRACE] urlmon::CINet::Start: this=0x%08X url='%s' sink=0x%08X\n", r[0], url, r[2]);
+        LOG(TRACE, "[TRACE] urlmon::CINet::Start: this=0x%08X url='%s' sink=0x%08X slot=%p\n",
+            r[0], url, r[2], EmulatedMemory::process_slot);
     });
     tm.Add(DLL, 0x1001F750, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] urlmon::CINet::Continue: this=0x%08X\n", r[0]);
@@ -54,8 +61,21 @@ void RegisterUrlmonTraces(TraceManager& tm) {
     tm.Add(DLL, 0x1002B310, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] urlmon::EmbdFilter::IsInited: this=0x%08X\n", r[0]);
     });
-    tm.Add(DLL, 0x1006D8FC, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
-        LOG(TRACE, "[TRACE] urlmon::CINetFile::INetAsyncOpen: this=0x%08X\n", r[0]);
+    tm.Add(DLL, 0x1006D8FC, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        uint32_t this_ptr = r[0];
+        /* _pwzUrl at this+0x50, _wzFileName at this+0x1FC */
+        uint32_t url_ptr = mem ? mem->Read32(this_ptr + 0x50) : 0;
+        char url[40] = {};
+        if (url_ptr && mem) {
+            for (int i = 0; i < 20; i++) {
+                uint16_t c = mem->Read16(url_ptr + i*2);
+                if (!c) break;
+                url[i] = (c < 128) ? (char)c : '?';
+            }
+        }
+        uint16_t fn0 = mem ? mem->Read16(this_ptr + 0x1FC) : 0;
+        LOG(TRACE, "[TRACE] urlmon::CINetFile::INetAsyncOpen: this=0x%08X _pwzUrl=0x%08X '%s' _wzFileName[0]=0x%04X slot=%p\n",
+            this_ptr, url_ptr, url, fn0, EmulatedMemory::process_slot);
     });
     tm.Add(DLL, 0x100224E4, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] urlmon::CINet::INetAsyncOpen: this=0x%08X\n", r[0]);
@@ -129,5 +149,85 @@ void RegisterUrlmonTraces(TraceManager& tm) {
     });
     tm.Add(DLL, 0x1004AD20, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
         LOG(TRACE, "[TRACE] urlmon::CallOnStopBinding: this=0x%08X hr=0x%08X\n", r[0], r[1]);
+    });
+
+    /* IsApartmentThread: returns this->_dwThreadId == GetCurrentThreadId()
+       Critical gate for async callback dispatch. */
+    tm.Add(DLL, 0x10062B4C, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        uint32_t this_ptr = r[0];
+        /* _dwThreadId offset in CTransaction — need to find correct offset.
+           Try common offsets. The struct has CRefCount, vtable, etc. */
+        uint32_t stored_tid = mem ? mem->Read32(this_ptr + 0x88) : 0;
+        /* Also check what ARM GetCurrentThreadId would return (from KData) */
+        uint32_t arm_tid = mem ? mem->Read32(0xFFFFC804) : 0;
+        LOG(TRACE, "[TRACE] urlmon::IsApartmentThread: this=0x%08X stored_tid=%u arm_tid=%u os_tid=%u kdata=%p\n",
+            this_ptr, stored_tid, arm_tid, GetCurrentThreadId(),
+            EmulatedMemory::kdata_override);
+    });
+
+    /* OnINetCallback: processes queued async packets */
+    tm.Add(DLL, 0x1005E39C, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] urlmon::OnINetCallback: this=0x%08X fFromMsgQueue=%d\n", r[0], r[1]);
+    });
+
+    /* ReadDataHere: actual file/network data read */
+    tm.Add(DLL, 0x10025F04, [](uint32_t, const uint32_t* r, EmulatedMemory*) {
+        LOG(TRACE, "[TRACE] urlmon::ReadDataHere: this=0x%08X buf=0x%08X cbRead=%u\n", r[0], r[1], r[2]);
+    });
+
+    /* GetMimeFromExt: looks up MIME type for file extension */
+    tm.Add(DLL, 0x1001665C, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        char ext[20] = {};
+        if (r[0] && mem) {
+            for (int i = 0; i < 10; i++) {
+                uint16_t c = mem->Read16(r[0] + i*2);
+                if (!c) break;
+                ext[i] = (c < 128) ? (char)c : '?';
+            }
+        }
+        LOG(TRACE, "[TRACE] urlmon::GetMimeFromExt: ext='%s'\n", ext);
+    });
+
+    /* After ReportNotification(CACHEFILENAME) in INetAsyncOpen */
+    tm.Add(DLL, 0x1006DA20, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        uint32_t sp = r[13];
+        uint32_t this_ptr = mem ? mem->Read32(sp + 0x5A8) : 0;
+        LOG(TRACE, "[TRACE] urlmon::INetAsyncOpen: after CACHEFILENAME report this=0x%08X\n", this_ptr);
+    });
+
+    /* Check _pCTrans before ReportData in INetAsyncOpen */
+    tm.Add(DLL, 0x1006DAE8, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        uint32_t sp = r[13];
+        uint32_t this_ptr = mem ? mem->Read32(sp + 0x5A8) : 0;
+        uint32_t pCTrans = mem ? mem->Read32(this_ptr + 0x8C) : 0;
+        LOG(TRACE, "[TRACE] urlmon::INetAsyncOpen: _pCTrans check this=0x%08X _pCTrans=0x%08X\n",
+            this_ptr, pCTrans);
+    });
+
+    /* After ReportNotification(SENDREQUEST) returns inside INetAsyncOpen.
+       R0 still has 'this' from the LDR at 0x1006D954. */
+    tm.Add(DLL, 0x1006D954, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        /* 'this' is on stack at [SP+0x5AC-4] but we can read it from the instruction:
+           LDR R0, [SP,#0x5AC+this] at 0x1006D954 loads into R0 */
+        uint32_t sp = r[13];
+        uint32_t this_ptr = mem ? mem->Read32(sp + 0x5A8) : 0;
+        LOG(TRACE, "[TRACE] urlmon::INetAsyncOpen@0x1006D954: this=0x%08X ReportNotification returned\n", this_ptr);
+    });
+
+    /* GetObjectNameW: converts URL to file path */
+    tm.Add(DLL, 0x1006EEE8, [](uint32_t, const uint32_t* r, EmulatedMemory* mem) {
+        uint32_t this_ptr = r[0];
+        uint32_t url_ptr = mem ? mem->Read32(this_ptr + 0x50) : 0;
+        uint16_t fn0 = mem ? mem->Read16(this_ptr + 0x1FC) : 0;
+        char url[40] = {};
+        if (url_ptr && mem) {
+            for (int i = 0; i < 30; i++) {
+                uint16_t c = mem->Read16(url_ptr + i*2);
+                if (!c) break;
+                url[i] = (c < 128) ? (char)c : '?';
+            }
+        }
+        LOG(TRACE, "[TRACE] urlmon::GetObjectNameW: this=0x%08X _pwzUrl='%s' _wzFileName[0]=0x%04X\n",
+            this_ptr, url, fn0);
     });
 }
