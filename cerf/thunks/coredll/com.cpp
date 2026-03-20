@@ -4,6 +4,7 @@
    WinCE coredll re-exports COM functions from ole32. We forward these
    to the real ARM ole32.dll so its internal state (TLS, apartments) is correct. */
 #include "../win32_thunks.h"
+#include "../handle_table.h"
 #include "../../log.h"
 #include "../../loader/pe_loader.h"
 #include <cstdio>
@@ -186,16 +187,31 @@ void Win32Thunks::RegisterComHandlers() {
     });
     ThunkOrdinal("RegisterTaskBarEx", 1506);
     thunk_handlers["RegisterTaskBarEx"] = thunk_handlers["RegisterTaskBar"];
+    /* SignalStarted: real implementation for HKLM\init boot sequence.
+       Each launched process calls SignalStarted(dwOrder) after init is complete.
+       This unblocks processes whose DependXX entries reference that order. */
     Thunk("SignalStarted", 639, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] SignalStarted(0x%08X) -> stub\n", regs[0]);
+        uint32_t order = regs[0];
+        LOG(API, "[API] SignalStarted(%u)\n", order);
+        /* Create/set a named event that ProcessInitHive waits on */
+        wchar_t event_name[64];
+        swprintf(event_name, 64, L"CerfInitDone_%u", order);
+        HANDLE h = CreateEventW(NULL, TRUE, FALSE, event_name);
+        if (h) { SetEvent(h); CloseHandle(h); }
         regs[0] = 0; return true;
     });
-    Thunk("OpenEventW", 1496, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* OpenEventW(dwDesiredAccess, bInheritHandle, lpName) — name is in R2 but
-           WinCE often passes NULL name (unnamed events). Return NULL to indicate
-           event doesn't exist yet (caller will CreateEventW). */
-        LOG(API, "[API] OpenEventW(access=0x%X, inherit=%d) -> 0 (stub)\n", regs[0], regs[1]);
-        regs[0] = 0; return true;
+    Thunk("OpenEventW", 1496, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* OpenEventW(dwDesiredAccess, bInheritHandle, lpName) — name in R2 */
+        LPCWSTR name = NULL;
+        std::wstring wname;
+        if (regs[2]) { wname = ReadWStringFromEmu(mem, regs[2]); name = wname.c_str(); }
+        HANDLE h = name ? OpenEventW(regs[0], regs[1], name) : NULL;
+        LOG(API, "[API] OpenEventW(access=0x%X, name='%ls') -> %p\n",
+            regs[0], name ? name : L"(null)", h);
+        regs[0] = (uint32_t)(uintptr_t)h;
+        auto* ht = GetProcessHandleTable();
+        if (ht && h) ht->Track(h);
+        return true;
     });
     Thunk("SetProcPermissions", 611, stub1("SetProcPermissions"));
     Thunk("GetCurrentPermissions", 612, [](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -210,10 +226,15 @@ void Win32Thunks::RegisterComHandlers() {
         return true;
     });
     Thunk("CompactAllHeaps", 54, stub0("CompactAllHeaps"));
-    Thunk("MapCallerPtr", 1602, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* MapCallerPtr just returns the pointer unchanged in our single-process model */
-        LOG(API, "[API] MapCallerPtr(ptr=0x%08X, size=%u) -> 0x%08X\n", regs[0], regs[1], regs[0]);
-        return true; /* regs[0] already contains the pointer */
+    Thunk("MapCallerPtr", 1602, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t ptr = regs[0];
+        if (ptr && !mem.IsValid(ptr)) {
+            LOG(API, "[API] MapCallerPtr(ptr=0x%08X, size=%u) -> 0 (invalid)\n", ptr, regs[1]);
+            regs[0] = 0;
+            return true;
+        }
+        LOG(API, "[API] MapCallerPtr(ptr=0x%08X, size=%u) -> 0x%08X\n", ptr, regs[1], ptr);
+        return true;
     });
     /* GetExitCodeThread: registered in process.cpp */
     Thunk("GetThreadPriority", 515, [](uint32_t* regs, EmulatedMemory&) -> bool {

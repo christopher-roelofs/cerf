@@ -2,8 +2,13 @@
 #include <windows.h>
 #include <cstdint>
 #include <cstring>
+#include <atomic>
+#include <algorithm>
 #include <unordered_map>
 #include <vector>
+
+/* Global fake PID counter for per-process identification */
+inline std::atomic<uint32_t> g_next_fake_pid{100};
 
 /* Writable section range in a loaded DLL (for copy-on-write tracking) */
 struct DllWritableSection {
@@ -50,6 +55,7 @@ struct ProcessSlot {
                                              MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         }
         memset(page_bitmap, 0, sizeof(page_bitmap));
+        fake_pid = g_next_fake_pid.fetch_add(1);
     }
     ~ProcessSlot() {
         if (buffer) VirtualFree(buffer, 0, MEM_RELEASE);
@@ -111,6 +117,22 @@ struct ProcessSlot {
             dll_writable_sections.push_back(s);
     }
 
+    /* Pre-copy all DLL writable sections into this process's private overlay.
+       Equivalent to WinCE kernel loader.c CopyRegions: each process gets a full
+       copy of R/W DLL sections at load time. global_page_fn(page_addr) must return
+       the host pointer to the shared (global) page content. */
+    template<typename Fn>
+    void CopyDllWritableSections(Fn global_page_fn) {
+        for (auto& s : dll_writable_sections) {
+            uint32_t pg = s.start & ~(PAGE_SIZE - 1);
+            uint32_t end = (s.start + s.size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            for (; pg < end; pg += PAGE_SIZE) {
+                uint8_t* g = global_page_fn(pg);
+                if (g) CopyOnWrite(pg, g);
+            }
+        }
+    }
+
     /* Check if an address falls within a DLL writable section. */
     bool IsDllWritableAddr(uint32_t addr) const {
         for (auto& s : dll_writable_sections)
@@ -153,6 +175,25 @@ struct ProcessSlot {
         dll_overlay.clear();
     }
 
+    /* Free private overlay pages for a specific DLL (called on FreeLibrary). */
+    void FreeDllOverlayPages(uint32_t dll_base, uint32_t dll_size) {
+        uint32_t pg = dll_base & ~(PAGE_SIZE - 1);
+        uint32_t end = (dll_base + dll_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+        for (; pg < end; pg += PAGE_SIZE) {
+            auto it = dll_overlay.find(pg);
+            if (it != dll_overlay.end()) {
+                VirtualFree(it->second, 0, MEM_RELEASE);
+                dll_overlay.erase(it);
+            }
+        }
+        dll_writable_sections.erase(
+            std::remove_if(dll_writable_sections.begin(), dll_writable_sections.end(),
+                [dll_base, dll_size](const DllWritableSection& s) {
+                    return s.start >= dll_base && s.start < dll_base + dll_size;
+                }),
+            dll_writable_sections.end());
+    }
+
     /* Registered writable sections across all DLLs */
     std::vector<DllWritableSection> dll_writable_sections;
 
@@ -162,6 +203,42 @@ struct ProcessSlot {
     std::atomic<uint32_t> proc_heap_counter{0x00C00000};
     std::atomic<uint32_t> proc_malloc_counter{0x01100000};
     bool has_own_allocators = false;
+    uint32_t fake_pid = 0;           /* unique emulated PID */
+    uint32_t proc_struct_addr = 0;   /* address of fake WinCE PROCESS struct in emu memory */
+
+    /* Per-process TLS bitmask (bits 0-3 reserved by WinCE = 0x0F) */
+    std::atomic<uint32_t> tls_low_used{0x0F};   /* slots 0-31 */
+    std::atomic<uint32_t> tls_high_used{0};      /* slots 32-63 */
+
+    /* Allocate a TLS slot (CAS loop, matches real WinCE SC_TlsCall). Returns 0-63 or -1. */
+    int AllocTlsSlot() {
+        uint32_t old_val = tls_low_used.load();
+        while (true) {
+            uint32_t avail = ~old_val;
+            if (!avail) break;
+            unsigned long bit = 0;
+            for (uint32_t tmp = avail; !(tmp & 1); tmp >>= 1) bit++;
+            if (tls_low_used.compare_exchange_weak(old_val, old_val | (1u << bit)))
+                return (int)bit;
+        }
+        old_val = tls_high_used.load();
+        while (true) {
+            uint32_t avail = ~old_val;
+            if (!avail) return -1;
+            unsigned long bit = 0;
+            for (uint32_t tmp = avail; !(tmp & 1); tmp >>= 1) bit++;
+            if (tls_high_used.compare_exchange_weak(old_val, old_val | (1u << bit)))
+                return 32 + (int)bit;
+        }
+    }
+
+    void FreeTlsSlot(int slot) {
+        if (slot < 0 || slot >= 64) return;
+        if (slot < 32)
+            tls_low_used.fetch_and(~(1u << slot));
+        else
+            tls_high_used.fetch_and(~(1u << (slot - 32)));
+    }
 
 private:
     /* Private copies of DLL data pages: page_addr → host buffer */

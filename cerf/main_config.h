@@ -6,6 +6,7 @@ struct CerfConfig {
     const char* exe_path = nullptr;
     const char* device_override = nullptr;
     bool trace = false;
+    bool no_init = false;  /* --no-init: skip HKLM\init boot sequence */
     bool explicit_log = false;
     const char* log_file = nullptr;
     bool flush_outputs = false;

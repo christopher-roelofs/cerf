@@ -2,6 +2,10 @@
 /* DLL loader and resource types — split from win32_thunks.h.
    Included by win32_thunks.h; do not include directly. */
 
+    /* Loader lock: protects loaded_dlls map, PE loading, and InstallThunks.
+       Recursive because InstallThunks -> LoadArmDll for dependencies. */
+    std::recursive_mutex dll_load_mutex;
+
     struct LoadedDll {
         std::string path;
         uint32_t base_addr;
@@ -9,6 +13,8 @@
         HMODULE native_rsrc_handle;
         /* Tracks which ProcessSlots have received DLL_PROCESS_ATTACH. */
         std::set<ProcessSlot*> dllmain_called_slots;
+        /* Per-process reference count (WinCE Module.refcnt[MAX_PROCESSES]). */
+        std::map<ProcessSlot*, int> refcnt;
         /* True if this DLL was first loaded by device.exe's boot services.
            Device.exe DLLs don't fire DLL_THREAD_ATTACH on other processes' threads. */
         bool loaded_by_device = false;

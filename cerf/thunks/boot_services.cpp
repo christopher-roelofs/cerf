@@ -145,6 +145,9 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
             /* Create device.exe's ProcessSlot — per-process DLL isolation */
             ProcessSlot slot;
             slot.RegisterWritableSections(info->mem->dll_writable_sections);
+            slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
+                return info->mem->TranslateGlobal(pg);
+            });
             EmulatedMemory::process_slot = &slot;
 
             /* Set up ARM CPU for this process — stack, thunk handler, executor.

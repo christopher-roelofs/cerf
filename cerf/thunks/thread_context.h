@@ -34,8 +34,16 @@ struct ThreadContext {
 /* Current thread's context. Set at thread start, never null during ARM execution. */
 extern thread_local ThreadContext* t_ctx;
 
+/* Per-thread emulated hInstance — each process has its own image base.
+   GetModuleHandleW(NULL) returns this. Set in LaunchArmChildProcess. */
+extern thread_local uint32_t t_emu_hinstance;
+
 /* Thread index counter for allocating per-thread resources. */
 extern std::atomic<int> g_next_thread_index;
+
+/* Shared command-line page counter — each child process gets a unique page
+   so command-line strings don't collide in emulated memory. */
+extern std::atomic<uint32_t> g_cmdline_page;
 
 /* Child process thread tracking — main thread waits for these before exiting. */
 void RegisterChildThread(HANDLE hThread);
@@ -58,3 +66,9 @@ void MakeCallbackExecutor(ThreadContext* ctx, EmulatedMemory& mem,
 /* Create a lazy ARM context for the current (non-ARM) thread.
    Used when COM/OLE threads own windows with ARM WndProcs. */
 void EnsureLazyArmContext(EmulatedMemory& mem, Win32Thunks* thunks);
+
+/* Populate a fake WinCE Process struct in emulated memory.
+   Writes all fields that ARM user-mode DLLs read directly. */
+void PopulateProcessStruct(EmulatedMemory& mem, uint32_t addr,
+    uint32_t procnum, uint32_t fake_pid,
+    uint32_t image_base, const char* proc_name);

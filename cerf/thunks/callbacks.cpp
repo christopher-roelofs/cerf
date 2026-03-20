@@ -22,6 +22,7 @@ std::map<HWND, uint32_t> Win32Thunks::hwnd_dlgproc_map;
 uint32_t Win32Thunks::pending_arm_dlgproc = 0;
 std::map<HWND, uint32_t> Win32Thunks::hwnd_wce_style_map;
 std::map<HWND, uint32_t> Win32Thunks::hwnd_wce_exstyle_map;
+std::map<HWND, ProcessSlot*> Win32Thunks::hwnd_slot_map;
 thread_local uint32_t Win32Thunks::tls_pending_wce_style = 0;
 thread_local uint32_t Win32Thunks::tls_pending_wce_exstyle = 0;
 INT_PTR Win32Thunks::modal_dlg_result = 0;
@@ -41,7 +42,8 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         if (!has_arm_proc) {
             wchar_t cls_name[256] = {};
             GetClassNameW(hwnd, cls_name, 256);
-            has_arm_proc = (s_instance->arm_wndprocs.count(cls_name) > 0);
+            has_arm_proc = (s_instance->arm_wndprocs.count(cls_name) > 0
+                            && !s_instance->arm_wndprocs[cls_name].empty());
         }
         if (has_arm_proc)
             EnsureLazyArmContext(s_instance->mem, s_instance);
@@ -56,8 +58,17 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         wchar_t cls_name[256] = {};
         GetClassNameW(hwnd, cls_name, 256);
         auto cls_it = s_instance->arm_wndprocs.find(cls_name);
-        if (cls_it != s_instance->arm_wndprocs.end()) {
-            hwnd_wndproc_map[hwnd] = cls_it->second;
+        if (cls_it != s_instance->arm_wndprocs.end() && !cls_it->second.empty()) {
+            /* Resolve WndProc: try window owner's slot, then current thread's slot */
+            auto& slot_map = cls_it->second;
+            ProcessSlot* owner = nullptr;
+            auto slot_it2 = hwnd_slot_map.find(hwnd);
+            if (slot_it2 != hwnd_slot_map.end()) owner = slot_it2->second;
+            auto sit = slot_map.find(owner);
+            if (sit == slot_map.end())
+                sit = slot_map.find(EmulatedMemory::process_slot);
+            uint32_t wp = (sit != slot_map.end()) ? sit->second : slot_map.begin()->second;
+            hwnd_wndproc_map[hwnd] = wp;
             it = hwnd_wndproc_map.find(hwnd);
         } else {
             if (msg == WM_CREATE || msg == WM_NCCREATE) {
@@ -272,7 +283,17 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         (uint32_t)lParam
     };
 
+    /* Switch to the window owner's ProcessSlot for cross-process dispatch.
+       A window created by process A may receive messages on process B's thread
+       (SendMessage). The ARM WndProc must see process A's slot-0 overlay. */
+    ProcessSlot* saved_slot = EmulatedMemory::process_slot;
+    auto slot_it = hwnd_slot_map.find(hwnd);
+    if (slot_it != hwnd_slot_map.end() && slot_it->second != saved_slot)
+        EmulatedMemory::process_slot = slot_it->second;
+
     uint32_t result = s_instance->callback_executor(arm_wndproc, args, 4);
+
+    EmulatedMemory::process_slot = saved_slot;
 
     EmuWndProc_LogPostDispatch(hwnd, msg, result, s_instance->mem);
 

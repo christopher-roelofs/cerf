@@ -66,14 +66,14 @@ void Win32Thunks::RegisterFileHandlers() {
             h = CreateFileW(host_path.c_str(), access, SHARE_RW, NULL, creation, flags, NULL);
         }
         regs[0] = WrapHandle(h);
-        if (h == INVALID_HANDLE_VALUE)
+        if (h == INVALID_HANDLE_VALUE) {
             LOG(API, "[API] CreateFileW('%ls', acc=0x%X, share=0x%X, creat=%u, flags=0x%X) -> FAILED err=%lu\n",
                 wce_path.c_str(), access, share, creation, flags, GetLastError());
-        else
+        } else {
             LOG(API, "[API] CreateFileW('%ls') -> handle=0x%08X\n", wce_path.c_str(), regs[0]);
-            /* Track handle for per-process cleanup */
             auto* ht = GetProcessHandleTable();
-            if (ht) ht->Track((HANDLE)(uintptr_t)regs[0]);
+            if (ht) ht->Track(h); /* Track NATIVE handle, not fake */
+        }
         return true;
     });
     Thunk("ReadFile", 170, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

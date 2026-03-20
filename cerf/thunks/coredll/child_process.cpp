@@ -61,10 +61,15 @@ void Win32Thunks::RegisterChildProcessHandler() {
 
                     /* Create per-process virtual address space */
                     ProcessSlot slot;
+                    slot.has_own_allocators = true;
                     if (!slot.buffer) {
                         LOG(API, "[API] CreateProcessW: ProcessSlot alloc failed\n");
                         delete cpi; t_ctx = nullptr; return 1;
                     }
+                    slot.RegisterWritableSections(cpi->mem->dll_writable_sections);
+                    slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
+                        return cpi->mem->TranslateGlobal(pg);
+                    });
                     EmulatedMemory::process_slot = &slot;
 
                     /* Load PE into the slot */
@@ -79,6 +84,17 @@ void Win32Thunks::RegisterChildProcessHandler() {
 
                     /* Allocate per-thread stack (in the slot) */
                     uint32_t stack_top = 0x00FFFFF0;
+
+                    /* Allocate fake WinCE PROCESS struct for KData pCurPrc */
+                    {
+                        static std::atomic<uint32_t> s_next_procnum{1};
+                        uint32_t procnum = s_next_procnum.fetch_add(1);
+                        uint32_t addr = 0x3E000000 + procnum * 0x100;
+                        cpi->mem->Alloc(addr, 0x100);
+                        PopulateProcessStruct(*cpi->mem, addr, procnum,
+                            slot.fake_pid, child_pe.image_base, ctx.process_name);
+                        slot.proc_struct_addr = addr;
+                    }
 
                     /* Initialize per-thread KData */
                     InitThreadKData(&ctx, *cpi->mem, GetCurrentThreadId());
@@ -135,6 +151,7 @@ void Win32Thunks::RegisterChildProcessHandler() {
 
                     LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X\n",
                         cpu.r[REG_PC], stack_top);
+                    Win32Thunks* thunks_ptr = cpi->thunks;
                     delete cpi;
                     cpu.Run();
 
@@ -145,6 +162,7 @@ void Win32Thunks::RegisterChildProcessHandler() {
 
                     uint32_t exit_code = cpu.r[0];
                     LOG(API, "[PROC] Child process exited with code %u\n", exit_code);
+                    thunks_ptr->EraseProcessHandles(&slot);
                     EmulatedMemory::process_slot = nullptr;
                     EmulatedMemory::kdata_override = nullptr;
                     t_ctx = nullptr;

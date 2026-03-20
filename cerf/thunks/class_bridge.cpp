@@ -1,4 +1,5 @@
 #include "class_bridge.h"
+#include "../cpu/mem.h"
 #include <algorithm>
 
 std::wstring ClassBridge::NormalizeName(const std::wstring& name) {
@@ -10,18 +11,36 @@ std::wstring ClassBridge::NormalizeName(const std::wstring& name) {
 /* --- Class registration --- */
 
 void ClassBridge::RegisterClass(const std::wstring& className, const ArmClassInfo& info) {
-    class_map_[NormalizeName(className)] = info;
+    class_map_[{NormalizeName(className), EmulatedMemory::process_slot}] = info;
 }
 
 const ArmClassInfo* ClassBridge::GetClassInfo(const std::wstring& className) const {
-    auto it = class_map_.find(NormalizeName(className));
-    return it != class_map_.end() ? &it->second : nullptr;
+    return GetClassInfo(className, EmulatedMemory::process_slot);
+}
+
+const ArmClassInfo* ClassBridge::GetClassInfo(const std::wstring& className, ProcessSlot* slot) const {
+    auto norm = NormalizeName(className);
+    auto it = class_map_.find({norm, slot});
+    if (it != class_map_.end()) return &it->second;
+    return nullptr;
 }
 
 const ArmClassInfo* ClassBridge::GetClassInfoForHwnd(HWND hwnd) const {
     wchar_t cls[128] = {};
     GetClassNameW(hwnd, cls, 128);
     return GetClassInfo(cls);
+}
+
+const ArmClassInfo* ClassBridge::GetClassInfoForHwnd(HWND hwnd,
+    const std::map<HWND, ProcessSlot*>& hwnd_slot_map) const
+{
+    wchar_t cls[128] = {};
+    GetClassNameW(hwnd, cls, 128);
+    /* Resolve owning slot from hwnd_slot_map */
+    ProcessSlot* owner = EmulatedMemory::process_slot;
+    auto sit = hwnd_slot_map.find(hwnd);
+    if (sit != hwnd_slot_map.end()) owner = sit->second;
+    return GetClassInfo(cls, owner);
 }
 
 /* --- Per-window state --- */

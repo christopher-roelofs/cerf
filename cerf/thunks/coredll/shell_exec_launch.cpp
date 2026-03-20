@@ -63,6 +63,12 @@ bool Win32Thunks::LaunchArmChildProcess(
             /* Register DLL writable sections for copy-on-write.
                Child process writes to DLL .data pages get private copies. */
             slot.RegisterWritableSections(cpi->mem->dll_writable_sections);
+            /* Pre-copy all DLL R/W sections per-process (WinCE CopyRegions).
+               Each process gets independent .data/.bss so CRT globals like
+               _pRawDllMain and _initterm state don't leak between processes. */
+            slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
+                return cpi->mem->TranslateGlobal(pg);
+            });
             EmulatedMemory::process_slot = &slot;
 
             /* Per-process handle table for cleanup on exit */
@@ -82,6 +88,17 @@ bool Win32Thunks::LaunchArmChildProcess(
             /* Allocate per-thread stack */
             uint32_t stack_top = 0x00FFFFF0;
 
+            /* Allocate fake WinCE PROCESS struct for KData pCurPrc */
+            {
+                static std::atomic<uint32_t> s_next_procnum{1};
+                uint32_t procnum = s_next_procnum.fetch_add(1);
+                uint32_t addr = 0x3E000000 + procnum * 0x100;
+                cpi->mem->Alloc(addr, 0x100);
+                PopulateProcessStruct(*cpi->mem, addr, procnum,
+                    slot.fake_pid, child_pe.image_base, ctx.process_name);
+                slot.proc_struct_addr = addr;
+            }
+
             /* Initialize per-thread KData */
             InitThreadKData(&ctx, *cpi->mem, GetCurrentThreadId());
             EmulatedMemory::kdata_override = ctx.kdata;
@@ -93,10 +110,12 @@ bool Win32Thunks::LaunchArmChildProcess(
             cpu.traces = cpi->thunks->GetTraceManager();
             cpu.r[REG_SP] = stack_top;
             cpu.cpsr |= 0x13;
-            cpu.thunk_handler = [thunks = cpi->thunks](
+            cpu.thunk_handler = [&cpu, thunks = cpi->thunks](
                     uint32_t addr, uint32_t* r, EmulatedMemory& m) -> bool {
                 if (addr == 0xDEADDEAD) {
                     LOG(EMU, "[EMU] Child process returned with code %d\n", r[0]);
+                    cpu.halted = true;
+                    cpu.halt_code = r[0];
                     return true;
                 }
                 if (addr == 0xCAFEC000) { r[15] = 0xCAFEC000; return true; }
@@ -106,10 +125,8 @@ bool Win32Thunks::LaunchArmChildProcess(
             MakeCallbackExecutor(&ctx, *cpi->mem, *cpi->thunks, 0xCAFEC000);
             cpi->mem->Alloc(ctx.marshal_base, 0x10000);
 
-            /* Per-process DLL_PROCESS_ATTACH: currently disabled because it
-               corrupts DLL .data state (overwriting main thread's initialization).
-               The PE/DllMain split in LoadArmDll + DLL CoW provides sufficient
-               isolation for device.exe's driver DLLs. */
+            /* Set per-thread hinstance for GetModuleHandleW(NULL) */
+            t_emu_hinstance = child_pe.image_base;
 
             cpi->thunks->InstallThunks(child_pe, ctx.process_name);
             cpi->thunks->CallDllEntryPoints();
@@ -137,8 +154,8 @@ bool Win32Thunks::LaunchArmChildProcess(
                 }
             }
 
-            /* Build command line in shared memory */
-            uint32_t cmdline_addr = 0x60003000;
+            /* Build command line — each process gets a unique page */
+            uint32_t cmdline_addr = g_cmdline_page.fetch_add(0x1000);
             cpi->mem->Alloc(cmdline_addr, 0x1000);
             for (size_t j = 0; j < cpi->cmdline.size() && j < 0x7FE; j++)
                 cpi->mem->Write16(cmdline_addr + (uint32_t)(j * 2),
@@ -170,6 +187,19 @@ bool Win32Thunks::LaunchArmChildProcess(
             Win32Thunks* thunks_ptr = cpi->thunks; /* save before delete */
             delete cpi;
             cpu.Run();
+
+            /* Pump messages to keep windows alive after the ARM entry point
+               returns. GUI apps (explorer, control.exe) create windows that need
+               ongoing message dispatch even after WinMain returns. */
+            if (cpu.halt_code == 0) {
+                LOG(API, "[PROC] %s entry returned 0, pumping messages\n",
+                    ctx.process_name);
+                MSG msg;
+                while (GetMessage(&msg, NULL, 0, 0) > 0) {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
+            }
 
             if (g_debugger) {
                 cpu.debugger = nullptr;
@@ -206,6 +236,9 @@ bool Win32Thunks::LaunchArmChildProcess(
                     ctx.callback_executor(it->first, args, 3);
                 }
             }
+
+            /* Free per-process handle map */
+            thunks_ptr->EraseProcessHandles(&slot);
 
             /* Free per-process DLL data page copies */
             slot.FreeDllOverlay();

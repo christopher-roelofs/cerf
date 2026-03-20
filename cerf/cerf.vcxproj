@@ -184,6 +184,7 @@
     <ClCompile Include="thunks\captionok.cpp" />
     <ClCompile Include="thunks\menubar.cpp" />
     <ClCompile Include="thunks\dll_loader.cpp" />
+    <ClCompile Include="thunks\dll_init.cpp" />
     <ClCompile Include="thunks\dispatch.cpp" />
     <ClCompile Include="thunks\resource_helpers.cpp" />
     <ClCompile Include="thunks\dlgproc.cpp" />
@@ -223,6 +224,7 @@
     <ClCompile Include="thunks\coredll\system.cpp" />
     <ClCompile Include="thunks\coredll\seh_dispatch.cpp" />
     <ClCompile Include="thunks\boot_services.cpp" />
+    <ClCompile Include="thunks\init_sequence.cpp" />
     <!-- lpc_manager.cpp and lpc_ioctls.cpp removed: replaced by real lpcd.dll via DeviceManager -->
     <ClCompile Include="thunks\coredll\device_io.cpp" />
     <ClCompile Include="thunks\coredll\kernel_api.cpp" />

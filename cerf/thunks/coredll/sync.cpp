@@ -119,11 +119,15 @@ void Win32Thunks::RegisterSyncHandlers() {
         regs[0] = (uint32_t)original;
         return true;
     });
-    Thunk("CreateEventW", 495, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        HANDLE h = CreateEventW(NULL, regs[1], regs[2], NULL);
+    Thunk("CreateEventW", 495, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* CreateEventW(lpSA, bManualReset, bInitialState, lpName) */
+        LPCWSTR name = NULL;
+        std::wstring wname;
+        if (regs[3]) { wname = ReadWStringFromEmu(mem, regs[3]); name = wname.c_str(); }
+        HANDLE h = CreateEventW(NULL, regs[1], regs[2], name);
         regs[0] = (uint32_t)(uintptr_t)h;
-        LOG(API, "[API] CreateEventW(manual=%d, initial=%d) -> handle=%p (arm=0x%08X)\n",
-            regs[1], regs[2], h, regs[0]);
+        LOG(API, "[API] CreateEventW(manual=%d, initial=%d, name='%ls') -> 0x%08X\n",
+            regs[1], regs[2], name ? name : L"(null)", regs[0]);
         auto* ht = GetProcessHandleTable();
         if (ht) ht->Track(h);
         return true;
@@ -183,9 +187,15 @@ void Win32Thunks::RegisterSyncHandlers() {
         if (ht) ht->Untrack(h);
         regs[0] = CloseHandle(h); RemoveHandle(fake); return true;
     });
-    Thunk("CreateMutexW", 555, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        HANDLE h = CreateMutexW(NULL, regs[1], NULL);
+    Thunk("CreateMutexW", 555, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* CreateMutexW(lpSA, bInitialOwner, lpName) — name in R2 */
+        LPCWSTR name = NULL;
+        std::wstring wname;
+        if (regs[2]) { wname = ReadWStringFromEmu(mem, regs[2]); name = wname.c_str(); }
+        HANDLE h = CreateMutexW(NULL, regs[1], name);
         regs[0] = (uint32_t)(uintptr_t)h;
+        LOG(API, "[API] CreateMutexW(initial=%d, name='%ls') -> 0x%08X\n",
+            regs[1], name ? name : L"(null)", regs[0]);
         auto* ht = GetProcessHandleTable();
         if (ht) ht->Track(h);
         return true;
@@ -193,11 +203,14 @@ void Win32Thunks::RegisterSyncHandlers() {
     Thunk("ReleaseMutex", 556, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = ReleaseMutex((HANDLE)(intptr_t)(int32_t)regs[0]); return true;
     });
-    Thunk("CreateSemaphoreW", 1238, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* CreateSemaphoreW(lpSA, lInitialCount, lMaximumCount, lpName) */
-        HANDLE h = CreateSemaphoreW(NULL, (LONG)regs[1], (LONG)regs[2], NULL);
-        LOG(API, "[API] CreateSemaphoreW(init=%d, max=%d) -> 0x%p\n",
-            (int)regs[1], (int)regs[2], h);
+    Thunk("CreateSemaphoreW", 1238, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* CreateSemaphoreW(lpSA, lInitialCount, lMaximumCount, lpName) — name in R3 */
+        LPCWSTR name = NULL;
+        std::wstring wname;
+        if (regs[3]) { wname = ReadWStringFromEmu(mem, regs[3]); name = wname.c_str(); }
+        HANDLE h = CreateSemaphoreW(NULL, (LONG)regs[1], (LONG)regs[2], name);
+        LOG(API, "[API] CreateSemaphoreW(init=%d, max=%d, name='%ls') -> 0x%p\n",
+            (int)regs[1], (int)regs[2], name ? name : L"(null)", h);
         regs[0] = (uint32_t)(uintptr_t)h;
         auto* ht = GetProcessHandleTable();
         if (ht) ht->Track(h);
@@ -241,16 +254,66 @@ void Win32Thunks::RegisterSyncHandlers() {
         }
         return true;
     });
-    /* TlsCall: allocates a TLS slot. Uses atomic counter shared across threads. */
-    Thunk("TlsCall", 520, [this](uint32_t* regs, EmulatedMemory&) -> bool {
-        uint32_t slot = next_tls_slot.fetch_add(1);
-        if (slot < 64) {
-            LOG(API, "[API] TlsCall() -> slot %u\n", slot);
-            regs[0] = slot;
+    /* TlsCall: SC_TlsCall dispatch. R0 = type (0=alloc, 1=free), R1 = slot index.
+       Per-process TLS bitmask allocation matching real WinCE SC_TlsCall. */
+    Thunk("TlsCall", 520, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* Get effective ProcessSlot (orchestrator uses a static one) */
+        ProcessSlot* slot = EmulatedMemory::process_slot;
+        if (!slot) {
+            static ProcessSlot s_orchestrator_tls;
+            slot = &s_orchestrator_tls;
+        }
+        uint32_t type = regs[0];
+        if (type == 0) {
+            /* TlsAlloc */
+            int s = slot->AllocTlsSlot();
+            if (s >= 0) {
+                LOG(API, "[API] TlsCall(alloc) -> slot %d\n", s);
+                regs[0] = (uint32_t)s;
+            } else {
+                LOG(API, "[API] TlsCall(alloc) -> TLS_OUT_OF_INDEXES\n");
+                regs[0] = 0xFFFFFFFF;
+            }
+            /* Sync bitmasks to fake Process struct in emu memory */
+            if (slot->proc_struct_addr) {
+                mem.Write32(slot->proc_struct_addr + 0x24, slot->tls_low_used.load());
+                mem.Write32(slot->proc_struct_addr + 0x28, slot->tls_high_used.load());
+            }
+        } else if (type == 1) {
+            /* TlsFree */
+            slot->FreeTlsSlot((int)regs[1]);
+            LOG(API, "[API] TlsCall(free, slot=%u)\n", regs[1]);
+            regs[0] = 1;
+            if (slot->proc_struct_addr) {
+                mem.Write32(slot->proc_struct_addr + 0x24, slot->tls_low_used.load());
+                mem.Write32(slot->proc_struct_addr + 0x28, slot->tls_high_used.load());
+            }
         } else {
-            LOG(API, "[API] TlsCall() -> 0 (out of slots)\n");
+            LOG(API, "[API] TlsCall(type=%u) -> unsupported\n", type);
             regs[0] = 0;
         }
+        return true;
+    });
+
+    Thunk("DuplicateHandle", 173, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* R0=hSrcProc, R1=hSrc, R2=hDstProc, R3=lpDst, stack: access, inherit, options */
+        HANDLE native_h = UnwrapHandle(regs[1]);
+        HANDLE dup_h = NULL;
+        BOOL ok = ::DuplicateHandle(GetCurrentProcess(), native_h,
+            GetCurrentProcess(), &dup_h,
+            ReadStackArg(regs, mem, 0), (BOOL)ReadStackArg(regs, mem, 1),
+            ReadStackArg(regs, mem, 2));
+        if (ok && dup_h) {
+            uint32_t dst_fake = WrapHandle(dup_h);
+            if (regs[3]) mem.Write32(regs[3], dst_fake);
+            if (ReadStackArg(regs, mem, 2) & DUPLICATE_CLOSE_SOURCE)
+                RemoveHandle(regs[1]);
+        } else {
+            if (regs[3]) mem.Write32(regs[3], 0);
+        }
+        LOG(API, "[API] DuplicateHandle(src=0x%08X) -> %s (dup=0x%p)\n",
+            regs[1], ok ? "OK" : "FAIL", dup_h);
+        regs[0] = ok ? 1 : 0;
         return true;
     });
 

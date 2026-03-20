@@ -111,6 +111,21 @@ void ArmCpu::Step() {
 
     if (IsThumb()) {
         uint32_t pc = r[REG_PC];
+        /* Prefetch abort handler: if PC points to unmapped memory (e.g. kernel
+           space 0x80000xxx, uninitialized _pRawDllMain = 0xFFFFFFFF), return to
+           caller instead of executing NOPs forever. Matches WinCE kernel behavior. */
+        if (!mem->Translate(pc)) {
+            LOG(EMU, "[EMU] Prefetch abort at 0x%08X (Thumb), returning to LR=0x%08X\n",
+                pc, r[REG_LR]);
+            uint32_t lr = r[REG_LR];
+            if (lr & 1) {
+                r[REG_PC] = lr & ~1u;
+            } else {
+                cpsr &= ~PSR_T;
+                r[REG_PC] = lr;
+            }
+            return;
+        }
         uint16_t insn = mem->Read16(pc);
 
         trace_buf[trace_idx % TRACE_SIZE] = { pc, insn, true, r[0], r[1], r[3], r[REG_LR] };
@@ -122,6 +137,19 @@ void ArmCpu::Step() {
         uint32_t pc = r[REG_PC];
         /* Per-DLL ARM trace points — see cerf/tracing/ for handlers */
         if (traces) traces->Check(pc, r, mem);
+        /* Prefetch abort handler (ARM mode) — see Thumb path above for details. */
+        if (!mem->Translate(pc)) {
+            LOG(EMU, "[EMU] Prefetch abort at 0x%08X (ARM), returning to LR=0x%08X\n",
+                pc, r[REG_LR]);
+            uint32_t lr = r[REG_LR];
+            if (lr & 1) {
+                cpsr |= PSR_T;
+                r[REG_PC] = lr & ~1u;
+            } else {
+                r[REG_PC] = lr;
+            }
+            return;
+        }
         uint32_t insn = mem->Read32(pc);
 
         trace_buf[trace_idx % TRACE_SIZE] = { pc, insn, false, r[0], r[1], r[3], r[REG_LR] };
@@ -150,27 +178,9 @@ void ArmCpu::Step() {
         halt_code = r[0];
     }
 
-    /* Detect execution from unmapped memory */
-    if (!halted && !mem->Translate(current_pc)) {
-        LOG(EMU, "\n[EMU] FAULT: PC at unmapped address 0x%08X!\n", current_pc);
-        LOG(EMU, "[EMU]   R0=%08X R1=%08X R2=%08X R3=%08X\n", r[0], r[1], r[2], r[3]);
-        LOG(EMU, "[EMU]   R4=%08X R5=%08X R6=%08X R7=%08X\n", r[4], r[5], r[6], r[7]);
-        LOG(EMU, "[EMU]   R8=%08X R9=%08X R10=%08X R11=%08X R12=%08X\n",
-               r[8], r[9], r[10], r[11], r[12]);
-        LOG(EMU, "[EMU]   SP=%08X LR=%08X CPSR=%08X\n", r[REG_SP], r[REG_LR], cpsr);
-        /* Dump vtable chain: if R0 looks like an object ptr, trace vtable */
-        if (r[0] && mem->Translate(r[0])) {
-            uint32_t vt = mem->Read32(r[0]);
-            LOG(EMU, "[EMU]   *R0(0x%X)=0x%X", r[0], vt);
-            if (vt && mem->Translate(vt))
-                LOG(EMU, " vt[0]=0x%X vt[1]=0x%X vt[2]=0x%X\n",
-                    mem->Read32(vt), mem->Read32(vt+4), mem->Read32(vt+8));
-            else
-                LOG(EMU, " (unmapped vtable)\n");
-        }
-        halted = true;
-        halt_code = 4;
-    }
+    /* Unmapped PC: don't halt — the prefetch abort handler at the start of
+       Step() will catch this on the next iteration and return to LR, matching
+       WinCE kernel behavior for branches to kernel space or uninitialized ptrs. */
 
     /* Detect execution from stack/non-code memory */
     if (!halted && current_pc >= 0x000F0000 && current_pc < 0x00100000) {

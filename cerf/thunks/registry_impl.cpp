@@ -108,9 +108,12 @@ void Win32Thunks::SaveRegistry() {
     std::lock_guard<std::recursive_mutex> lock(registry_mutex);
     if (registry_path.empty()) return;
 
-    std::ofstream f(registry_path);
+    /* Atomic save: write to .tmp, then rename over original.
+       Prevents registry corruption if the process is killed mid-write. */
+    std::string tmp_path = registry_path + ".tmp";
+    std::ofstream f(tmp_path);
     if (!f.is_open()) {
-        LOG(REG, "[REG] Failed to save registry to %s\n", registry_path.c_str());
+        LOG(REG, "[REG] Failed to save registry to %s\n", tmp_path.c_str());
         return;
     }
 
@@ -163,6 +166,10 @@ void Win32Thunks::SaveRegistry() {
         }
         f << "\n";
     }
+    f.close();
+    /* Atomic rename: replace original with the complete temp file */
+    std::remove(registry_path.c_str());
+    std::rename(tmp_path.c_str(), registry_path.c_str());
     LOG(REG, "[REG] Saved %zu keys to %s\n", registry.size(), registry_path.c_str());
 }
 

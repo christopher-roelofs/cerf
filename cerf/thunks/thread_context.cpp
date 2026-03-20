@@ -5,10 +5,12 @@
 #include "../log.h"
 
 thread_local ThreadContext* t_ctx = nullptr;
+thread_local uint32_t t_emu_hinstance = 0;
 thread_local uint8_t* EmulatedMemory::kdata_override = nullptr;
 thread_local ProcessSlot* EmulatedMemory::process_slot = nullptr;
 thread_local ProcessSlot* EmulatedMemory::apiset_caller_slot = nullptr;
 std::atomic<int> g_next_thread_index{0};
+std::atomic<uint32_t> g_cmdline_page{0x60000000};
 
 /* Child process thread tracking */
 static std::mutex g_child_mutex;
@@ -52,6 +54,28 @@ void WaitForChildThreads() {
     }
 }
 
+void PopulateProcessStruct(EmulatedMemory& mem, uint32_t addr,
+    uint32_t procnum, uint32_t fake_pid,
+    uint32_t image_base, const char* proc_name)
+{
+    mem.Write8(addr + 0x00, (uint8_t)procnum);     /* procnum */
+    mem.Write8(addr + 0x03, 2);                     /* bTrustLevel = OEM_CERTIFY_TRUST */
+    mem.Write32(addr + 0x08, fake_pid);             /* hProc */
+    mem.Write32(addr + 0x0C, 0);                    /* dwVMBase (0 in CERF) */
+    mem.Write32(addr + 0x14, 1u << procnum);        /* aky */
+    mem.Write32(addr + 0x18, image_base);           /* BasePtr */
+    mem.Write32(addr + 0x24, 0x0F);                 /* tlsLowUsed */
+    mem.Write32(addr + 0x28, 0x00);                 /* tlsHighUsed */
+    /* lpszProcName: write name at offset 0x40 within the 0x100 block */
+    if (proc_name && proc_name[0]) {
+        uint32_t name_addr = addr + 0x40;
+        for (int i = 0; proc_name[i] && i < 30; i++)
+            mem.Write16(name_addr + i * 2, (uint16_t)proc_name[i]);
+        mem.Write16(name_addr + (uint32_t)strlen(proc_name) * 2, 0);
+        mem.Write32(addr + 0x20, name_addr);        /* lpszProcName ptr */
+    }
+}
+
 void InitThreadKData(ThreadContext* ctx, EmulatedMemory& mem, uint32_t thread_id) {
     memset(ctx->kdata, 0, sizeof(ctx->kdata));
     /* KData layout (mapped at 0xFFFFC000-0xFFFFCFFF):
@@ -67,7 +91,24 @@ void InitThreadKData(ThreadContext* ctx, EmulatedMemory& mem, uint32_t thread_id
     *(uint32_t*)(ctx->kdata + 0x800) = tls_slot0;
     *(uint32_t*)(ctx->kdata + 0x804) = thread_id;
     *(uint32_t*)(ctx->kdata + 0x808) = thread_id;
-    *(uint32_t*)(ctx->kdata + 0x80C) = GetCurrentProcessId();
+    {
+        uint32_t pid = 1; /* orchestrator default */
+        ProcessSlot* slot = EmulatedMemory::process_slot;
+        if (slot) pid = slot->fake_pid;
+        *(uint32_t*)(ctx->kdata + 0x80C) = pid;
+    }
+    /* pCurPrc (KData+0x890) and pCurThd (KData+0x894): point to fake
+       Process/Thread structs so ARM DLLs that read these directly work.
+       SC_TlsCall reads pCurProc->tlsLowUsed (+0x24), DecRefCount reads
+       pCurProc->procnum (+0x00). */
+    {
+        ProcessSlot* slot = EmulatedMemory::process_slot;
+        uint32_t proc_addr = 0x3E000000; /* orchestrator default */
+        if (slot && slot->proc_struct_addr)
+            proc_addr = slot->proc_struct_addr;
+        *(uint32_t*)(ctx->kdata + 0x890) = proc_addr;
+        *(uint32_t*)(ctx->kdata + 0x894) = proc_addr + 0x80; /* fake Thread */
+    }
     LOG(EMU, "[EMU] InitThreadKData: tid=%u, lpvTls=0x%08X\n", thread_id, tls_slot0);
 }
 

@@ -48,10 +48,18 @@ std::string ReadStringFromEmu(EmulatedMemory& mem, uint32_t addr) {
 }
 
 /* Wrap a native 64-bit HANDLE into a safe 32-bit value for ARM code.
-   Uses a mapping table so the handle can be recovered without sign-extension issues. */
+   Uses per-process mapping tables so each process has isolated handles. */
 uint32_t Win32Thunks::WrapHandle(HANDLE h) {
     if (h == INVALID_HANDLE_VALUE) return (uint32_t)INVALID_HANDLE_VALUE;
     if (h == NULL) return 0;
+    std::lock_guard<std::mutex> lock(handle_map_mutex_);
+    ProcessSlot* slot = EmulatedMemory::process_slot;
+    if (slot) {
+        auto& state = per_process_handles_[slot];
+        uint32_t fake = state.next_fake++;
+        state.handle_map[fake] = h;
+        return fake;
+    }
     uint32_t fake = next_fake_handle++;
     handle_map[fake] = h;
     return fake;
@@ -60,6 +68,16 @@ uint32_t Win32Thunks::WrapHandle(HANDLE h) {
 HANDLE Win32Thunks::UnwrapHandle(uint32_t fake) {
     if (fake == (uint32_t)INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
     if (fake == 0) return NULL;
+    std::lock_guard<std::mutex> lock(handle_map_mutex_);
+    ProcessSlot* slot = EmulatedMemory::process_slot;
+    if (slot) {
+        auto pit = per_process_handles_.find(slot);
+        if (pit != per_process_handles_.end()) {
+            auto it = pit->second.handle_map.find(fake);
+            if (it != pit->second.handle_map.end()) return it->second;
+        }
+    }
+    /* Check global map (orchestrator handles, or pre-process handles) */
     auto it = handle_map.find(fake);
     if (it != handle_map.end()) return it->second;
     /* Not in our map — fall back to sign-extension (for handles from other APIs) */
@@ -67,7 +85,20 @@ HANDLE Win32Thunks::UnwrapHandle(uint32_t fake) {
 }
 
 void Win32Thunks::RemoveHandle(uint32_t fake) {
+    std::lock_guard<std::mutex> lock(handle_map_mutex_);
+    ProcessSlot* slot = EmulatedMemory::process_slot;
+    if (slot) {
+        auto pit = per_process_handles_.find(slot);
+        if (pit != per_process_handles_.end())
+            pit->second.handle_map.erase(fake);
+        return;
+    }
     handle_map.erase(fake);
+}
+
+void Win32Thunks::EraseProcessHandles(ProcessSlot* slot) {
+    std::lock_guard<std::mutex> lock(handle_map_mutex_);
+    per_process_handles_.erase(slot);
 }
 
 /* ---- Thunk registration infrastructure ---- */

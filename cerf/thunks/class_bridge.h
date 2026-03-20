@@ -16,6 +16,8 @@
 #include <string>
 #include <map>
 
+struct ProcessSlot; /* forward */
+
 /* WinCE GCL_* index constants.  Desktop Windows deprecates these on 64-bit
    (replaced by GCLP_*), but WinCE ARM code still uses the 32-bit indices. */
 constexpr int WINCE_GCL_WNDPROC       = -24;
@@ -55,11 +57,17 @@ public:
     /* Store ARM class info during RegisterClassW. Called BEFORE native registration. */
     void RegisterClass(const std::wstring& className, const ArmClassInfo& info);
 
-    /* Look up ARM class info by name. Returns nullptr if not found. */
+    /* Look up ARM class info by name. Tries current process slot first. */
     const ArmClassInfo* GetClassInfo(const std::wstring& className) const;
 
-    /* Look up ARM class info by HWND (resolves class name internally). */
+    /* Look up ARM class info by name for a specific slot. */
+    const ArmClassInfo* GetClassInfo(const std::wstring& className, ProcessSlot* slot) const;
+
+    /* Look up ARM class info by HWND. Uses current thread's slot. */
     const ArmClassInfo* GetClassInfoForHwnd(HWND hwnd) const;
+
+    /* Look up ARM class info by HWND with explicit slot map (resolves owning slot). */
+    const ArmClassInfo* GetClassInfoForHwnd(HWND hwnd, const std::map<HWND, ProcessSlot*>& hwnd_slot_map) const;
 
     /* --- Per-window state --- */
 
@@ -96,8 +104,9 @@ public:
     uint32_t GetArmBrush(HWND hwnd) const;
 
 private:
-    /* Per-class state, keyed by lowercase class name */
-    std::map<std::wstring, ArmClassInfo> class_map_;
+    /* Per-class state, keyed by (lowercase class name, ProcessSlot*).
+       Each process can register the same class name independently. */
+    std::map<std::pair<std::wstring, ProcessSlot*>, ArmClassInfo> class_map_;
 
     /* Per-window state, keyed by HWND */
     std::map<HWND, ArmWindowInfo> window_map_;

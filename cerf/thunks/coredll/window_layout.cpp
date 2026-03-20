@@ -81,8 +81,11 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
         uint32_t pWC = regs[2];
         LOG(API, "[API] GetClassInfoW(0x%08X, '%ls', 0x%08X)\n", regs[0], className.c_str(), pWC);
         /* Check ARM-registered classes first (case-insensitive) */
-        for (auto& [cls, proc] : arm_wndprocs) {
-            if (_wcsicmp(cls.c_str(), className.c_str()) == 0) {
+        for (auto& [cls, slot_map] : arm_wndprocs) {
+            if (_wcsicmp(cls.c_str(), className.c_str()) == 0 && !slot_map.empty()) {
+                auto sit = slot_map.find(EmulatedMemory::process_slot);
+                if (sit == slot_map.end()) continue; /* not registered by this process */
+                uint32_t proc = sit->second;
                 WNDCLASSEXW wcx = {}; wcx.cbSize = sizeof(wcx);
                 GetClassInfoExW(GetModuleHandleW(NULL), className.c_str(), &wcx);
                 if (pWC) {
@@ -121,7 +124,12 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
         regs[0] = len;
         return true;
     });
-    Thunk("UnregisterClassW", 884, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0; return true; });
+    Thunk("UnregisterClassW", 884, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring name = ReadWStringFromEmu(mem, regs[1]);
+        LOG(API, "[API] UnregisterClassW('%ls', 0x%08X) -> stub 0\n", name.c_str(), regs[0]);
+        regs[0] = 0;
+        return true;
+    });
     Thunk("CallWindowProcW", 285, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t wndproc = regs[0];
         HWND hw = (HWND)(intptr_t)(int32_t)regs[1];
@@ -266,7 +274,6 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
         regs[0] = (uint32_t)(uintptr_t)ChildWindowFromPoint((HWND)(intptr_t)(int32_t)regs[0], pt);
         return true;
     });
-    /* Caret functions (659, 662, 663 — 658/660/661 registered in misc.cpp) */
     Thunk("DestroyCaret", 659, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = DestroyCaret(); return true;
     });

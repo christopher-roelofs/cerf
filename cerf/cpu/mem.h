@@ -241,6 +241,18 @@ public:
         return Translate(addr) != nullptr;
     }
 
+    /* Translate ignoring process_slot — returns the GLOBAL (shared) host pointer.
+       Used by CopyDllWritableSections to snapshot shared DLL pages into private copies. */
+    uint8_t* TranslateGlobal(uint32_t addr) const {
+        if (kdata_override && (addr >> 12) == 0xFFFFC)
+            return kdata_override + (addr & 0xFFF);
+        for (auto& r : regions) {
+            if (addr >= r.base && addr < r.base + r.size)
+                return r.host_ptr + (addr - r.base);
+        }
+        return nullptr;
+    }
+
     /* Check if addr falls in an actual committed region (ignores DLL slot-0
        aliases and process slot overlays).  Used by allocators to decide
        whether a page needs explicit VirtualAlloc — IsValid() would return

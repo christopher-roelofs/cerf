@@ -8,6 +8,7 @@
 
 uint32_t Win32Thunks::AllocThunk(const std::string& dll, const std::string& func,
                                   uint16_t ordinal, bool by_ordinal) {
+    std::lock_guard<std::recursive_mutex> lock(thunks_mutex);
     uint32_t addr = next_thunk_addr;
     next_thunk_addr += THUNK_STRIDE;
 
@@ -39,11 +40,19 @@ uint32_t Win32Thunks::ReadStackArg(uint32_t* regs, EmulatedMemory& mem, int inde
 bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem) {
     if (t_ctx) ++t_ctx->thunk_call_count;
     /* Check if address is in thunk range */
-    auto it = thunks.find(addr);
-    if (it == thunks.end()) {
-        /* Also check addr+1 for Thumb calls */
-        it = thunks.find(addr & ~1u);
-        if (it == thunks.end()) {
+    ThunkEntry found_entry;
+    bool found = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(thunks_mutex);
+        auto it = thunks.find(addr);
+        if (it == thunks.end())
+            it = thunks.find(addr & ~1u);
+        if (it != thunks.end()) {
+            found_entry = it->second;
+            found = true;
+        }
+    }
+    if (!found) {
             /* Handle WinCE trap-based API calls (0xF000xxxx range).
                Trap index = (0xF0010000 - addr) / 4 = (api_set << 8) | method.
                api_set identifies the target (0=W32 kernel, 21=shell, etc).
@@ -125,11 +134,10 @@ bool Win32Thunks::HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem
                 regs[15] = (lr & 1) ? (lr & ~1u) : (lr & ~3u);
                 return true;
             }
-            return false;
-        }
+        return false;
     }
 
-    bool result = ExecuteThunk(it->second, regs, mem);
+    bool result = ExecuteThunk(found_entry, regs, mem);
     if (result) {
         /* Return to caller: set PC = LR */
         uint32_t lr = regs[14];

@@ -8,7 +8,8 @@
 void PrintUsage(const char* prog) {
     printf("CERF - Windows CE Runtime Foundation\n");
     printf("Emulates Windows CE ARM executables on x86 desktop Windows.\n\n");
-    printf("Usage: %s [options] <arm-wince-exe>\n\n", prog);
+    printf("Usage: %s [options] [arm-wince-exe]\n\n", prog);
+    printf("  No arguments: run HKLM\\init boot sequence only (no additional app)\n\n");
     printf("Options:\n");
     printf("  --trace                  Enable instruction tracing\n");
     printf("  --log=CATEGORIES         Enable only listed categories (comma-separated)\n");
@@ -24,6 +25,7 @@ void PrintUsage(const char* prog) {
     printf("  --os-build=N             WinCE build number (default: 1)\n");
     printf("  --os-build-date=STR      WinCE build date (default: \"Jan  1 2008\")\n");
     printf("  --fake-total-phys=N      Fake total physical RAM in bytes (0 = real)\n");
+    printf("  --no-init                Skip HKLM\\init boot sequence (direct launch)\n");
     printf("  --flush-outputs          Flush after every log write (for complete captures)\n");
     printf("  --gdb-port=PORT          Start GDB remote stub on PORT (e.g. 1234)\n");
     printf("  --quiet                  Disable all log output\n");

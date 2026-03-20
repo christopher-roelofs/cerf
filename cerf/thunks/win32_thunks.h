@@ -86,6 +86,7 @@ public:
     void RunPerProcessDllInit();
     class TraceManager* GetTraceManager() const { return trace_mgr_; }
 
+    void LoadIniConfig();
     void InitVFS(const std::string& device_override = "");
 
     /* Callback executor: executes ARM code from native context.
@@ -103,11 +104,11 @@ public:
        All 61+ call sites that use `callback_executor` now get the right executor. */
     __declspec(property(get=GetCallbackExecutor)) CallbackExecutor callback_executor;
 
-    std::atomic<uint32_t> next_tls_slot{4};  /* TLS slot allocator (0-3 reserved) */
+    /* TLS slot allocation moved to ProcessSlot::AllocTlsSlot() (per-process bitmask) */
     std::map<uint32_t, CRITICAL_SECTION*> cs_map; /* ARM CS addr -> native CS* */
     std::mutex cs_map_mutex;
 
-    std::map<std::wstring, uint32_t> arm_wndprocs;             /* class name -> ARM WndProc */
+    std::map<std::wstring, std::map<ProcessSlot*, uint32_t>> arm_wndprocs; /* class name -> {slot -> ARM WndProc} */
     static std::map<HWND, uint32_t> hwnd_wndproc_map;          /* HWND -> ARM WndProc */
     static std::map<HWND, WNDPROC> hwnd_native_wndproc_map;   /* HWND -> saved native WndProc before EmuWndProc subclass */
     static std::map<UINT_PTR, uint32_t> arm_timer_callbacks;   /* timer ID -> ARM TIMERPROC */
@@ -117,6 +118,7 @@ public:
        windows to WS_POPUP on desktop, but ARM code needs to see original styles. */
     static std::map<HWND, uint32_t> hwnd_wce_style_map;
     static std::map<HWND, uint32_t> hwnd_wce_exstyle_map;
+    static std::map<HWND, ProcessSlot*> hwnd_slot_map; /* HWND -> owning ProcessSlot */
     /* Thread-local pending WinCE styles for CreateWindowExW → EmuWndProc handoff.
        Set before ::CreateWindowExW, consumed during WM_NCCREATE in EmuWndProc. */
     static thread_local uint32_t tls_pending_wce_style;
@@ -149,6 +151,7 @@ private:
 
     EmulatedMemory& mem;
     std::map<uint32_t, ThunkEntry> thunks;   /* thunk_addr -> entry */
+    std::recursive_mutex thunks_mutex; /* protects thunks map (AllocThunk/HandleThunk) */
     uint32_t next_thunk_addr;
     uint32_t emu_hinstance;
     std::wstring exe_path;
@@ -185,6 +188,7 @@ public:
     std::string os_build_date = "Jan  1 2008";
     uint32_t fake_total_phys = 0;  /* fake memory; 0 = use real host memory */
     std::set<std::string> boot_service_dlls; /* from cerf.ini boot_services= */
+    std::set<std::string> init_blacklist;   /* from cerf.ini init_blacklist= */
     DeviceManager device_mgr; /* stream device driver manager (RegisterDevice etc.) */
     /* WinCE theming */
     bool enable_theming = false;
@@ -302,9 +306,12 @@ public:
     void RegisterGdiMiscHandlers();
     void RegisterMiscUiHandlers();
     void RegisterMiscMshtmlHandlers();
+public:
     void RegisterDirectDrawHandlers();
     void RegisterDirectDrawSurfaceHandlers();
     void BuildDirectDrawVtables(EmulatedMemory& mem);
     bool LaunchArmChildProcess(const std::wstring& mapped_file, const std::wstring& params,
                                uint32_t sei_addr, uint32_t* regs, EmulatedMemory& mem);
+    void ProcessInitHive(EmulatedMemory& mem);
+    std::wstring ResolveExePath(const std::string& input);
 };

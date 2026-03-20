@@ -1,6 +1,12 @@
 /* CERF - Windows CE Runtime Foundation
- * Loads WinCE ARM executables on x64 desktop via ARM interpretation + API thunking.
- * Usage: cerf.exe <path-to-arm-wince-exe> */
+ * Orchestrator: sets up global emulated memory and thunks, launches boot services,
+ * processes HKLM\init, and runs user-specified executables as child processes.
+ * All ARM execution happens in child threads via LaunchArmChildProcess.
+ *
+ * Usage:
+ *   cerf.exe                     Boot from HKLM\init (full WinCE boot)
+ *   cerf.exe explorer.exe        Launch specific app (with init sequence)
+ *   cerf.exe --no-init app.exe   Launch app directly (skip HKLM\init) */
 
 #include <windows.h>
 #include <cstdio>
@@ -28,56 +34,17 @@ int main(int argc, char* argv[]) {
     if (!ParseCerfArgs(argc, argv, cfg))
         return 0; /* --help was requested */
 
-    const char* exe_path = cfg.exe_path;
-    if (!exe_path) {
-        PrintUsage(argv[0]);
-        return 1;
-    }
-
     LOG_RAW("=== CERF - Windows CE Runtime Foundation ===\n");
-    LOG_RAW("Loading: %s\n\n", exe_path);
+    if (cfg.exe_path)
+        LOG_RAW("Target: %s\n\n", cfg.exe_path);
+    else
+        LOG_RAW("Booting from HKLM\\init\n\n");
 
-    /* Initialize emulated memory */
+    /* Initialize emulated memory (global, shared across all processes) */
     EmulatedMemory mem;
 
-    /* Load the PE file */
-    PEInfo pe_info = {};
-    uint32_t entry_point = PELoader::Load(exe_path, mem, pe_info);
-    if (entry_point == 0) {
-        LOG_ERR("Failed to load PE file\n");
-        LOG_ERR("WinCE apps are in references/ dir, not the build dir.\n");
-        LOG_ERR("Usage: cd build/Release/x64 && ./cerf.exe ../../../references/<app.exe>\n");
-        return 1;
-    }
-
-    /* Verify it's ARM */
-    if (pe_info.machine != 0x01C0 && pe_info.machine != 0x01C2) {
-        LOG_ERR("Not an ARM executable (machine=0x%04X)\n", pe_info.machine);
-        return 1;
-    }
-
-    LOG(EMU, "\n[EMU] ARM %s detected (machine=0x%04X)\n",
-           pe_info.machine == 0x01C2 ? "Thumb" : "32-bit",
-           pe_info.machine);
-
-    /* Set up thunks */
+    /* Set up thunks (no EXE loaded yet — orchestrator mode) */
     Win32Thunks thunks(mem);
-    thunks.SetHInstance(pe_info.image_base);
-
-    /* Convert exe path to wide string */
-    std::wstring wide_path;
-    for (const char* p = exe_path; *p; p++) wide_path += (wchar_t)*p;
-    thunks.SetExePath(wide_path);
-
-    /* Extract directory from exe path */
-    std::string exe_dir;
-    {
-        std::string path_str(exe_path);
-        size_t last_sep = path_str.find_last_of("\\/");
-        if (last_sep != std::string::npos)
-            exe_dir = path_str.substr(0, last_sep + 1);
-    }
-    thunks.SetExeDir(exe_dir);
 
     /* Initialize virtual filesystem — reads cerf.ini, sets up device paths.
        This also sets wince_sys_dir for ARM DLL loading. */
@@ -96,18 +63,30 @@ int main(int argc, char* argv[]) {
     if (cfg.cli_os_build_date) thunks.os_build_date = cfg.cli_os_build_date;
     if (cfg.cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cfg.cli_fake_total_phys;
 
-    /* Install import thunks */
-    thunks.InstallThunks(pe_info, exe_path);
+    /* Shared memory regions used by all ARM processes */
+    uint32_t cb_sentinel = 0xCAFEC000;
+    mem.Alloc(cb_sentinel, 0x1000);
+    mem.Write32(cb_sentinel, 0xE12FFF1E); /* BX LR — safety net */
+    mem.Alloc(0x20000000, 0x01000000);    /* WinCE shared memory area (OLE32) */
+    mem.Reserve(0x3E000000, 0x00100000);  /* fake Process/Thread structs for KData */
+    mem.Reserve(0x3F000000, 0x00100000);  /* marshal buffer space, up to 16 threads */
 
-    /* Allocate stack */
-    uint32_t stack_top = mem.AllocStack();
+    /* Orchestrator's fake PROCESS struct (procnum 0) at 0x3E000000 */
+    mem.Alloc(0x3E000000, 0x100);
+    PopulateProcessStruct(mem, 0x3E000000, 0, 1, 0, "cerf");
 
-    /* Initialize main thread context */
+    /* Set up main thread context (needed for callback executor trampoline).
+       The main thread does NOT run ARM code directly — it just orchestrates. */
     ThreadContext main_ctx;
     main_ctx.marshal_base = 0x3F000000;
     ArmCpu& cpu = main_ctx.cpu;
     cpu.mem = &mem;
     cpu.trace = cfg.trace;
+    cpu.thunk_handler = [&thunks](uint32_t addr, uint32_t* regs,
+                                   EmulatedMemory& m) -> bool {
+        if (addr == 0xCAFEC000) { regs[15] = 0xCAFEC000; return true; }
+        return thunks.HandleThunk(addr, regs, m);
+    };
 
     /* ARM trace point system — per-DLL, auto-rebased, checksum-gated */
     TraceManager trace_mgr;
@@ -115,144 +94,108 @@ int main(int argc, char* argv[]) {
     cpu.traces = &trace_mgr;
     thunks.SetTraceManager(&trace_mgr);
 
-    /* Activate traces for the main EXE and all DLLs loaded during PE dependency
-       resolution. These loaded before SetTraceManager, so OnDllLoad didn't fire. */
-    trace_mgr.OnDllLoad(exe_path, exe_path, pe_info.image_base);
-    thunks.ActivateTracesForLoadedDlls(trace_mgr);
-
-    /* Set up initial register state */
-    cpu.r[REG_SP] = stack_top;
-    cpu.r[REG_LR] = 0xDEADDEAD; /* Sentinel return address */
-    cpu.r[REG_PC] = entry_point;
-
-    /* Set up entry point arguments (WinMain style):
-       R0 = hInstance
-       R1 = hPrevInstance (always NULL)
-       R2 = lpCmdLine (empty string)
-       R3 = nCmdShow (SW_SHOW = 5) */
-    cpu.r[0] = pe_info.image_base;  /* hInstance */
-    cpu.r[1] = 0;                    /* hPrevInstance */
-
-    /* Build lpCmdLine from arguments after exe_path */
-    uint32_t cmdline_addr = 0x60000000;
-    mem.Alloc(cmdline_addr, 0x1000);
-    {
-        std::wstring cmdline_str;
-        bool found_exe = false;
-        for (int i = 1; i < argc; i++) {
-            if (!found_exe && argv[i] == exe_path) {
-                found_exe = true;
-                continue;
-            }
-            if (!found_exe) continue; /* skip options before exe_path */
-            if (!cmdline_str.empty()) cmdline_str += L' ';
-            for (const char* p = argv[i]; *p; p++)
-                cmdline_str += (wchar_t)*p;
-        }
-        /* Write wide string to emulated memory */
-        for (size_t j = 0; j < cmdline_str.size() && j < 0x7FE; j++)
-            mem.Write16(cmdline_addr + (uint32_t)(j * 2), (uint16_t)cmdline_str[j]);
-        mem.Write16(cmdline_addr + (uint32_t)(cmdline_str.size() * 2), 0);
-    }
-    cpu.r[2] = cmdline_addr;
-    cpu.r[3] = 1; /* SW_SHOWNORMAL */
-
-    /* Determine initial mode (ARM or Thumb) based on entry point bit 0.
-       Machine type 0x01C2 (IMAGE_FILE_MACHINE_THUMB) means the binary supports
-       Thumb instructions, but the entry point itself may be ARM or Thumb —
-       bit 0 of the address determines the mode (standard ARM interworking). */
-    if (entry_point & 1) {
-        cpu.cpsr |= PSR_T;
-        cpu.r[REG_PC] = entry_point & ~1u;
-    }
-
-    cpu.thunk_handler = [&thunks](uint32_t addr, uint32_t* regs, EmulatedMemory& mem_ref) -> bool {
-        if (addr == 0xDEADDEAD) {
-            LOG(EMU, "\n[EMU] Program returned from entry point with code %d\n", regs[0]);
-            CerfFatalExit(regs[0]);
-            return true;
-        }
-        if (addr == 0xCAFEC000) { regs[15] = 0xCAFEC000; return true; }
-        return thunks.HandleThunk(addr, regs, mem_ref);
-    };
-
-    uint32_t cb_sentinel = 0xCAFEC000;
-    mem.Alloc(cb_sentinel, 0x1000);
-    mem.Write32(cb_sentinel, 0xE12FFF1E); /* BX LR — safety net */
-
-    mem.Alloc(0x20000000, 0x01000000);  /* WinCE shared memory area (OLE32) */
-    mem.Reserve(0x3F000000, 0x00100000); /* marshal buffer space, up to 16 threads */
-    MakeCallbackExecutor(&main_ctx, mem, thunks, cb_sentinel);
-    /* Copy shared KData page into main thread's per-thread buffer */
+    /* KData page for main thread */
     uint8_t* shared_kdata = mem.Translate(0xFFFFC000);
     if (shared_kdata) memcpy(main_ctx.kdata, shared_kdata, 0x1000);
     t_ctx = &main_ctx;
     EmulatedMemory::kdata_override = main_ctx.kdata;
 
-    /* Set process name for log lines (extract filename from path) */
-    {
-        const char* fname = strrchr(exe_path, '/');
-        if (!fname) fname = strrchr(exe_path, '\\');
-        fname = fname ? fname + 1 : exe_path;
-        snprintf(main_ctx.process_name, sizeof(main_ctx.process_name), "%s", fname);
-        Log::SetProcessName(main_ctx.process_name, GetCurrentThreadId());
-    }
+    mem.Alloc(main_ctx.marshal_base, 0x10000);
+    MakeCallbackExecutor(&main_ctx, mem, thunks, cb_sentinel);
 
-    /* Set up the trampoline: thunk handlers use this->callback_executor which
-       delegates to the current thread's real callback_executor via t_ctx. */
+    snprintf(main_ctx.process_name, sizeof(main_ctx.process_name), "cerf");
+    Log::SetProcessName(main_ctx.process_name, GetCurrentThreadId());
+
+    /* Trampoline: thunk handlers use callback_executor which delegates
+       to the current thread's real executor via t_ctx. */
     thunks.main_callback_executor = [](uint32_t addr, uint32_t* args, int nargs) -> uint32_t {
         if (!t_ctx || !t_ctx->callback_executor) return 0;
         return t_ctx->callback_executor(addr, args, nargs);
     };
 
-    /* Call DllMain for any loaded ARM DLLs (must happen after callback_executor is set up) */
-    thunks.CallDllEntryPoints();
-
-    /* Wire up device manager's callback executor for ARM driver calls */
+    /* Wire up device manager's callback executor */
     thunks.device_mgr.SetCallbackExecutor(
         [](uint32_t addr, uint32_t* args, int nargs) -> uint32_t {
             if (!t_ctx || !t_ctx->callback_executor) return 0;
             return t_ctx->callback_executor(addr, args, nargs);
         });
 
-    /* Load WinCE built-in device services (from HKLM\Drivers\BuiltIn\*).
-       On real WinCE, device.exe reads this registry key at boot and loads
-       each service DLL in order. Services include LPCD (LPC driver, order 7),
-       DCOMSSD (DCOM service, order 8), NDIS, etc. Must run AFTER
-       callback_executor and DllMain are ready. */
+    /* Start device.exe (boot services: lpcd, dcomssd, etc.) */
     thunks.StartBootServices(mem);
 
     ApplyRuntimePatches(mem);
-    LOG(EMU, "\n[EMU] Starting at 0x%08X (%s), SP=0x%08X hInst=0x%08X\n",
-           cpu.r[REG_PC], cpu.IsThumb() ? "Thumb" : "ARM", cpu.r[REG_SP], cpu.r[0]);
 
-    /* GDB remote debugging — start stub before running if requested */
+    /* GDB remote debugging */
     GdbStub* gdb = nullptr;
     if (cfg.gdb_port > 0) {
         gdb = new GdbStub((uint16_t)cfg.gdb_port, &mem);
-        gdb->RegisterCpu(&cpu, GetCurrentThreadId());
         if (!gdb->Start()) {
             LOG_ERR("[GDB] Failed to start debug server on port %d\n", cfg.gdb_port);
             delete gdb;
             gdb = nullptr;
         } else {
-            cpu.debugger = gdb;
-            g_debugger = gdb;  /* make available to child threads */
+            g_debugger = gdb;
         }
     }
 
-    /* Run the emulator */
-    cpu.Run();
+    /* Process HKLM\init boot sequence (unless --no-init) */
+    if (!cfg.no_init)
+        thunks.ProcessInitHive(mem);
 
-    HandlePostHalt(cpu);
+    /* Launch user-specified exe (if any) */
+    if (cfg.exe_path) {
+        std::wstring resolved = thunks.ResolveExePath(cfg.exe_path);
+        LOG(EMU, "[EMU] Launching: %ls\n", resolved.c_str());
+
+        /* Set exe_dir for DLL search (app-bundled DLLs) */
+        {
+            std::string narrow;
+            for (auto c : resolved) narrow += (char)c;
+            size_t last_sep = narrow.find_last_of("\\/");
+            if (last_sep != std::string::npos)
+                thunks.SetExeDir(narrow.substr(0, last_sep + 1));
+            thunks.SetExePath(resolved);
+        }
+
+        /* Build cmdline from args after exe_path */
+        std::wstring cmdline;
+        bool found_exe = false;
+        for (int i = 1; i < argc; i++) {
+            if (!found_exe && argv[i] == cfg.exe_path) {
+                found_exe = true;
+                continue;
+            }
+            if (!found_exe) continue;
+            if (!cmdline.empty()) cmdline += L' ';
+            for (const char* p = argv[i]; *p; p++)
+                cmdline += (wchar_t)*p;
+        }
+
+        thunks.LaunchArmChildProcess(resolved, cmdline, 0, nullptr, mem);
+    } else if (cfg.no_init) {
+        LOG_ERR("No exe specified and --no-init set. Nothing to run.\n");
+        PrintUsage(argv[0]);
+        if (gdb) { g_debugger = nullptr; delete gdb; }
+        Log::Close();
+        return 1;
+    }
+
+    /* Wait for all child processes with message pump */
+    LOG(EMU, "[EMU] Orchestrator waiting for child processes...\n");
+    WaitForChildThreads();
+
+    /* Keep pumping messages for any remaining windows */
+    MSG msg;
+    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
 
     if (gdb) {
-        cpu.debugger = nullptr;
-        gdb->UnregisterCpu(&cpu);
         g_debugger = nullptr;
         delete gdb;
     }
 
     Log::Close();
-    return cpu.halt_code;
+    return 0;
 }

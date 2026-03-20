@@ -11,7 +11,8 @@ void Win32Thunks::RegisterModuleHandlers() {
     Thunk("GetModuleHandleW", 1177, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t name_addr = regs[0];
         if (name_addr == 0) {
-            regs[0] = emu_hinstance;
+            /* Per-process hinstance: each child process has its own image base */
+            regs[0] = t_emu_hinstance ? t_emu_hinstance : emu_hinstance;
             LOG(API, "[API] GetModuleHandleW(NULL) -> 0x%08X\n", regs[0]);
         } else {
             std::wstring name = ReadWStringFromEmu(mem, name_addr);
@@ -61,12 +62,17 @@ void Win32Thunks::RegisterModuleHandlers() {
     });
     Thunk("GetModuleFileNameW", 537, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t buf_addr = regs[1], buf_size = regs[2];
-        /* Resolve the exe host path to absolute, then reverse-map to WinCE path.
-           This gives the app its real installation directory. */
+        /* Per-thread exe path: each child process has its own EXE path.
+           Resolve to absolute, then reverse-map to WinCE path. */
+        std::wstring src_path = exe_path;
+        if (t_ctx && t_ctx->exe_path[0]) {
+            std::string narrow(t_ctx->exe_path);
+            src_path = std::wstring(narrow.begin(), narrow.end());
+        }
         wchar_t abs_buf[MAX_PATH] = {};
-        if (GetFullPathNameW(exe_path.c_str(), MAX_PATH, abs_buf, NULL))
+        if (GetFullPathNameW(src_path.c_str(), MAX_PATH, abs_buf, NULL))
             { /* got absolute path */ }
-        std::wstring wce_path = MapHostToWinCE(abs_buf[0] ? abs_buf : exe_path);
+        std::wstring wce_path = MapHostToWinCE(abs_buf[0] ? abs_buf : src_path);
         LOG(API, "[API] GetModuleFileNameW() -> '%ls'\n", wce_path.c_str());
         for (uint32_t i = 0; i < wce_path.size() && i < buf_size; i++)
             mem.Write16(buf_addr + i * 2, wce_path[i]);
@@ -82,8 +88,6 @@ void Win32Thunks::RegisterModuleHandlers() {
         std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
         auto* info = FindThunkedDllW(lower);
         if (info) { regs[0] = info->fake_handle; LOG(API, "[API]   -> thunked (%s)\n", info->name); return true; }
-        /* Strip path prefix — LoadArmDll takes bare filenames and searches
-           wince_sys_dir / exe_dir.  e.g. "\Windows\connpnl.cpl" → "connpnl.cpl" */
         std::string narrow_name;
         for (auto c : name) narrow_name += (char)c;
         { auto slash = narrow_name.rfind('\\');
@@ -92,6 +96,7 @@ void Win32Thunks::RegisterModuleHandlers() {
           if (fslash != std::string::npos) narrow_name = narrow_name.substr(fslash + 1);
         }
         LoadedDll* dll = LoadArmDll(narrow_name);
+        if (dll) dll->refcnt[EmulatedMemory::process_slot]++;
         if (!dll) {
             LOG(API, "[API]   DLL not found: %s\n", narrow_name.c_str());
             regs[0] = 0; return true;
@@ -229,17 +234,62 @@ void Win32Thunks::RegisterModuleHandlers() {
     Thunk("CacheSync", 577, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("CacheRangeFlush", 1765, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 1; return true; });
     Thunk("ExitProcess", [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] ExitProcess(%d)\n", regs[0]); CerfFatalExit(regs[0]); return true;
+        uint32_t code = regs[0];
+        LOG(API, "[API] ExitProcess(%d)\n", code);
+        if (EmulatedMemory::process_slot && t_ctx) {
+            t_ctx->cpu.halted = true;
+            t_ctx->cpu.halt_code = code;
+            return true;
+        }
+        CerfFatalExit(code);
+        return true;
     });
     Thunk("TerminateProcess", 544, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        LOG(API, "[API] TerminateProcess(%d)\n", regs[0]); CerfFatalExit(regs[0]); return true;
+        uint32_t code = regs[0];
+        LOG(API, "[API] TerminateProcess(%d)\n", code);
+        if (EmulatedMemory::process_slot && t_ctx) {
+            t_ctx->cpu.halted = true;
+            t_ctx->cpu.halt_code = code;
+            return true;
+        }
+        CerfFatalExit(code);
+        return true;
     });
     Thunk("ExitThread", 6, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] ExitThread(%d)\n", regs[0]); ExitThread(regs[0]); return true;
     });
     Thunk("FreeLibrary", 529, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
-        LOG(API, "[API] FreeLibrary(hModule=0x%08X) -> TRUE (stub)\n", regs[0]);
-        regs[0] = 1; /* TRUE */
+        uint32_t hmod = regs[0];
+        LOG(API, "[API] FreeLibrary(hModule=0x%08X)\n", hmod);
+        std::lock_guard<std::recursive_mutex> lock(dll_load_mutex);
+        LoadedDll* found = nullptr;
+        for (auto& [name, dll] : loaded_dlls) {
+            if (dll.base_addr == hmod) { found = &dll; break; }
+        }
+        if (!found) {
+            LOG(API, "[API]   FreeLibrary: module 0x%08X not found\n", hmod);
+            regs[0] = 0; return true;
+        }
+        ProcessSlot* cur = EmulatedMemory::process_slot;
+        auto it = found->refcnt.find(cur);
+        if (it != found->refcnt.end() && it->second > 0) {
+            it->second--;
+            LOG(API, "[API]   refcnt[%p] -> %d\n", cur, it->second);
+            if (it->second == 0 && found->pe_info.entry_point_rva != 0
+                && found->dllmain_called_slots.count(cur)) {
+                uint32_t entry = found->base_addr + found->pe_info.entry_point_rva;
+                LOG(API, "[API]   DLL_PROCESS_DETACH at 0x%08X\n", entry);
+                uint32_t args[3] = { found->base_addr, 0, 0 };
+                if (callback_executor) callback_executor(entry, args, 3);
+                found->dllmain_called_slots.erase(cur);
+            }
+            /* Free per-process DLL overlay pages when refcount reaches 0 */
+            if (it->second == 0 && cur) {
+                cur->FreeDllOverlayPages(
+                    found->base_addr, found->pe_info.size_of_image);
+            }
+        }
+        regs[0] = 1;
         return true;
     });
     Thunk("DisableThreadLibraryCalls", 1232, [this](uint32_t* regs, EmulatedMemory&) -> bool {

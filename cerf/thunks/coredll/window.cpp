@@ -30,7 +30,7 @@ void Win32Thunks::RegisterWindowHandlers() {
         wc.hbrBackground = ClassBridge::TranslateBrushToNative(emu_brush);
         std::wstring className = ReadWStringFromEmu(mem, mem.Read32(regs[0]+36));
         wc.lpszClassName = className.c_str();
-        arm_wndprocs[className] = arm_wndproc;
+        arm_wndprocs[className][EmulatedMemory::process_slot] = arm_wndproc;
         /* Store original ARM class info in ClassBridge for Get/SetClassLongW */
         ArmClassInfo aci;
         aci.arm_wndproc = arm_wndproc;
@@ -195,14 +195,15 @@ void Win32Thunks::RegisterWindowHandlers() {
         }
         if (hwnd) {
             uint32_t arm_wndproc = 0;
-            for (auto& [cls, proc] : arm_wndprocs) {
+            for (auto& [cls, slot_map] : arm_wndprocs) {
                 if (_wcsicmp(cls.c_str(), className.c_str()) == 0) {
-                    arm_wndproc = proc;
-                    break;
+                    auto sit = slot_map.find(EmulatedMemory::process_slot);
+                    if (sit != slot_map.end()) { arm_wndproc = sit->second; break; }
                 }
             }
             if (arm_wndproc && hwnd_wndproc_map.find(hwnd) == hwnd_wndproc_map.end())
                 hwnd_wndproc_map[hwnd] = arm_wndproc;
+            hwnd_slot_map[hwnd] = EmulatedMemory::process_slot;
 
             if (is_toplevel) {
                 if (!windowName.empty()) SetWindowTextW(hwnd, windowName.c_str());
@@ -288,6 +289,7 @@ void Win32Thunks::RegisterWindowHandlers() {
         hwnd_native_wndproc_map.erase(hw);
         hwnd_wce_style_map.erase(hw);
         hwnd_wce_exstyle_map.erase(hw);
+        hwnd_slot_map.erase(hw);
         regs[0] = ret;
         return true;
     });

@@ -41,6 +41,8 @@ bool ParseCerfArgs(int argc, char* argv[], CerfConfig& cfg) {
             cfg.cli_fake_total_phys = atoi(argv[i] + 18);
         } else if (strncmp(argv[i], "--gdb-port=", 11) == 0) {
             cfg.gdb_port = atoi(argv[i] + 11);
+        } else if (strcmp(argv[i], "--no-init") == 0) {
+            cfg.no_init = true;
         } else if (strcmp(argv[i], "--quiet") == 0) {
             Log::SetEnabled(Log::NONE);
             cfg.explicit_log = true;
