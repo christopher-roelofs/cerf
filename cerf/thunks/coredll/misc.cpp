@@ -202,13 +202,16 @@ void Win32Thunks::RegisterMiscHandlers() {
         return true;
     });
     Thunk("WaitForAPIReady", 2562, stub0("WaitForAPIReady"));
-    Thunk("__GetUserKData", 2528, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        /* Return the standard PUserKData address (0xFFFFC800).
-           The KData page is set up in the Win32Thunks constructor with:
-             offset 0x000: lpvTls (pointer to emulated TLS slot array)
-             offset 0x004: SH_CURTHREAD (current thread ID)
-             offset 0x008: SH_CURPROC (current process ID) */
-        regs[0] = 0xFFFFC800;
+    Thunk("__GetUserKData", 2528, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        /* _GetUserKData(offset) — returns the DWORD at KDataStruct[offset].
+           KDataStruct lives at 0xFFFFC800 in the per-thread KData page.
+           Layout (from nkarm.h):
+             +0x000: lpvTls     — pointer to emulated TLS slot array
+             +0x004: ahSys[0]   — SH_WIN32
+             +0x008: ahSys[1]   — SH_CURTHREAD (current thread ID)
+             +0x00C: ahSys[2]   — SH_CURPROC (current process ID) */
+        uint32_t offset = regs[0];
+        regs[0] = mem.Read32(0xFFFFC800 + offset);
         return true;
     });
     /* Gesture stubs */

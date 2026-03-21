@@ -78,6 +78,10 @@ public:
     /* Check if a set ID has a registered handler. */
     bool IsRegistered(uint32_t set_id) const;
 
+    /* Find a registered API set by its 4-char name (e.g. "SHEL").
+       Returns the set_id, or 0 if not found. */
+    uint32_t FindByName(const char* name) const;
+
 private:
     std::unordered_map<uint32_t, ApiSetEntry> sets_by_handle_;
     std::unordered_map<uint32_t, uint32_t> sets_by_id_; /* set_id → handle */

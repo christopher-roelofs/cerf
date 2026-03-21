@@ -7,6 +7,7 @@
 
 struct DlgFixupResult {
     bool had_captionok;
+    bool had_ds_center;
     bool is_child;
     uint32_t wce_style;
     uint32_t wce_exstyle;

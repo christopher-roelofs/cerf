@@ -51,6 +51,16 @@ bool ApiSetManager::IsRegistered(uint32_t set_id) const {
     return sets_by_id_.count(set_id) > 0;
 }
 
+uint32_t ApiSetManager::FindByName(const char* name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [handle, entry] : sets_by_handle_) {
+        if (entry.set_id != 0 && entry.name.size() >= 4 &&
+            memcmp(entry.name.c_str(), name, 4) == 0)
+            return entry.set_id;
+    }
+    return 0;
+}
+
 bool ApiSetManager::Dispatch(uint32_t set_id, uint32_t method,
                               uint32_t* regs, EmulatedMemory& mem) {
     std::lock_guard<std::mutex> lock(mutex_);

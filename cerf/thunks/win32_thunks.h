@@ -42,10 +42,6 @@ const ThunkedDllInfo* FindThunkedDllW(const std::wstring& dll_name); /* wide ver
 #define THUNK_STRIDE 4
 #define WINCE_SCREEN_WIDTH_DEFAULT   800
 
-/* explorer.exe ARM function address for SHCreateExplorerInstance.
-   IDA address 0x0001A120, explorer loads at its natural base 0x00010000. */
-constexpr uint32_t EXPLORER_SHCREATEEXPLORERINSTANCE = 0x0001A120;
-
 /* Kernel IPC message for cross-thread SHBrowseToURL dispatch.
    Sent via SendMessage from a child process thread to the main explorer's
    desktop window. The main thread's EmuWndProc calls SHCreateExplorerInstance

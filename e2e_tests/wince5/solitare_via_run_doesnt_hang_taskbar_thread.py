@@ -42,8 +42,8 @@ try:
     time.sleep(0.5)
     runner.type_text("\\windows\\solitare.exe")
     time.sleep(0.5)
-    step("Clicking OK (504, 315)...")
-    runner.click(504, 315)
+    step("Clicking OK (362, 291)...")
+    runner.click(362, 291)
 
     # --- Step 5: Wait for solitaire to create its window ---
     step("Waiting for solitaire window creation...")

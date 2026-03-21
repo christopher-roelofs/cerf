@@ -52,6 +52,15 @@ void Win32Thunks::RegisterDialogHandlers() {
                         (wr.bottom - wr.top) + 2 * brd + cap,
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
                 }
+                /* DS_CENTER: native centering was stripped — center within device screen */
+                if (fixup.had_ds_center) {
+                    RECT dr;
+                    GetWindowRect(dlg, &dr);
+                    int dw = dr.right - dr.left, dh = dr.bottom - dr.top;
+                    int cx = ((int)screen_width - dw) / 2, cy = ((int)screen_height - dh) / 2;
+                    if (cx < 0) cx = 0; if (cy < 0) cy = 0;
+                    SetWindowPos(dlg, NULL, cx, cy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
             } else {
                 /* Child dialog (e.g. property page): theme background only,
                    no NC area or style map — it lives inside its parent. */
@@ -102,6 +111,15 @@ void Win32Thunks::RegisterDialogHandlers() {
                         (wr.right - wr.left) + 2 * brd,
                         (wr.bottom - wr.top) + 2 * brd + cap,
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                }
+                /* DS_CENTER: native centering was stripped — center within device screen */
+                if (fixup.had_ds_center) {
+                    RECT dr;
+                    GetWindowRect(dlg, &dr);
+                    int dw = dr.right - dr.left, dh = dr.bottom - dr.top;
+                    int cx = ((int)screen_width - dw) / 2, cy = ((int)screen_height - dh) / 2;
+                    if (cx < 0) cx = 0; if (cy < 0) cy = 0;
+                    SetWindowPos(dlg, NULL, cx, cy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                 }
             } else {
                 ApplyWindowTheme(dlg, false);

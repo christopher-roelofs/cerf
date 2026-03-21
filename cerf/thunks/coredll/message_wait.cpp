@@ -1,8 +1,49 @@
 /* Message wait/misc thunks: MsgWaitForMultipleObjectsEx, SendNotifyMessageW,
    GetMessagePos, TranslateAcceleratorW — split from message.cpp */
 #include "../win32_thunks.h"
+#include "../theme_internal.h"
 #include "../../log.h"
+#include <uxtheme.h>
 #include <cstdio>
+
+/* CBT hook for centering and theming MessageBox within the emulated device screen.
+   Thread-local so each ARM thread can call MessageBoxW independently. */
+static thread_local HHOOK s_msgbox_hook = NULL;
+static thread_local RECT  s_msgbox_device_rect = {};
+static thread_local bool  s_msgbox_theme = false;
+static thread_local bool  s_msgbox_strip_uxtheme = false;
+
+static LRESULT CALLBACK MsgBoxCBTProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HCBT_ACTIVATE) {
+        HWND hwnd = (HWND)wParam;
+        /* Center within device screen */
+        RECT wr;
+        GetWindowRect(hwnd, &wr);
+        int dw = wr.right - wr.left, dh = wr.bottom - wr.top;
+        int cx = (s_msgbox_device_rect.right - dw) / 2;
+        int cy = (s_msgbox_device_rect.bottom - dh) / 2;
+        if (cx < 0) cx = 0; if (cy < 0) cy = 0;
+        SetWindowPos(hwnd, NULL, cx, cy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        /* Apply theming: strip UxTheme and/or subclass for WinCE colors.
+           refData=0 (non-toplevel) so ThemeSubclassProc handles WM_CTLCOLOR*,
+           WM_ERASEBKGND, and button overpaint but skips WinCE NC area. */
+        if (s_msgbox_strip_uxtheme || s_msgbox_theme) {
+            if (s_msgbox_strip_uxtheme) SetWindowTheme(hwnd, L"", L"");
+            if (s_msgbox_theme) SetWindowSubclass(hwnd, ThemeSubclassProc, THEME_SUBCLASS_ID, 0);
+            EnumChildWindows(hwnd, [](HWND child, LPARAM) -> BOOL {
+                if (s_msgbox_strip_uxtheme) SetWindowTheme(child, L"", L"");
+                if (s_msgbox_theme) SetWindowSubclass(child, ThemeSubclassProc, THEME_SUBCLASS_ID, 0);
+                return TRUE;
+            }, 0);
+        }
+        /* Unhook after first activation */
+        HHOOK h = s_msgbox_hook;
+        s_msgbox_hook = NULL;
+        UnhookWindowsHookEx(h);
+        return 0;
+    }
+    return CallNextHookEx(s_msgbox_hook, nCode, wParam, lParam);
+}
 
 void Win32Thunks::RegisterMessageWaitHandlers() {
     Thunk("PostQuitMessage", 866, [](uint32_t* regs, EmulatedMemory&) -> bool {
@@ -77,7 +118,13 @@ void Win32Thunks::RegisterMessageWaitHandlers() {
         std::wstring title = ReadWStringFromEmu(mem, regs[2]);
         LOG(API, "[API] MessageBoxW(hwnd=0x%08X, text='%ls', title='%ls', type=0x%X)\n",
             regs[0], text.c_str(), title.c_str(), regs[3]);
+        /* Install CBT hook to center and theme the message box */
+        s_msgbox_device_rect = {0, 0, (LONG)screen_width, (LONG)screen_height};
+        s_msgbox_theme = enable_theming;
+        s_msgbox_strip_uxtheme = disable_uxtheme;
+        s_msgbox_hook = SetWindowsHookExW(WH_CBT, MsgBoxCBTProc, NULL, GetCurrentThreadId());
         regs[0] = MessageBoxW((HWND)(intptr_t)(int32_t)regs[0], text.c_str(), title.c_str(), regs[3]);
+        if (s_msgbox_hook) { UnhookWindowsHookEx(s_msgbox_hook); s_msgbox_hook = NULL; }
         return true;
     });
     Thunk("MessageBeep", 857, [](uint32_t* regs, EmulatedMemory&) -> bool {

@@ -57,8 +57,10 @@ DlgFixupResult FixupDlgTemplate(std::vector<uint8_t>& tmpl, const std::wstring& 
     result.wce_style = style;
     result.wce_exstyle = exStyle;
     result.had_captionok = (exStyle & 0x80000000u) != 0;
+    result.had_ds_center = (style & DS_CENTER) != 0;
     result.is_child = (style & WS_CHILD) != 0;
     exStyle &= ~0x80000000u;   /* strip WS_EX_CAPTIONOKBTN — we render it ourselves */
+    style &= ~(uint32_t)DS_CENTER; /* strip DS_CENTER — we center within device screen ourselves */
     /* Only convert non-child dialogs to WS_POPUP.  Child dialogs (e.g. property
        pages inside a property sheet tab control) must keep WS_CHILD so they
        position correctly inside their parent. */

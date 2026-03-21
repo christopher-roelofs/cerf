@@ -3,6 +3,7 @@
 /* ShellExecuteEx thunk — handles CLSID paths, .lnk shortcuts, directories,
    ARM PE in-process loading, native fallback */
 #include "../win32_thunks.h"
+#include "../apiset.h"
 #include "../../log.h"
 #include <cstdio>
 #include <shellapi.h>
@@ -35,20 +36,30 @@ void Win32Thunks::RegisterShellExecHandler() {
         LOG(API, "[API] ShellExecuteEx(verb='%ls', file='%ls', params='%ls', dir='%ls', nShow=%d)\n",
                verb.c_str(), file.c_str(), params.c_str(), dir.c_str(), nShow);
 
-        /* Helper: open a folder browser via SHCreateExplorerInstance in the ARM explorer */
-        // TODO: Is this the correct approach? We must verify real COREDLL/NK.EXE behaviour - what it does.
-        //       I suspect it might use ApiSet just like it does when second instance of explorer is opened.
+        /* Helper: open a folder browser via SH_SHELL API set method 9.
+           On real WinCE, ShellExecuteEx traps into the kernel which dispatches
+           to explorer.exe's SHCreateExplorerInstance (vtable[9] of SHEL API set).
+           Our ApiSetManager handles the process context switch and executor call. */
+        constexpr uint32_t SHEL_METHOD_SHCREATEEXPLORERINSTANCE = 9;
         auto callSHCreateExplorerInstance = [&](const std::wstring& path) -> bool {
-            const uint32_t shCreateExplorerInstance = EXPLORER_SHCREATEEXPLORERINSTANCE;
+            uint32_t shel_set_id = GetApiSets().FindByName("SHEL");
+            if (!shel_set_id) {
+                LOG(API, "[API]   -> SHEL API set not registered, cannot open folder\n");
+                regs[0] = 0; return true;
+            }
             uint32_t path_addr = 0x60002000;
             mem.Alloc(path_addr, 0x1000);
             for (size_t j = 0; j < path.size() && j < 0x7FE; j++)
                 mem.Write16(path_addr + (uint32_t)(j * 2), (uint16_t)path[j]);
             mem.Write16(path_addr + (uint32_t)(path.size() * 2), 0);
-            uint32_t args[2] = { path_addr, 0 };
-            LOG(API, "[API]   -> calling SHCreateExplorerInstance('%ls')\n", path.c_str());
-            uint32_t ret = callback_executor(shCreateExplorerInstance, args, 2);
-            LOG(API, "[API]   -> SHCreateExplorerInstance returned %d\n", ret);
+            LOG(API, "[API]   -> calling SHCreateExplorerInstance('%ls') via SHEL API set\n", path.c_str());
+            uint32_t saved_r0 = regs[0];
+            regs[0] = path_addr;
+            regs[1] = 0;
+            bool ok = GetApiSets().Dispatch(shel_set_id,
+                SHEL_METHOD_SHCREATEEXPLORERINSTANCE, regs, mem);
+            LOG(API, "[API]   -> SHCreateExplorerInstance returned %d (dispatched=%d)\n",
+                regs[0], ok);
             mem.Write32(sei_addr + 0x20, 42);
             regs[0] = 1;
             return true;

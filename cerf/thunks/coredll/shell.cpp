@@ -8,6 +8,10 @@
 #include <cstdio>
 #include <vector>
 #include <shellapi.h>
+#include <shlwapi.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "shlwapi.lib")
 #include <shlobj.h>
 
 void Win32Thunks::RegisterShellHandlers() {
@@ -93,9 +97,10 @@ void Win32Thunks::RegisterShellHandlers() {
         }
         return true;
     });
-    /* SHLoadDIBitmap(lpszFileName) — load a BMP file and return HBITMAP.
+    /* SHLoadDIBitmap(lpszFileName) — load an image file and return HBITMAP.
        ceshell.dll's export is a PE forwarder back to COREDLL (circular),
-       so we implement it natively.  Handles standard .bmp and WinCE .2bp files. */
+       so we implement it natively. Handles BMP (including WinCE 2bpp),
+       and JPEG/PNG/GIF via GDI+ for WinCE 6+ wallpapers. */
     Thunk("SHLoadDIBitmap", 487, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         std::wstring wce_path = ReadWStringFromEmu(mem, regs[0]);
         std::wstring host_path = MapWinCEPath(wce_path);
@@ -112,15 +117,51 @@ void Win32Thunks::RegisterShellHandlers() {
         DWORD bytesRead = 0;
         ReadFile(hFile, buf.data(), fileSize, &bytesRead, NULL);
         CloseHandle(hFile);
+        if (bytesRead < 4) {
+            regs[0] = 0;
+            return true;
+        }
+
+        /* Detect file format by magic bytes */
+        bool is_bmp = (buf[0] == 'B' && buf[1] == 'M');
+        HBITMAP hbm = NULL;
+
+        if (!is_bmp) {
+            /* Non-BMP (JPEG, PNG, GIF) — decode via GDI+ */
+            static bool gdiplus_init = false;
+            static ULONG_PTR gdiplus_token = 0;
+            if (!gdiplus_init) {
+                Gdiplus::GdiplusStartupInput si;
+                Gdiplus::GdiplusStartup(&gdiplus_token, &si, NULL);
+                gdiplus_init = true;
+            }
+            IStream* stream = SHCreateMemStream(buf.data(), bytesRead);
+            if (stream) {
+                Gdiplus::Bitmap* bmp = Gdiplus::Bitmap::FromStream(stream);
+                if (bmp && bmp->GetLastStatus() == Gdiplus::Ok) {
+                    bmp->GetHBITMAP(Gdiplus::Color(0, 0, 0), &hbm);
+                    LOG(API, "[API]   -> decoded via GDI+ %ux%u -> hbm=%p\n",
+                        bmp->GetWidth(), bmp->GetHeight(), hbm);
+                    delete bmp;
+                } else {
+                    LOG(API, "[API]   -> GDI+ decode failed\n");
+                    delete bmp;
+                }
+                stream->Release();
+            }
+            regs[0] = (uint32_t)(uintptr_t)hbm;
+            return true;
+        }
+
+        /* BMP format */
         if (bytesRead < sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)) {
-            LOG(API, "[API]   -> file too small (%u bytes)\n", bytesRead);
+            LOG(API, "[API]   -> BMP too small (%u bytes)\n", bytesRead);
             regs[0] = 0;
             return true;
         }
         BITMAPFILEHEADER* bfh = (BITMAPFILEHEADER*)buf.data();
         BITMAPINFO* bmi = (BITMAPINFO*)(buf.data() + sizeof(BITMAPFILEHEADER));
         uint8_t* bits = buf.data() + bfh->bfOffBits;
-        HBITMAP hbm = NULL;
         HDC hdc = GetDC(NULL);
         if (bmi->bmiHeader.biBitCount == 2) {
             /* WinCE 2bpp format — desktop Windows doesn't support it.
@@ -139,7 +180,6 @@ void Win32Thunks::RegisterShellHandlers() {
                     dst_row[dst_byte] |= (val << dst_shift);
                 }
             }
-            /* Build 4bpp BITMAPINFO with same color table */
             int nColors = (bmi->bmiHeader.biClrUsed > 0) ? bmi->bmiHeader.biClrUsed : 4;
             std::vector<uint8_t> bmi4_buf(sizeof(BITMAPINFOHEADER) + nColors * sizeof(RGBQUAD));
             BITMAPINFO* bmi4 = (BITMAPINFO*)bmi4_buf.data();
