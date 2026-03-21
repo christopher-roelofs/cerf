@@ -179,4 +179,20 @@ void Win32Thunks::RegisterGdiDcHandlers() {
         regs[0] = DrawFrameControl(GDI_HDC(regs[0]), &rc, regs[2], regs[3]);
         return true;
     });
+    /* WinCE 6 GDI — SetStretchBltMode alias (ordinal 1825) */
+    Thunk("SetStretchBltMode_ce6", 1825, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SetStretchBltMode(hdc=0x%08X, mode=%d) -> forwarding\n", regs[0], regs[1]);
+        LONG hdc_ext = (LONG)(int32_t)regs[0];
+        regs[0] = (uint32_t)SetStretchBltMode((HDC)(intptr_t)hdc_ext, (int)regs[1]);
+        return true;
+    });
+    Thunk("GetViewportOrgEx", 1988, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] GetViewportOrgEx(hdc=0x%08X, pt=0x%08X)\n", regs[0], regs[1]);
+        LONG hdc_ext = (LONG)(int32_t)regs[0];
+        POINT pt = {};
+        BOOL ret = GetViewportOrgEx((HDC)(intptr_t)hdc_ext, &pt);
+        if (regs[1]) { mem.Write32(regs[1], (uint32_t)pt.x); mem.Write32(regs[1] + 4, (uint32_t)pt.y); }
+        regs[0] = ret;
+        return true;
+    });
 }

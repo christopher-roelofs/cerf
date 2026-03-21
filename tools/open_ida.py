@@ -41,9 +41,33 @@ def find_pe_files(directory, include_existing=False):
     return files
 
 
+def is_already_open(pe_path):
+    """Check if an IDA instance is already running for this exact PE file."""
+    resolved = str(Path(pe_path).resolve()).lower().replace("/", "\\")
+    if REGISTRY_DIR.is_dir():
+        for f in REGISTRY_DIR.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                instance_id = data.get("instance_id", "").lower().replace("/", "\\")
+                if resolved in instance_id or instance_id in resolved:
+                    pid = data.get("pid")
+                    result = subprocess.run(
+                        ["tasklist", "/fi", f"pid eq {pid}", "/fo", "csv", "/nh"],
+                        capture_output=True, text=True)
+                    if str(pid) in result.stdout:
+                        return data.get("port")
+            except (json.JSONDecodeError, OSError):
+                pass
+    return None
+
+
 def open_in_ida(pe_path):
     """Launch IDA in autonomous mode with the init+serve script."""
     pe_path = Path(pe_path).resolve()
+    port = is_already_open(pe_path)
+    if port:
+        print(f"  ERROR: {pe_path.name} is already open in IDA (port {port})")
+        sys.exit(1)
     print(f"  Opening: {pe_path.name}")
     subprocess.Popen([
         str(IDA_EXE),

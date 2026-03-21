@@ -27,6 +27,9 @@ void RegisterOle32Traces(TraceManager& tm);
 void RegisterRpcrt4Traces(TraceManager& tm);
 void register_traces_dcomssd(TraceManager& tm);
 
+/* WinCE 6.0 traces */
+void RegisterWinCE6ShdocvwTraces(TraceManager& tm);
+
 /* Register all traces for a specific device profile */
 inline void RegisterTracesForDevice(const std::string& device, TraceManager& tm) {
     if (device == "wince5") {
@@ -42,6 +45,7 @@ inline void RegisterTracesForDevice(const std::string& device, TraceManager& tm)
         RegisterOle32Traces(tm);
         RegisterRpcrt4Traces(tm);
         register_traces_dcomssd(tm);
+    } else if (device == "wince6") {
+        RegisterWinCE6ShdocvwTraces(tm);
     }
-    /* Future: else if (device == "wm6") { RegisterWM6Traces(tm); } */
 }

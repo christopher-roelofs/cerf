@@ -240,7 +240,6 @@ void Win32Thunks::RegisterMiscHandlers() {
     Thunk("ShowStartupWindow", 1810, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] ShowStartupWindow -> stub\n"); regs[0] = 0; return true; });
     Thunk("LASSReloadConfig", 1828, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] LASSReloadConfig -> stub\n"); regs[0] = 0; return true; });
     Thunk("ordinal_2911", 2911, stub0("ordinal_2911"));
-    /* PMFindProvider */
     Thunk("QueryAPISetID", 490, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         /* Read 4-char API set name */
         char name[5] = {};

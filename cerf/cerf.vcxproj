@@ -275,6 +275,9 @@
     <ClCompile Include="tracing\wince5\traces_mshtml_notify.cpp" />
     <ClCompile Include="tracing\wince5\traces_mshtml_load.cpp" />
     <ClCompile Include="tracing\wince5\traces_shdocvw.cpp" />
+    <ClCompile Include="tracing\wince6\traces_shdocvw.cpp">
+      <ObjectFileName>$(IntDir)wince6_traces_shdocvw.obj</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="tracing\wince5\traces_browser.cpp" />
     <ClCompile Include="tracing\wince5\traces_explorer.cpp" />
     <ClCompile Include="tracing\wince5\traces_urlmon.cpp" />

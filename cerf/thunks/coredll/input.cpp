@@ -236,4 +236,13 @@ void Win32Thunks::RegisterInputHandlers() {
         LOG(API, "[API] SipSetInfo -> stub FALSE\n");
         regs[0] = 0; return true;
     });
+    /* WinCE 6 IMM stubs */
+    Thunk("ImmCreateContext", 1198, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ImmCreateContext -> stub 0\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("ImmDestroyContext", 1199, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ImmDestroyContext(0x%08X) -> stub TRUE\n", regs[0]);
+        regs[0] = 1; return true;
+    });
 }

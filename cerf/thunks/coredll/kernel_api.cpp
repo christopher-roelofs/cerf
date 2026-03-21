@@ -109,4 +109,29 @@ void Win32Thunks::RegisterKernelApiHandlers() {
     });
     Thunk("RegistryNotifyWindow", 2621, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] RegistryNotifyWindow -> stub 0\n"); regs[0] = 0; return true; });
     Thunk("RegistryCloseNotification", 2624, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] RegistryCloseNotification -> stub 0\n"); regs[0] = 0; return true; });
+    /* WinCE 6 kernel helpers */
+    Thunk("CeGetCanonicalPathNameW", 1957, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring path = ReadWStringFromEmu(mem, regs[0]);
+        LOG(API, "[API] CeGetCanonicalPathNameW('%ls') -> identity\n", path.c_str());
+        uint32_t dst = regs[1], cch = regs[2];
+        if (dst && cch > 0) {
+            uint32_t psz = (uint32_t)path.size();
+            uint32_t copy_len = (psz < cch - 1) ? psz : cch - 1;
+            for (uint32_t i = 0; i < copy_len; i++) mem.Write16(dst + i * 2, path[i]);
+            mem.Write16(dst + copy_len * 2, 0);
+            regs[0] = copy_len + 1;
+        } else {
+            regs[0] = (uint32_t)path.size() + 1;
+        }
+        return true;
+    });
+    Thunk("CeAllocAsynchronousBuffer", 2571, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] CeAllocAsynchronousBuffer -> identity\n");
+        if (regs[0]) mem.Write32(regs[0], regs[1]);
+        regs[0] = 1; return true;
+    });
+    Thunk("CeFreeAsynchronousBuffer", 2572, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] CeFreeAsynchronousBuffer -> stub\n");
+        regs[0] = 1; return true;
+    });
 }

@@ -112,6 +112,13 @@ void Win32Thunks::RegisterSyncHandlers() {
         regs[0] = ptr ? (uint32_t)InterlockedExchange(ptr, (LONG)regs[1]) : 0;
         return true;
     });
+    Thunk("InterlockedExchangeAdd", 1491, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        volatile LONG* ptr = (volatile LONG*)mem.TranslateForWrite(regs[0]);
+        if (!ptr) ptr = (volatile LONG*)(mem.AutoAlloc(regs[0]) + (regs[0] & (EmulatedMemory::PAGE_SIZE - 1)));
+        LONG original = ptr ? InterlockedExchangeAdd(ptr, (LONG)regs[1]) : 0;
+        regs[0] = (uint32_t)original;
+        return true;
+    });
     Thunk("InterlockedCompareExchange", 1492, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
         volatile LONG* ptr = (volatile LONG*)mem.TranslateForWrite(regs[0]);
         if (!ptr) ptr = (volatile LONG*)(mem.AutoAlloc(regs[0]) + (regs[0] & (EmulatedMemory::PAGE_SIZE - 1)));
