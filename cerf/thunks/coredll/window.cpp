@@ -126,7 +126,11 @@ void Win32Thunks::RegisterWindowHandlers() {
             style &= ~(uint32_t)(WS_OVERLAPPED | WS_THICKFRAME |
                                   WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CAPTION);
             style |= WS_POPUP;
-            exStyle |= WS_EX_APPWINDOW;
+            /* Only add WS_EX_APPWINDOW for windows with actual size.
+               Zero-sized windows (e.g. URL Moniker Notification Window) are
+               message-only and should not appear on the taskbar. */
+            if (w != 0 || h != 0)
+                exStyle |= WS_EX_APPWINDOW;
 
             /* CW_USEDEFAULT → fill the work area (screen minus taskbar/shell panels).
                On real WinCE the shell calls SPI_SETWORKAREA to reserve taskbar space;
@@ -135,10 +139,11 @@ void Win32Thunks::RegisterWindowHandlers() {
             if (x == (int)0x80000000) x = (int)wa.left;
             if (y == (int)0x80000000) y = (int)wa.top;
 
-            if (w == (int)0x80000000 || w == 0) {
+            if (w == (int)0x80000000) {
                 w = (int)(wa.right - wa.left);
-                h = (int)(wa.bottom - wa.top);
-            } else if (h == (int)0x80000000 || h == 0) {
+                if (h == (int)0x80000000) h = (int)(wa.bottom - wa.top);
+            }
+            if (h == (int)0x80000000) {
                 h = (int)(wa.bottom - wa.top);
             }
         } else if (!is_child) {
