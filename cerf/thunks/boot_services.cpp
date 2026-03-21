@@ -41,52 +41,63 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
 
     {
         std::lock_guard<std::recursive_mutex> lock(registry_mutex);
-        std::wstring base_key = L"hklm\\drivers\\builtin";
-        auto base_it = registry.find(base_key);
-        if (base_it == registry.end()) {
-            LOG(API, "[BOOT] No HKLM\\Drivers\\BuiltIn key found\n");
+
+        /* Enumerate services from a registry hive root. Used for both
+           HKLM\Drivers\BuiltIn (all CE versions) and HKLM\Services (CE6+).
+           On real WinCE 5, device.exe loads from Drivers\BuiltIn; on CE6+,
+           services.exe also loads from Services\*. We enumerate both. */
+        auto enumerate_hive = [&](const std::wstring& base_key, const char* label) {
+            auto base_it = registry.find(base_key);
+            if (base_it == registry.end()) return;
+
+            for (auto& subkey_name : base_it->second.subkeys) {
+                std::wstring svc_key = base_key + L"\\" + subkey_name;
+                auto svc_it = registry.find(svc_key);
+                if (svc_it == registry.end()) continue;
+
+                BootService svc;
+                svc.name = subkey_name;
+                svc.order = 0xFFFFFFFF;
+
+                auto dll_it = svc_it->second.values.find(L"Dll");
+                if (dll_it == svc_it->second.values.end())
+                    dll_it = svc_it->second.values.find(L"dll");
+                if (dll_it != svc_it->second.values.end() && dll_it->second.type == REG_SZ) {
+                    std::wstring wdll((const wchar_t*)dll_it->second.data.data(),
+                                      dll_it->second.data.size() / 2);
+                    if (!wdll.empty() && wdll.back() == L'\0') wdll.pop_back();
+                    for (auto c : wdll) svc.dll += (char)c;
+                }
+                if (svc.dll.empty()) continue;
+
+                auto entry_it = svc_it->second.values.find(L"Entry");
+                if (entry_it == svc_it->second.values.end())
+                    entry_it = svc_it->second.values.find(L"entry");
+                if (entry_it != svc_it->second.values.end() && entry_it->second.type == REG_SZ) {
+                    std::wstring wentry((const wchar_t*)entry_it->second.data.data(),
+                                        entry_it->second.data.size() / 2);
+                    if (!wentry.empty() && wentry.back() == L'\0') wentry.pop_back();
+                    for (auto c : wentry) svc.entry += (char)c;
+                }
+
+                auto order_it = svc_it->second.values.find(L"Order");
+                if (order_it == svc_it->second.values.end())
+                    order_it = svc_it->second.values.find(L"order");
+                if (order_it != svc_it->second.values.end() &&
+                    order_it->second.type == REG_DWORD && order_it->second.data.size() >= 4) {
+                    memcpy(&svc.order, order_it->second.data.data(), 4);
+                }
+
+                services.push_back(std::move(svc));
+            }
+        };
+
+        enumerate_hive(L"hklm\\drivers\\builtin", "Drivers\\BuiltIn");
+        enumerate_hive(L"hklm\\services", "Services");
+
+        if (services.empty()) {
+            LOG(API, "[BOOT] No services found in Drivers\\BuiltIn or Services\n");
             return;
-        }
-
-        for (auto& subkey_name : base_it->second.subkeys) {
-            std::wstring svc_key = base_key + L"\\" + subkey_name;
-            auto svc_it = registry.find(svc_key);
-            if (svc_it == registry.end()) continue;
-
-            BootService svc;
-            svc.name = subkey_name;
-            svc.order = 0xFFFFFFFF;
-
-            auto dll_it = svc_it->second.values.find(L"Dll");
-            if (dll_it == svc_it->second.values.end())
-                dll_it = svc_it->second.values.find(L"dll");
-            if (dll_it != svc_it->second.values.end() && dll_it->second.type == REG_SZ) {
-                std::wstring wdll((const wchar_t*)dll_it->second.data.data(),
-                                  dll_it->second.data.size() / 2);
-                if (!wdll.empty() && wdll.back() == L'\0') wdll.pop_back();
-                for (auto c : wdll) svc.dll += (char)c;
-            }
-            if (svc.dll.empty()) continue;
-
-            auto entry_it = svc_it->second.values.find(L"Entry");
-            if (entry_it == svc_it->second.values.end())
-                entry_it = svc_it->second.values.find(L"entry");
-            if (entry_it != svc_it->second.values.end() && entry_it->second.type == REG_SZ) {
-                std::wstring wentry((const wchar_t*)entry_it->second.data.data(),
-                                    entry_it->second.data.size() / 2);
-                if (!wentry.empty() && wentry.back() == L'\0') wentry.pop_back();
-                for (auto c : wentry) svc.entry += (char)c;
-            }
-
-            auto order_it = svc_it->second.values.find(L"Order");
-            if (order_it == svc_it->second.values.end())
-                order_it = svc_it->second.values.find(L"order");
-            if (order_it != svc_it->second.values.end() &&
-                order_it->second.type == REG_DWORD && order_it->second.data.size() >= 4) {
-                memcpy(&svc.order, order_it->second.data.data(), 4);
-            }
-
-            services.push_back(std::move(svc));
         }
     }
 
