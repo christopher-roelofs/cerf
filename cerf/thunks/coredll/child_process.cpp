@@ -68,10 +68,10 @@ void Win32Thunks::RegisterChildProcessHandler() {
                         LOG(API, "[API] CreateProcessW: ProcessSlot alloc failed\n");
                         delete cpi; t_ctx = nullptr; return 1;
                     }
+                    /* Register writable sections for CoW tracking.
+                       CopyDllWritableSections is deferred until after InstallThunks
+                       so the snapshot captures fully-patched IAT entries. */
                     slot.RegisterWritableSections(cpi->mem->dll_writable_sections);
-                    slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
-                        return cpi->mem->TranslateGlobal(pg);
-                    });
                     EmulatedMemory::process_slot = &slot;
 
                     /* Load PE into the slot */
@@ -120,7 +120,22 @@ void Win32Thunks::RegisterChildProcessHandler() {
 
                     MakeCallbackExecutor(&ctx, *cpi->mem, *cpi->thunks, 0xCAFEC000);
                     cpi->mem->Alloc(ctx.marshal_base, 0x10000);
+
+                    /* Set per-thread hinstance for resource loading */
+                    t_emu_hinstance = child_pe.image_base;
+
                     cpi->thunks->InstallThunks(child_pe, ctx.process_name);
+
+                    /* Snapshot writable sections AFTER InstallThunks patches IAT
+                       but BEFORE CallDllEntryPoints runs DllMain. */
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(cpi->thunks->dll_load_mutex);
+                        slot.RegisterWritableSections(cpi->mem->dll_writable_sections);
+                        slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
+                            return cpi->mem->TranslateGlobal(pg);
+                        });
+                    }
+
                     cpi->thunks->CallDllEntryPoints();
 
                     /* Build command line in shared memory */
@@ -151,8 +166,8 @@ void Win32Thunks::RegisterChildProcessHandler() {
                         g_debugger->RegisterCpu(&cpu, GetCurrentThreadId());
                     }
 
-                    LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X\n",
-                        cpu.r[REG_PC], stack_top);
+                    LOG(API, "[PROC] Child process started: PC=0x%08X SP=0x%08X '%s'\n",
+                        cpu.r[REG_PC], stack_top, ctx.process_name);
                     Win32Thunks* thunks_ptr = cpi->thunks;
                     delete cpi;
                     cpu.Run();
@@ -190,26 +205,11 @@ void Win32Thunks::RegisterChildProcessHandler() {
             RegisterChildThread(hThread);
             regs[0] = 1;
         } else {
-            /* Not an ARM PE — try native CreateProcessW */
-            STARTUPINFOW si = {}; si.cb = sizeof(si);
-            PROCESS_INFORMATION pi = {};
-            std::vector<wchar_t> cmdline_buf(cmdline.begin(), cmdline.end());
-            cmdline_buf.push_back(0);
-            std::wstring mapped_curdir = curdir.empty() ? L"" : MapWinCEPath(curdir);
-            BOOL ret = CreateProcessW(
-                mapped_image.empty() ? NULL : mapped_image.c_str(),
-                cmdline_buf.data(),
-                NULL, NULL, FALSE, fdwCreate, NULL,
-                mapped_curdir.empty() ? NULL : mapped_curdir.c_str(),
-                &si, &pi);
-            if (ret && procinfo_ptr) {
-                mem.Write32(procinfo_ptr + 0x00, (uint32_t)(uintptr_t)pi.hProcess);
-                mem.Write32(procinfo_ptr + 0x04, (uint32_t)(uintptr_t)pi.hThread);
-                mem.Write32(procinfo_ptr + 0x08, pi.dwProcessId);
-                mem.Write32(procinfo_ptr + 0x0C, pi.dwThreadId);
-            }
-            LOG(API, "[API]   -> %s (pid=%d)\n", ret ? "OK" : "FAILED", ret ? pi.dwProcessId : 0);
-            regs[0] = ret;
+            /* Not an ARM PE — return failure.
+               On real WinCE, CreateProcessW only creates WinCE processes.
+               Never fall back to native CreateProcess (would launch x86/x64 app). */
+            LOG(API, "[API]   -> not an ARM PE, returning FALSE\n");
+            regs[0] = 0;
         }
         return true;
     });

@@ -6,6 +6,8 @@
 #include <windows.h>
 #include "gdb_stub.h"
 #include "../cpu/arm_cpu.h"
+#include "../cpu/process_slot.h"
+#include "../thunks/thread_context.h"
 #include "../cpu/mem.h"
 #include "../log.h"
 
@@ -204,6 +206,19 @@ void GdbStub::HandleReadMemory(const std::string& args) {
     uint32_t len = HexToU32(args.substr(comma + 1));
     if (len > GDB_MAX_MEM_READ) len = GDB_MAX_MEM_READ;
 
+    /* Switch to the selected CPU's ProcessSlot so memory reads
+       see the correct per-process address space (slot-0 overlay). */
+    ProcessSlot* saved_slot = EmulatedMemory::process_slot;
+    {
+        std::lock_guard<std::mutex> lock(registry_mutex);
+        for (auto& t : threads) {
+            if (t.cpu == current_cpu) {
+                EmulatedMemory::process_slot = t.slot;
+                break;
+            }
+        }
+    }
+
     std::string hex;
     hex.reserve(len * 2);
     for (uint32_t i = 0; i < len; i++) {
@@ -211,6 +226,7 @@ void GdbStub::HandleReadMemory(const std::string& args) {
         uint8_t byte = ptr ? *ptr : 0;
         hex += ToHex(&byte, 1);
     }
+    EmulatedMemory::process_slot = saved_slot;
     SendPacket(hex);
 }
 

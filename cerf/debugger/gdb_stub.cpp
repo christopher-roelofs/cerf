@@ -19,9 +19,10 @@ GdbStub* g_debugger = nullptr;
 void GdbStub::RegisterCpu(ArmCpu* cpu, uint32_t tid) {
     std::lock_guard<std::mutex> lock(registry_mutex);
     for (auto& t : threads)
-        if (t.cpu == cpu) { t.tid = tid; return; }
-    threads.push_back({cpu, tid});
-    LOG(DBG, "[GDB] Registered CPU tid=%u (%zu total)\n", tid, threads.size());
+        if (t.cpu == cpu) { t.tid = tid; t.slot = EmulatedMemory::process_slot; return; }
+    threads.push_back({cpu, tid, EmulatedMemory::process_slot});
+    LOG(DBG, "[GDB] Registered CPU tid=%u slot=%p (%zu total)\n",
+        tid, EmulatedMemory::process_slot, threads.size());
     if (!current_cpu) current_cpu = cpu;
 }
 

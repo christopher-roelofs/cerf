@@ -35,8 +35,6 @@ void Win32Thunks::RegisterMessageWaitHandlers() {
                 mem.Write32(a + 24, wp.flags);
             }
         } else if (umsg == WM_SETTEXT && regs[3] != 0) {
-            /* ARM lParam is an emulated memory pointer to a wchar string.
-               Read it and pass a native pointer to DefWindowProcW. */
             std::wstring text = ReadWStringFromEmu(mem, regs[3]);
             regs[0] = (uint32_t)DefWindowProcW(hw, WM_SETTEXT, 0, (LPARAM)text.c_str());
         } else {

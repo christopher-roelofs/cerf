@@ -22,6 +22,7 @@ constexpr GdbSocket GDB_INVALID_SOCKET = (GdbSocket)(~0);
 
 class ArmCpu;
 class EmulatedMemory;
+struct ProcessSlot;
 
 /* Stop reasons sent to the GDB client (GDB signal numbers) */
 enum class GdbSignal : uint8_t {
@@ -38,7 +39,8 @@ constexpr uint64_t GDB_INTERRUPT_CHECK_MASK = 0xFFFF;
 /* Registered CPU entry */
 struct GdbThread {
     ArmCpu* cpu;
-    uint32_t tid;   /* OS thread ID */
+    uint32_t tid;         /* OS thread ID */
+    ProcessSlot* slot;    /* Per-process address space (for memory reads) */
 };
 
 class GdbStub {

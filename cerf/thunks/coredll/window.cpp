@@ -210,16 +210,15 @@ void Win32Thunks::RegisterWindowHandlers() {
                 HICON hIcon = LoadIconW(NULL, IDI_APPLICATION);
                 SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
                 SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
-                /* WinCE windows always come to foreground on creation.
-                   Desktop Windows restricts SetForegroundWindow from background threads.
-                   Force it via AttachThreadInput to match WinCE behavior. */
-                DWORD fgThread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
-                DWORD myThread = GetCurrentThreadId();
-                if (fgThread != myThread)
-                    AttachThreadInput(myThread, fgThread, TRUE);
-                SetForegroundWindow(hwnd);
-                if (fgThread != myThread)
-                    AttachThreadInput(myThread, fgThread, FALSE);
+                /* On real WinCE, window activation is managed by the GWE kernel
+                   without cross-process SendMessage. Desktop Windows'
+                   SetForegroundWindow sends WM_ACTIVATEAPP via SendMessage to the
+                   previous foreground window — this deadlocks when that window's
+                   thread is executing ARM code and can't pump messages.
+                   Use SetWindowPos(HWND_TOP) which brings to front without the
+                   cross-thread activation messaging. */
+                SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
             }
             ApplyWindowTheme(hwnd, !is_child);
             if (has_captionok) {

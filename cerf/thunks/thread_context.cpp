@@ -3,6 +3,7 @@
 #include "thread_context.h"
 #include "win32_thunks.h"
 #include "../log.h"
+#include <algorithm>
 
 thread_local ThreadContext* t_ctx = nullptr;
 thread_local uint32_t t_emu_hinstance = 0;
@@ -27,20 +28,33 @@ bool HasChildThreads() {
 }
 
 void WaitForChildThreads() {
-    std::lock_guard<std::mutex> lock(g_child_mutex);
-    if (g_child_threads.empty()) return;
-    LOG(EMU, "[EMU] Waiting for %zu child thread(s)...\n",
-        g_child_threads.size());
-    /* Wait with message pump so native windows stay responsive */
-    while (!g_child_threads.empty()) {
-        DWORD count = (DWORD)g_child_threads.size();
+    {
+        std::lock_guard<std::mutex> lock(g_child_mutex);
+        if (g_child_threads.empty()) return;
+        LOG(EMU, "[EMU] Waiting for %zu child thread(s)...\n",
+            g_child_threads.size());
+    }
+    /* Wait with message pump so native windows stay responsive.
+       Do NOT hold g_child_mutex during the loop — other threads call
+       RegisterChildThread() which needs the mutex. Copy handles under
+       the lock, then wait without it. */
+    while (true) {
+        std::vector<HANDLE> handles;
+        {
+            std::lock_guard<std::mutex> lock(g_child_mutex);
+            handles = g_child_threads;
+            if (handles.empty()) return;
+        }
+        DWORD count = (DWORD)handles.size();
         if (count > MAXIMUM_WAIT_OBJECTS) count = MAXIMUM_WAIT_OBJECTS;
         DWORD r = MsgWaitForMultipleObjects(
-            count, g_child_threads.data(), FALSE, INFINITE, QS_ALLINPUT);
+            count, handles.data(), FALSE, INFINITE, QS_ALLINPUT);
         if (r >= WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + count) {
             DWORD idx = r - WAIT_OBJECT_0;
-            CloseHandle(g_child_threads[idx]);
-            g_child_threads.erase(g_child_threads.begin() + idx);
+            CloseHandle(handles[idx]);
+            std::lock_guard<std::mutex> lock(g_child_mutex);
+            auto it = std::find(g_child_threads.begin(), g_child_threads.end(), handles[idx]);
+            if (it != g_child_threads.end()) g_child_threads.erase(it);
         } else if (r == WAIT_OBJECT_0 + count) {
             /* Messages available — pump them */
             MSG msg;

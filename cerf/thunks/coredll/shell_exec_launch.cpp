@@ -34,8 +34,7 @@ bool Win32Thunks::LaunchArmChildProcess(
     auto* cpi = new ChildProcInfo{ narrow_path, params, &mem, this };
 
     DWORD realThreadId = 0;
-    HANDLE hThread = ::CreateThread(NULL, 0,
-        [](LPVOID param) -> DWORD {
+    HANDLE hThread = ::CreateThread(NULL, 0, [](LPVOID param) -> DWORD {
             auto* cpi = (ChildProcInfo*)param;
             int thread_idx = g_next_thread_index.fetch_add(1);
 
