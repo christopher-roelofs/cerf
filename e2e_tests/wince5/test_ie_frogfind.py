@@ -2,11 +2,15 @@
 """E2E test: Open IE, navigate to frogfind.com, verify render."""
 import sys, os, time, ctypes
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from cerf_test_utils import CerfTestRunner, step, passed, failed
+from cerf_test_utils import CerfTestRunner, step, passed, failed, TMP_DIR
+
+if os.environ.get("CI"):
+    print("  SKIP: test_ie_frogfind requires internet access")
+    sys.exit(0)
 
 u32 = ctypes.windll.user32
 
-LOG = "Z:/tmp/e2e_ie_frogfind.txt"
+LOG = os.path.join(TMP_DIR, "e2e_ie_frogfind.txt")
 runner = CerfTestRunner(LOG)
 
 

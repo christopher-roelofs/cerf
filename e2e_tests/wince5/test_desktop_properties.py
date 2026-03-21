@@ -2,9 +2,9 @@
 """E2E test: Right-click desktop -> Properties -> Display Properties opens."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from cerf_test_utils import CerfTestRunner, step, passed, failed
+from cerf_test_utils import CerfTestRunner, step, passed, failed, TMP_DIR
 
-LOG = "Z:/tmp/e2e_desktop_props.txt"
+LOG = os.path.join(TMP_DIR, "e2e_desktop_props.txt")
 runner = CerfTestRunner(LOG)
 
 try:
@@ -21,7 +21,7 @@ try:
     runner.wait_for_log("TrackPopupMenuEx")
     step("Context menu opened.")
     time.sleep(1)
-    runner.screenshot("Z:/tmp/e2e_desktop_context.png")
+    runner.screenshot(os.path.join(TMP_DIR, "e2e_desktop_context.png"))
 
     # Click Properties — last item in context menu
     # From screenshot analysis: Properties is at approximately (280, 226)

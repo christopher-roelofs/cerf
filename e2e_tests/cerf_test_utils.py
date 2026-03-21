@@ -2,13 +2,16 @@
 Log-driven testing: poll the log file for expected patterns with timeouts."""
 import subprocess, time, os, sys, re
 
-CERF = r"Z:\build\Release\x64\cerf.exe"
-INTERACT = "python3 Z:/tools/interact.py"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CERF = os.path.join(REPO_ROOT, "build", "Release", "x64", "cerf.exe")
+INTERACT = f'python3 "{os.path.join(REPO_ROOT, "tools", "interact.py")}"'
+TMP_DIR = os.path.join(REPO_ROOT, "tmp")
+os.makedirs(TMP_DIR, exist_ok=True)
 DEFAULT_TIMEOUT = 30  # seconds
 
 
 def _registry_path(device):
-    return f"Z:/build/Release/x64/devices/{device}/registry.reg"
+    return os.path.join(REPO_ROOT, "build", "Release", "x64", "devices", device, "registry.reg")
 
 
 class CerfTestRunner:
@@ -35,7 +38,7 @@ class CerfTestRunner:
         if extra_args:
             args.extend(extra_args)
         self.proc = subprocess.Popen(
-            args, stdout=self.log_file, stderr=self.log_file, cwd="Z:/")
+            args, stdout=self.log_file, stderr=self.log_file, cwd=REPO_ROOT)
         print(f"  cerf started PID={self.proc.pid}")
 
     def wait_for_explorer(self):

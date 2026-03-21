@@ -2,9 +2,9 @@
 """E2E test: Start -> Settings -> Control Panel opens with applets."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from cerf_test_utils import CerfTestRunner, step, passed, failed
+from cerf_test_utils import CerfTestRunner, step, passed, failed, TMP_DIR
 
-LOG = "Z:/tmp/e2e_control_panel.txt"
+LOG = os.path.join(TMP_DIR, "e2e_control_panel.txt")
 runner = CerfTestRunner(LOG)
 
 try:
