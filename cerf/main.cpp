@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
     thunks.InitVFS(cfg.device_override ? cfg.device_override : "");
 
     /* System font and theming (reads registry, patches GetSysColor) */
-    boot.Step("Loading system fonts...");
+    boot.Step("Initializing theming...");
     thunks.InitWceSysFont();
     thunks.InitWceTheme();
 
