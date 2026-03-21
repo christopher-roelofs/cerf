@@ -11,6 +11,7 @@
 #include "../loader/pe_loader.h"
 #include "thread_context.h"
 #include "device_manager.h"
+#include "../boot_screen.h"
 
 /* GDI handles are UNSIGNED 32-bit values that must be ZERO-extended to 64-bit.
    On 64-bit Windows, GDI handles regularly have bit 31 set (e.g., HDC 0xA9011628).
@@ -193,6 +194,7 @@ public:
     std::set<std::string> boot_service_dlls; /* from cerf.ini boot_services= */
     std::set<std::string> init_blacklist;   /* from cerf.ini init_blacklist= */
     DeviceManager device_mgr; /* stream device driver manager (RegisterDevice etc.) */
+    BootScreen* boot_screen = nullptr; /* boot splash (set in main.cpp) */
     /* WinCE theming */
     bool enable_theming = false;
     bool disable_uxtheme = false;

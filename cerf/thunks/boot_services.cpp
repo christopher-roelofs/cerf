@@ -117,6 +117,10 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
 
     if (services.empty()) return;
 
+    /* Update boot screen total with driver count (adds to existing overhead) */
+    if (boot_screen)
+        boot_screen->SetTotal(boot_screen->progress_total + (int)services.size());
+
     /* Spawn device.exe as a real process with its own ProcessSlot.
        This thread stays alive — driver background threads (dcomssd)
        inherit its ProcessSlot and kernel thread flag. */
@@ -184,6 +188,11 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
             for (auto& svc : info->services) {
                 LOG(API, "[BOOT] Loading service '%ls': dll='%s' entry='%s' order=%u\n",
                     svc.name.c_str(), svc.dll.c_str(), svc.entry.c_str(), svc.order);
+                if (info->thunks->boot_screen) {
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "Driver %s", svc.dll.c_str());
+                    info->thunks->boot_screen->Step(buf);
+                }
 
                 /* Track which DLLs are newly loaded by device.exe. On real WinCE,
                    device.exe's DLLs don't fire DLL_THREAD_ATTACH on other processes. */

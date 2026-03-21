@@ -267,6 +267,7 @@
     <ClCompile Include="debugger\gdb_server.cpp" />
     <ClCompile Include="debugger\gdb_commands.cpp" />
     <!-- ARM trace point system -->
+    <ClCompile Include="boot_screen.cpp" />
     <ClCompile Include="tracing\trace_manager.cpp" />
     <ClCompile Include="tracing\wince5\traces_webview.cpp" />
     <ClCompile Include="tracing\wince5\traces_mshtml.cpp" />

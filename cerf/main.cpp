@@ -26,6 +26,7 @@
 #include "cli_helpers.h"
 #include "main_config.h"
 #include "patches.h"
+#include "boot_screen.h"
 
 int main(int argc, char* argv[]) {
     CerfConfig cfg;
@@ -62,6 +63,14 @@ int main(int argc, char* argv[]) {
     if (cfg.cli_os_build >= 0) thunks.os_build = (uint32_t)cfg.cli_os_build;
     if (cfg.cli_os_build_date) thunks.os_build_date = cfg.cli_os_build_date;
     if (cfg.cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cfg.cli_fake_total_phys;
+
+    /* Boot screen — Windows 2000-style splash with progress */
+    BootScreen boot;
+    boot.Create((int)thunks.screen_width, (int)thunks.screen_height);
+    thunks.boot_screen = &boot;
+    /* Initial total = fixed overhead steps (driver/init counts added dynamically) */
+    boot.SetTotal(5);
+    boot.Step("Initializing ARM emulator...");
 
     /* Shared memory regions used by all ARM processes */
     uint32_t cb_sentinel = 0xCAFEC000;
@@ -121,8 +130,10 @@ int main(int argc, char* argv[]) {
         });
 
     /* Start device.exe (boot services: lpcd, dcomssd, etc.) */
+    boot.Step("Loading registry...");
     thunks.StartBootServices(mem);
 
+    boot.Step("Applying runtime patches...");
     ApplyRuntimePatches(mem);
 
     /* GDB remote debugging */
@@ -139,13 +150,16 @@ int main(int argc, char* argv[]) {
     }
 
     /* Process HKLM\init boot sequence (unless --no-init) */
-    if (!cfg.no_init)
+    if (!cfg.no_init) {
+        boot.Step("Processing init sequence...");
         thunks.ProcessInitHive(mem);
+    }
 
     /* Launch user-specified exe (if any) */
     if (cfg.exe_path) {
         std::wstring resolved = thunks.ResolveExePath(cfg.exe_path);
         LOG(EMU, "[EMU] Launching: %ls\n", resolved.c_str());
+        boot.Step("Launching application...");
 
         /* Set exe_dir for DLL search (app-bundled DLLs) */
         {
@@ -175,10 +189,15 @@ int main(int argc, char* argv[]) {
     } else if (cfg.no_init) {
         LOG_ERR("No exe specified and --no-init set. Nothing to run.\n");
         PrintUsage(argv[0]);
+        boot.Destroy();
         if (gdb) { g_debugger = nullptr; delete gdb; }
         Log::Close();
         return 1;
     }
+
+    /* Boot screen: schedule fallback destroy (10s) for --no-init or if
+       explorer never calls SignalStarted. OnShellReady() cancels this. */
+    boot.ScheduleDestroy(10000);
 
     /* Wait for all child processes with message pump */
     LOG(EMU, "[EMU] Orchestrator waiting for child processes...\n");
@@ -190,6 +209,9 @@ int main(int argc, char* argv[]) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    boot.Destroy();
+    thunks.boot_screen = nullptr;
 
     if (gdb) {
         g_debugger = nullptr;

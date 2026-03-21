@@ -190,7 +190,7 @@ void Win32Thunks::RegisterComHandlers() {
     /* SignalStarted: real implementation for HKLM\init boot sequence.
        Each launched process calls SignalStarted(dwOrder) after init is complete.
        This unblocks processes whose DependXX entries reference that order. */
-    Thunk("SignalStarted", 639, [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("SignalStarted", 639, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t order = regs[0];
         LOG(API, "[API] SignalStarted(%u)\n", order);
         /* Create/set a named event that ProcessInitHive waits on */
@@ -198,6 +198,10 @@ void Win32Thunks::RegisterComHandlers() {
         swprintf(event_name, 64, L"CerfInitDone_%u", order);
         HANDLE h = CreateEventW(NULL, TRUE, FALSE, event_name);
         if (h) { SetEvent(h); CloseHandle(h); }
+        /* If explorer.exe signals, dismiss the boot screen */
+        if (boot_screen && t_ctx &&
+            strstr(t_ctx->process_name, "explorer"))
+            boot_screen->OnShellReady();
         regs[0] = 0; return true;
     });
     Thunk("OpenEventW", 1496, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {

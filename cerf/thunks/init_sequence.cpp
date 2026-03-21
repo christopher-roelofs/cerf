@@ -93,6 +93,21 @@ void Win32Thunks::ProcessInitHive(EmulatedMemory& mem) {
 
     LOG(API, "[INIT] Found %zu boot entries\n", entries.size());
 
+    /* Count non-blacklisted entries for boot screen progress */
+    if (boot_screen) {
+        int non_bl = 0;
+        for (auto& e : entries) {
+            std::wstring fn = e.exe_path;
+            auto sl = fn.rfind(L'\\');
+            if (sl != std::wstring::npos) fn = fn.substr(sl + 1);
+            std::string nfn;
+            for (auto c : fn) nfn += (char)c;
+            for (auto& c : nfn) if (c >= 'A' && c <= 'Z') c += 32;
+            if (!init_blacklist.count(nfn)) non_bl++;
+        }
+        boot_screen->SetTotal(boot_screen->progress_total + non_bl);
+    }
+
     /* Launch each entry */
     for (auto& entry : entries) {
         /* Extract filename for blacklist check */
@@ -160,6 +175,11 @@ void Win32Thunks::ProcessInitHive(EmulatedMemory& mem) {
         }
         LOG(API, "[INIT] Launch%u: '%ls' -> '%ls'\n",
             entry.order, entry.exe_path.c_str(), host_path.c_str());
+        if (boot_screen) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Init %s", narrow_fn.c_str());
+            boot_screen->Step(buf);
+        }
 
         /* Verify file exists */
         DWORD attrs = GetFileAttributesW(host_path.c_str());

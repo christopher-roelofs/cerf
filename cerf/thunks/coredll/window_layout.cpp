@@ -33,14 +33,12 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
         UINT cmd = regs[1];
         HWND result = GetWindow(hw, cmd);
         /* For sibling enumeration (GW_HWNDNEXT=2, GW_HWNDPREV=3, GW_HWNDFIRST=0,
-           GW_HWNDLAST=1), skip windows not owned by cerf.  This prevents the taskbar
-           from showing native host windows (IDA, etc.) as running apps. */
+           GW_HWNDLAST=1), skip windows not registered in the emulator.
+           This prevents the taskbar from showing native host windows and
+           internal cerf windows (boot screen, etc.) as running apps. */
         if (cmd <= 3) {
-            DWORD our_pid = GetCurrentProcessId();
             while (result) {
-                DWORD pid = 0;
-                GetWindowThreadProcessId(result, &pid);
-                if (pid == our_pid) break;
+                if (hwnd_wndproc_map.count(result)) break;
                 result = GetWindow(result, (cmd == 0 || cmd == 2) ? GW_HWNDNEXT : GW_HWNDPREV);
             }
         }
@@ -247,6 +245,9 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
             return true;
         }
         HWND hw = FindWindowW(regs[0] ? cn.c_str() : NULL, regs[1] ? wn.c_str() : NULL);
+        /* Only return windows registered in the emulator — hide native-only
+           windows like the boot screen from ARM code. */
+        if (hw && !hwnd_wndproc_map.count(hw)) hw = NULL;
         LOG(API, "[API] FindWindowW('%ls', '%ls') -> 0x%p\n", cn.c_str(), wn.c_str(), hw);
         regs[0] = (uint32_t)(uintptr_t)hw;
         return true;
