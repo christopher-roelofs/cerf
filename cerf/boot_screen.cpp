@@ -80,8 +80,7 @@ static DWORD WINAPI BootScreenThread(LPVOID param) {
 
     /* Activate comctl32 v6 for this thread — PBS_MARQUEE requires visual styles */
     ACTCTXW actx = { sizeof(actx) };
-    actx.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID | ACTCTX_FLAG_HMODULE_VALID
-                 | ACTCTX_FLAG_SET_PROCESS_DEFAULT;
+    actx.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID | ACTCTX_FLAG_HMODULE_VALID;
     actx.hModule = GetModuleHandle(NULL);
     actx.lpResourceName = MAKEINTRESOURCEW(2); /* try resource ID 2 first */
     HANDLE hActCtx = CreateActCtxW(&actx);
