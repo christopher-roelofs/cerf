@@ -6,9 +6,10 @@
 /* Boot splash shown during CERF initialization.
    Runs on a dedicated thread with its own message pump.
    Step/OnShellReady are thread-safe (use PostMessage).
-   Progress bar is indeterminate (animated marquee). */
+   Progress bar is native PBS_MARQUEE (indeterminate). */
 struct BootScreen {
     HWND hwnd = nullptr;
+    HWND progress_hwnd = nullptr;
     HANDLE thread = nullptr;
     HANDLE ready_event = nullptr;
     HICON icon = nullptr;
@@ -16,7 +17,6 @@ struct BootScreen {
 
     std::mutex mu;
     std::string status_text;
-    int marquee_pos = 0;
     int width = 800;
     int height = 480;
 

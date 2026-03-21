@@ -204,8 +204,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    boot.Step("");
-
     /* Wait for all child processes with message pump */
     LOG(EMU, "[EMU] Orchestrator waiting for child processes...\n");
     WaitForChildThreads();
