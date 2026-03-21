@@ -78,6 +78,36 @@ static DWORD WINAPI BootScreenThread(LPVOID param) {
     BootScreen* bs = (BootScreen*)param;
     s_boot = bs;
 
+    /* Activate comctl32 v6 for this thread — PBS_MARQUEE requires visual styles */
+    ACTCTXW actx = { sizeof(actx) };
+    actx.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID | ACTCTX_FLAG_HMODULE_VALID
+                 | ACTCTX_FLAG_SET_PROCESS_DEFAULT;
+    actx.hModule = GetModuleHandle(NULL);
+    actx.lpResourceName = MAKEINTRESOURCEW(2); /* try resource ID 2 first */
+    HANDLE hActCtx = CreateActCtxW(&actx);
+    if (hActCtx == INVALID_HANDLE_VALUE) {
+        /* No manifest in exe — create one inline */
+        static const char manifest[] =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">"
+            "<dependency><dependentAssembly>"
+            "<assemblyIdentity type=\"win32\" name=\"Microsoft.Windows.Common-Controls\" "
+            "version=\"6.0.0.0\" processorArchitecture=\"*\" publicKeyToken=\"6595b64144ccf1df\"/>"
+            "</dependentAssembly></dependency></assembly>";
+        /* Write temp manifest file */
+        char tmp[MAX_PATH];
+        GetTempPathA(MAX_PATH, tmp);
+        strcat_s(tmp, "cerf_cc6.manifest");
+        FILE* mf = fopen(tmp, "w");
+        if (mf) { fputs(manifest, mf); fclose(mf); }
+        ACTCTXA actxa = { sizeof(actxa) };
+        actxa.lpSource = tmp;
+        hActCtx = CreateActCtxA(&actxa);
+    }
+    ULONG_PTR cookie = 0;
+    if (hActCtx != INVALID_HANDLE_VALUE)
+        ActivateActCtx(hActCtx, &cookie);
+
     INITCOMMONCONTROLSEX icex = { sizeof(icex), ICC_PROGRESS_CLASS };
     InitCommonControlsEx(&icex);
 
