@@ -155,7 +155,16 @@ static bool ParseRegFileValue(const std::string& rest, Win32Thunks::RegValue& va
             if (pos >= rest.size() || rest[pos] != '"') break;
             size_t end = rest.find('"', pos + 1);
             if (end == std::string::npos) break;
-            std::string raw = rest.substr(pos + 1, end - pos - 1);
+            std::string escaped = rest.substr(pos + 1, end - pos - 1);
+            /* Unescape \\->\  and \"->" to match EscapeRegString */
+            std::string raw;
+            for (size_t j = 0; j < escaped.size(); j++) {
+                if (escaped[j] == '\\' && j + 1 < escaped.size()) {
+                    raw += escaped[++j];
+                } else {
+                    raw += escaped[j];
+                }
+            }
             /* Each string gets null-terminated in wide chars */
             for (char c : raw) {
                 uint16_t wc = (uint16_t)(unsigned char)c;
