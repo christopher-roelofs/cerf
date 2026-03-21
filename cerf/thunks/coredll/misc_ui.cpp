@@ -86,4 +86,8 @@ void Win32Thunks::RegisterMiscUiHandlers() {
         regs[0] = 0;
         return true;
     });
+    Thunk("GetClipboardDataAlloc", 681, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] GetClipboardDataAlloc(format=%u) -> stub 0\n", regs[0]);
+        regs[0] = 0; return true;
+    });
 }

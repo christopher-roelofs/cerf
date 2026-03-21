@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """E2E test: Right-click desktop -> Properties -> Display Properties opens."""
 import sys, os, time
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from cerf_test_utils import CerfTestRunner, step, passed, failed
 
 LOG = "Z:/tmp/e2e_desktop_props.txt"

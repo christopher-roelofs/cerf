@@ -79,4 +79,11 @@ void Win32Thunks::RegisterFileTimeHandlers() {
         LOG(API, "[API] GetDiskFreeSpaceExW('%ls') -> %d\n", path.c_str(), ret);
         regs[0] = ret; return true;
     });
+    /* CopyFileExW(src, dst, progressRoutine, data, cancel, flags) */
+    Thunk("CopyFileExW", 1958, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring src = ReadWStringFromEmu(mem, regs[0]);
+        std::wstring dst = ReadWStringFromEmu(mem, regs[1]);
+        LOG(API, "[API] CopyFileExW('%ls' -> '%ls') -> stub TRUE\n", src.c_str(), dst.c_str());
+        regs[0] = 1; return true;
+    });
 }

@@ -40,7 +40,7 @@ void Win32Thunks::RegisterCrtMemoryHandlers() {
     Thunk("delete", 1094, thunk_handlers["free"]);
     Thunk("new[]", 1456, thunk_handlers["malloc"]);
     Thunk("delete[]", 1457, thunk_handlers["free"]);
-    Thunk("_msize", [](uint32_t* regs, EmulatedMemory&) -> bool {
+    Thunk("_msize", 1049, [](uint32_t* regs, EmulatedMemory&) -> bool {
         SlabAllocator* slab = GetSlab();
         regs[0] = slab ? slab->Size(regs[0]) : (uint32_t)-1;
         return true;

@@ -156,6 +156,34 @@ void Win32Thunks::RegisterMemoryHandlers() {
         regs[0] = 1;
         return true;
     });
+    /* VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocType, flProtect) */
+    Thunk("VirtualAllocEx", 2563, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        uint32_t addr = regs[1], size = regs[2];
+        LOG(API, "[API] VirtualAllocEx(addr=0x%08X, size=%u) -> stub\n", addr, size);
+        if (addr == 0) {
+            SlabAllocator* slab = GetSlab();
+            regs[0] = slab ? slab->Alloc(size) : 0;
+        } else {
+            regs[0] = addr;
+        }
+        return true;
+    });
+    /* VirtualFreeEx(hProcess, lpAddress, dwSize, dwFreeType) */
+    Thunk("VirtualFreeEx", 2564, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] VirtualFreeEx(addr=0x%08X) -> stub\n", regs[1]);
+        SlabAllocator* slab = GetSlab();
+        if (slab && regs[1]) slab->Free(regs[1]);
+        regs[0] = 1; return true;
+    });
+    /* CeSafeCopyMemory(dst, src, len) */
+    Thunk("CeSafeCopyMemory", 2508, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] CeSafeCopyMemory(dst=0x%08X, src=0x%08X, len=%u)\n", regs[0], regs[1], regs[2]);
+        uint8_t* d = mem.Translate(regs[0]);
+        uint8_t* s = mem.Translate(regs[1]);
+        if (d && s && regs[2] > 0) memcpy(d, s, regs[2]);
+        regs[0] = (d && s) ? 1 : 0;
+        return true;
+    });
 
     /* -- GetProcessHeap / HeapCreate / HeapDestroy -- */
 
@@ -222,6 +250,7 @@ void Win32Thunks::RegisterMemoryHandlers() {
     };
     Thunk("HeapAlloc", 46, heapAllocImpl);
     Thunk("HeapAllocTrace", 20, heapAllocImpl);
+    Thunk("HeapAllocTrace_ce6", 1999, heapAllocImpl); /* WinCE 6 ordinal */
     Thunk("HeapFree", 49, [](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t hHeap = regs[0], addr = regs[2];
         SlabAllocator* slab = GetSlabForHeap(hHeap);

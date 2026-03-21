@@ -24,7 +24,7 @@ void Win32Thunks::RegisterMiscHandlers() {
         };
     };
     /* SIP (Software Input Panel) */
-    Thunk("SipGetInfo", stub0("SipGetInfo"));
+    Thunk("SipGetInfo", 1172, stub0("SipGetInfo"));
     Thunk("SipSetDefaultRect", stub0("SipSetDefaultRect"));
     Thunk("SipEnumIM", stub0("SipEnumIM"));
     Thunk("SipShowIM", 1171, stub0("SipShowIM"));
@@ -82,6 +82,16 @@ void Win32Thunks::RegisterMiscHandlers() {
     });
     Thunk("__security_gen_cookie", 1875, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0xBB40E64E; return true; });
     Thunk("__security_gen_cookie2", 2696, [](uint32_t* regs, EmulatedMemory&) -> bool { regs[0] = 0xBB40E64E; return true; });
+    /* __report_gsfailure — GS buffer overrun detected */
+    Thunk("__report_gsfailure", 1876, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] __report_gsfailure — buffer overrun detected\n");
+        regs[0] = 0; return true;
+    });
+    /* _XcptFilter — CRT exception filter */
+    Thunk("_XcptFilter", 1645, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] _XcptFilter(code=0x%X) -> 0 (CONTINUE_SEARCH)\n", regs[0]);
+        regs[0] = 0; return true;
+    });
     Thunk("CeGenRandom", 1601, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         for (uint32_t i = 0; i < regs[0]; i++) mem.Write8(regs[1] + i, (uint8_t)(rand() & 0xFF));
         regs[0] = 1; return true;
@@ -246,6 +256,7 @@ void Win32Thunks::RegisterMiscHandlers() {
         return true;
     };
     Thunk("CreateAPISet", 559, createApiSetImpl);
+    Thunk("CreateAPISet_ce6", 2539, createApiSetImpl); /* WinCE 6 ordinal */
     thunk_handlers["xxx_CreateAPISet"] = createApiSetImpl;
 
     auto registerApiSetImpl = [this](uint32_t* regs, EmulatedMemory&) -> bool {

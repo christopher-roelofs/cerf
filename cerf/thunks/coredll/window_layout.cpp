@@ -304,4 +304,26 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
     Thunk("EndDeferWindowPos", 1159, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = EndDeferWindowPos((HDWP)(intptr_t)(int32_t)regs[0]); return true;
     });
+    Thunk("SetWindowPosOnRotate", 2706, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SetWindowPosOnRotate -> stub\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("GetWindowAutoGesture", 2869, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] GetWindowAutoGesture -> stub 0\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("SetWindowAutoGesture", 2870, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SetWindowAutoGesture -> stub 0\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("GetAnimateMessageInfo", 2871, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] GetAnimateMessageInfo -> stub 0\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("GetNextDlgGroupItem", 697, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] GetNextDlgGroupItem(dlg=0x%X, ctl=0x%X, prev=%u)\n", regs[0], regs[1], regs[2]);
+        regs[0] = (uint32_t)(uintptr_t)GetNextDlgGroupItem(
+            (HWND)(intptr_t)(int32_t)regs[0], (HWND)(intptr_t)(int32_t)regs[1], regs[2]);
+        return true;
+    });
 }

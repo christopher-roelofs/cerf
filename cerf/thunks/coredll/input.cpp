@@ -227,4 +227,13 @@ void Win32Thunks::RegisterInputHandlers() {
         regs[0] = 0x04090409; /* US English */
         return true;
     });
+    /* SIP (Soft Input Panel) stubs */
+    Thunk("ImmSIPanelState", 804, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ImmSIPanelState -> stub 0\n");
+        regs[0] = 0; return true;
+    });
+    Thunk("SipSetInfo", 1173, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SipSetInfo -> stub FALSE\n");
+        regs[0] = 0; return true;
+    });
 }

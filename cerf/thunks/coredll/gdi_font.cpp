@@ -177,4 +177,9 @@ void Win32Thunks::RegisterGdiFontHandlers() {
         regs[0] = ret;
         return true;
     });
+    Thunk("RemoveFontResourceW", 900, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring name = ReadWStringFromEmu(mem, regs[0]);
+        LOG(API, "[API] RemoveFontResourceW('%ls') -> stub TRUE\n", name.c_str());
+        regs[0] = 1; return true;
+    });
 }

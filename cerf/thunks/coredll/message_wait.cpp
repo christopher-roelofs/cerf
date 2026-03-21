@@ -83,4 +83,16 @@ void Win32Thunks::RegisterMessageWaitHandlers() {
     Thunk("MessageBeep", 857, [](uint32_t* regs, EmulatedMemory&) -> bool {
         MessageBeep(regs[0]); regs[0] = 1; return true;
     });
+    Thunk("InSendMessage", 1419, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = 0; /* FALSE — not inside a SendMessage call */
+        return true;
+    });
+    Thunk("GetQueueStatus", 1420, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = GetQueueStatus(regs[0]);
+        return true;
+    });
+    Thunk("GetMessageSource", 872, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] GetMessageSource -> stub 0\n");
+        regs[0] = 0; return true;
+    });
 }

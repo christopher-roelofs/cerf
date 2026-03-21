@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """E2E test: Open IE, navigate to frogfind.com, verify render."""
 import sys, os, time, ctypes
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from cerf_test_utils import CerfTestRunner, step, passed, failed
 
 u32 = ctypes.windll.user32

@@ -292,6 +292,16 @@ void Win32Thunks::RegisterModuleHandlers() {
         regs[0] = 1;
         return true;
     });
+    /* FreeLibraryAndExitThread(hModule, dwExitCode) */
+    Thunk("FreeLibraryAndExitThread", 1216, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] FreeLibraryAndExitThread(hModule=0x%08X, exitCode=%u)\n", regs[0], regs[1]);
+        /* Call FreeLibrary handler then ExitThread */
+        auto it = thunk_handlers.find("FreeLibrary");
+        if (it != thunk_handlers.end()) it->second(regs, mem);
+        uint32_t exitCode = regs[1];
+        ExitThread(exitCode);
+        return true;
+    });
     Thunk("DisableThreadLibraryCalls", 1232, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] DisableThreadLibraryCalls(hModule=0x%08X) -> TRUE\n", regs[0]);
         disable_thread_notify_bases.insert(regs[0]);

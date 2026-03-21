@@ -6,7 +6,7 @@ Does NOT guess coordinates for buttons inside solitaire (Exit etc) —
 only uses known coordinates for explorer UI elements.
 """
 import sys, os, time
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from cerf_test_utils import CerfTestRunner, step, passed, failed
 
 LOG = "Z:/tmp/e2e_solitaire.txt"

@@ -194,4 +194,8 @@ void Win32Thunks::RegisterLocaleHandlers() {
         regs[0] = buf_addr;
         return true;
     });
+    Thunk("EnumCalendarInfoW", 206, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] EnumCalendarInfoW -> stub 0\n");
+        regs[0] = 0; return true;
+    });
 }

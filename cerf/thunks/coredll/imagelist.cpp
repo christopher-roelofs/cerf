@@ -226,6 +226,14 @@ void Win32Thunks::RegisterImageListHandlers() {
         regs[0] = ImageList_SetOverlayImage(h, (int)regs[1], (int)regs[2]);
         return true;
     });
+    Thunk("ImageList_BeginDrag", 740, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ImageList_BeginDrag -> stub TRUE\n");
+        regs[0] = 1; return true;
+    });
+    Thunk("ImageList_EndDrag", 751, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ImageList_EndDrag -> stub\n");
+        regs[0] = 0; return true;
+    });
     /* WinCE-specific: copy an image between ImageLists with dithering for
        disabled toolbar buttons. TODO: current implementation copies the icon
        without dithering or offset — xOff/yOff are ignored and the disabled

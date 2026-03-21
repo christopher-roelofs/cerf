@@ -258,6 +258,22 @@ void Win32Thunks::RegisterCrtExtraHandlers() {
         regs[0] = 6; /* ERROR_INVALID_HANDLE */
         return true;
     });
+    Thunk("fgetpos", 1128, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] fgetpos -> stub -1\n");
+        regs[0] = (uint32_t)-1; return true;
+    });
+    Thunk("fsetpos", 1129, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] fsetpos -> stub -1\n");
+        regs[0] = (uint32_t)-1; return true;
+    });
+    Thunk("strspn", 1408, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] strspn(str=0x%08X, accept=0x%08X) -> stub\n", regs[0], regs[1]);
+        std::string s = ReadStringFromEmu(mem, regs[0]);
+        std::string accept = ReadStringFromEmu(mem, regs[1]);
+        regs[0] = (uint32_t)s.find_first_not_of(accept);
+        if (regs[0] == (uint32_t)std::string::npos) regs[0] = (uint32_t)s.size();
+        return true;
+    });
     /* C++ exception runtime — needed by webview.dll for try/catch */
     Thunk("_CxxThrowException", 1551, [](uint32_t* regs, EmulatedMemory&) -> bool {
         LOG(API, "[API] _CxxThrowException(obj=0x%08X, info=0x%08X) — C++ exception in ARM code!\n",

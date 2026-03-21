@@ -52,4 +52,48 @@ void Win32Thunks::RegisterKernelApiHandlers() {
         return true;
     });
 
+    /* CeGetRandomSeed — returns a random seed value */
+    Thunk("CeGetRandomSeed", 1443, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        regs[0] = (uint32_t)rand() ^ ((uint32_t)rand() << 16);
+        LOG(API, "[API] CeGetRandomSeed -> 0x%08X\n", regs[0]);
+        return true;
+    });
+    /* QueryInstructionSet */
+    Thunk("QueryInstructionSet", 1677, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] QueryInstructionSet(set=%u) -> PROCESSOR_ARM\n", regs[0]);
+        if (regs[1]) mem.Write32(regs[1], 0x00000004);
+        regs[0] = 1; return true;
+    });
+    /* CeOpenCallerBuffer — kernel marshaling, identity mapping in emulator */
+    Thunk("CeOpenCallerBuffer", 2569, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] CeOpenCallerBuffer(ppDest=0x%08X, pSrc=0x%08X) -> stub S_OK\n", regs[0], regs[1]);
+        if (regs[0]) mem.Write32(regs[0], regs[1]);
+        regs[0] = 0; return true;
+    });
+    Thunk("CeCloseCallerBuffer", 2570, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] CeCloseCallerBuffer -> stub S_OK\n");
+        regs[0] = 0; return true;
+    });
+    /* GetCurrentFT — get current FILETIME */
+    Thunk("GetCurrentFT", 29, [](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] GetCurrentFT(pFT=0x%08X) -> stub\n", regs[0]);
+        FILETIME ft; GetSystemTimeAsFileTime(&ft);
+        if (regs[0]) { mem.Write32(regs[0], ft.dwLowDateTime); mem.Write32(regs[0] + 4, ft.dwHighDateTime); }
+        regs[0] = 1; return true;
+    });
+    /* CeGetFileNotificationInfo — no notifications */
+    Thunk("CeGetFileNotificationInfo", 1798, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] CeGetFileNotificationInfo -> stub 0\n");
+        regs[0] = 0; return true;
+    });
+    /* CE database stubs */
+    Thunk("CeDeleteRecord", 320, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeDeleteRecord -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeWriteRecordProps", 322, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeWriteRecordProps -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeMountDBVol", 1164, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeMountDBVol -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeDeleteDatabaseEx", 1193, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeDeleteDatabaseEx -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeReadRecordPropsEx", 1194, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeReadRecordPropsEx -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeUnmountDBVol", 1197, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeUnmountDBVol -> stub TRUE\n"); regs[0] = 1; return true; });
+    Thunk("CeFlushDBVol", 1217, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeFlushDBVol -> stub TRUE\n"); regs[0] = 1; return true; });
+    Thunk("CeCreateDatabaseEx2", 1468, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeCreateDatabaseEx2 -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeSeekDatabaseEx", 1470, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeSeekDatabaseEx -> stub 0\n"); regs[0] = 0; return true; });
 }

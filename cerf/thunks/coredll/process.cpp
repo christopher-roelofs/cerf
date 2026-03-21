@@ -327,4 +327,38 @@ void Win32Thunks::RegisterProcessHandlers() {
         regs[0] = 0; /* FALSE — process is NOT dying */
         return true;
     });
+    /* ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead) */
+    Thunk("ReadProcessMemory", 506, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t src = regs[1], dst = regs[2], size = regs[3];
+        uint32_t pBytesRead = ReadStackArg(regs, mem, 0);
+        LOG(API, "[API] ReadProcessMemory(src=0x%08X, dst=0x%08X, size=%u)\n", src, dst, size);
+        uint8_t* s = mem.Translate(src);
+        uint8_t* d = mem.Translate(dst);
+        if (s && d && size > 0) memcpy(d, s, size);
+        if (pBytesRead) mem.Write32(pBytesRead, (s && d) ? size : 0);
+        regs[0] = (s && d) ? 1 : 0;
+        return true;
+    });
+    /* WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten) */
+    Thunk("WriteProcessMemory", 507, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t dst = regs[1], src = regs[2], size = regs[3];
+        uint32_t pBytesWritten = ReadStackArg(regs, mem, 0);
+        LOG(API, "[API] WriteProcessMemory(dst=0x%08X, src=0x%08X, size=%u)\n", dst, src, size);
+        uint8_t* d = mem.Translate(dst);
+        uint8_t* s = mem.Translate(src);
+        if (s && d && size > 0) memcpy(d, s, size);
+        if (pBytesWritten) mem.Write32(pBytesWritten, (s && d) ? size : 0);
+        regs[0] = (s && d) ? 1 : 0;
+        return true;
+    });
+    /* SuspendThread — stub fail, don't actually suspend */
+    Thunk("SuspendThread", 499, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] SuspendThread(hThread=0x%08X) -> stub -1\n", regs[0]);
+        regs[0] = (uint32_t)-1; return true;
+    });
+    /* ThreadExceptionExit */
+    Thunk("ThreadExceptionExit", 1474, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] ThreadExceptionExit -> stub\n");
+        regs[0] = 0; return true;
+    });
 }

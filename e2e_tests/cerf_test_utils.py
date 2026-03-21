@@ -3,31 +3,39 @@ Log-driven testing: poll the log file for expected patterns with timeouts."""
 import subprocess, time, os, sys, re
 
 CERF = r"Z:\build\Release\x64\cerf.exe"
-REGISTRY = "Z:/build/Release/x64/devices/wince5/registry.reg"
 INTERACT = "python3 Z:/tools/interact.py"
 DEFAULT_TIMEOUT = 30  # seconds
+
+
+def _registry_path(device):
+    return f"Z:/build/Release/x64/devices/{device}/registry.reg"
 
 
 class CerfTestRunner:
     """Manages cerf.exe lifecycle and log-driven assertions."""
 
-    def __init__(self, log_path, log_categories="API"):
+    def __init__(self, log_path, log_categories="API", device="wince5"):
         self.log_path = log_path
         self.log_categories = log_categories
+        self.device = device
         self.proc = None
         self.log_file = None
         self._last_check_pos = 0
 
-    def start(self):
+    def start(self, extra_args=None):
         """Kill existing cerf, delete stale registry, start fresh."""
         subprocess.run(["taskkill", "/f", "/im", "cerf.exe"], capture_output=True)
         time.sleep(1)
-        if os.path.exists(REGISTRY):
-            os.remove(REGISTRY)
+        reg = _registry_path(self.device)
+        if os.path.exists(reg):
+            os.remove(reg)
         self.log_file = open(self.log_path, "w")
+        args = [CERF, "--flush-outputs", f"--log={self.log_categories}",
+                f"--device={self.device}"]
+        if extra_args:
+            args.extend(extra_args)
         self.proc = subprocess.Popen(
-            [CERF, "--flush-outputs", f"--log={self.log_categories}"],
-            stdout=self.log_file, stderr=self.log_file, cwd="Z:/")
+            args, stdout=self.log_file, stderr=self.log_file, cwd="Z:/")
         print(f"  cerf started PID={self.proc.pid}")
 
     def wait_for_explorer(self):
