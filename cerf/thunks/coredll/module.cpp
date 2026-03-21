@@ -213,7 +213,7 @@ void Win32Thunks::RegisterModuleHandlers() {
     Thunk("GetProcAddressW", 530, [getProcAddrImpl](uint32_t* regs, EmulatedMemory& mem) -> bool {
         return getProcAddrImpl(regs, mem, true);
     });
-    Thunk("GetProcAddressA", [getProcAddrImpl](uint32_t* regs, EmulatedMemory& mem) -> bool {
+    Thunk("GetProcAddressA", 1230, [getProcAddrImpl](uint32_t* regs, EmulatedMemory& mem) -> bool {
         return getProcAddrImpl(regs, mem, false);
     });
     Thunk("GetProcAddress", [getProcAddrImpl](uint32_t* regs, EmulatedMemory& mem) -> bool {

@@ -182,4 +182,24 @@ void Win32Thunks::RegisterGdiFontHandlers() {
         LOG(API, "[API] RemoveFontResourceW('%ls') -> stub TRUE\n", name.c_str());
         regs[0] = 1; return true;
     });
+    /* EnableEUDC(fEnableEUDC) -> BOOL */
+    Thunk("EnableEUDC", 986, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] EnableEUDC(%u) -> stub TRUE\n", regs[0]);
+        regs[0] = 1; return true;
+    });
+    /* GetIconInfo(hIcon, piconinfo) -> BOOL */
+    Thunk("GetIconInfo", 1822, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] GetIconInfo(hIcon=0x%08X) -> stub TRUE\n", regs[0]);
+        /* ICONINFO: fIcon, xHotspot, yHotspot, hbmMask, hbmColor — 5 DWORDs */
+        uint32_t out = regs[1];
+        if (out) {
+            mem.Write32(out, 1);      /* fIcon = TRUE */
+            mem.Write32(out + 4, 0);  /* xHotspot */
+            mem.Write32(out + 8, 0);  /* yHotspot */
+            mem.Write32(out + 12, 0); /* hbmMask = NULL */
+            mem.Write32(out + 16, 0); /* hbmColor = NULL */
+        }
+        regs[0] = 1;
+        return true;
+    });
 }

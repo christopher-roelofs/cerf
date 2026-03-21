@@ -304,4 +304,23 @@ void Win32Thunks::RegisterCrtExtraHandlers() {
         LOG(API, "[API] std::_Xlen — length error in ARM code!\n");
         return true;
     });
+    /* _wtoi(str) -> int */
+    Thunk("_wtoi", 3026, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        std::wstring s = ReadWStringFromEmu(mem, regs[0]);
+        int val = 0;
+        if (!s.empty()) val = _wtoi(s.c_str());
+        LOG(API, "[API] _wtoi('%ls') -> %d\n", s.c_str(), val);
+        regs[0] = (uint32_t)val;
+        return true;
+    });
+    /* wcsnlen(str, maxlen) — bounded wide string length */
+    Thunk("wcsnlen", 2630, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t str = regs[0], maxlen = regs[1];
+        uint32_t len = 0;
+        for (; len < maxlen; len++) {
+            if (mem.Read16(str + len * 2) == 0) break;
+        }
+        regs[0] = len;
+        return true;
+    });
 }

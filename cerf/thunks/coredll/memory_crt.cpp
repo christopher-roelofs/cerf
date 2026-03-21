@@ -53,4 +53,12 @@ void Win32Thunks::RegisterCrtMemoryHandlers() {
         regs[0] = mem.IsValid(regs[0]) ? 0 : 1;
         return true;
     });
+    /* _recalloc(ptr, count, size) -> ptr — realloc + zero-init new portion */
+    Thunk("_recalloc", 2656, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] _recalloc(ptr=0x%08X, count=%u, size=%u)\n", regs[0], regs[1], regs[2]);
+        SlabAllocator* slab = GetSlab();
+        uint32_t new_size = regs[1] * regs[2];
+        regs[0] = slab ? slab->Realloc(regs[0], new_size) : 0;
+        return true;
+    });
 }

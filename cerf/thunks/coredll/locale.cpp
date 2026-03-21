@@ -198,4 +198,25 @@ void Win32Thunks::RegisterLocaleHandlers() {
         LOG(API, "[API] EnumCalendarInfoW -> stub 0\n");
         regs[0] = 0; return true;
     });
+
+    /* WinCE 7 calendar and locale functions */
+    Thunk("LCIDToLocaleName", 2930, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        LOG(API, "[API] LCIDToLocaleName(lcid=0x%X) -> stub\n", regs[0]);
+        /* Write "en-US" as default */
+        if (regs[1] && regs[2] >= 6) {
+            const wchar_t* name = L"en-US";
+            for (int i = 0; i < 6; i++) mem.Write16(regs[1] + i * 2, name[i]);
+        }
+        regs[0] = 5; /* length of "en-US" */
+        return true;
+    });
+    Thunk("GetCalendarInfoW", 2937, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] GetCalendarInfoW -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("GetCalendarDateFormatEx", 2968, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] GetCalendarDateFormatEx -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("ConvertCalDateTimeToSystemTime", 2969, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] ConvertCalDateTimeToSystemTime -> stub FALSE\n"); regs[0] = 0; return true; });
+    Thunk("ConvertSystemTimeToCalDateTime", 2970, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] ConvertSystemTimeToCalDateTime -> stub FALSE\n"); regs[0] = 0; return true; });
+    Thunk("UpdateCalendarDayOfWeek", 2971, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] UpdateCalendarDayOfWeek -> stub FALSE\n"); regs[0] = 0; return true; });
+    Thunk("GetCalendarWeekNumber", 2972, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] GetCalendarWeekNumber -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("GetCalendarMonthsInYear", 2973, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] GetCalendarMonthsInYear -> stub 12\n"); regs[0] = 12; return true; });
+    Thunk("GetCalendarDaysInMonth", 2974, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] GetCalendarDaysInMonth -> stub 30\n"); regs[0] = 30; return true; });
+    Thunk("GetCalendarSupportedDateRange", 2978, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] GetCalendarSupportedDateRange -> stub FALSE\n"); regs[0] = 0; return true; });
 }

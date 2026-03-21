@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""E2E test: WinCE 6 Start menu opens with Programs entries."""
+"""E2E test: WinCE 7 Start menu opens with entries."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from cerf_test_utils import CerfTestRunner, step, passed, failed, TMP_DIR
 
-LOG = os.path.join(TMP_DIR, "e2e_wince6_start_menu.txt")
-runner = CerfTestRunner(LOG, device="wince6")
+LOG = os.path.join(TMP_DIR, "e2e_wince7_start_menu.txt")
+runner = CerfTestRunner(LOG, device="wince7")
 
 try:
-    step("Starting cerf (wince6)...")
+    step("Starting cerf (wince7)...")
     runner.start()
     runner.mark()
     runner.wait_for_explorer()
@@ -29,7 +29,7 @@ try:
     step("Programs folder accessed.")
     runner.screenshot()
 
-    passed("WinCE 6 Start menu opens with entries")
+    passed("WinCE 7 Start menu opens with entries")
 
 except TimeoutError as e:
     runner.screenshot()

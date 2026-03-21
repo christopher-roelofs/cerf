@@ -260,6 +260,7 @@ public:
     void RegisterStringHandlers();
     void RegisterStringFormatHandlers();
     void RegisterStringSafeHandlers();
+    void RegisterStringSafeExtHandlers();
     std::wstring WprintfFormat(EmulatedMemory& mem, const std::wstring& fmt, uint32_t* args, int nargs);
     void RegisterGdiDcHandlers();
     void RegisterGdiDrawHandlers();

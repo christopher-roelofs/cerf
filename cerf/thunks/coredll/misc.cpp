@@ -217,6 +217,7 @@ void Win32Thunks::RegisterMiscHandlers() {
     /* Gesture stubs */
     Thunk("RegisterDefaultGestureHandler", 2928, stub0("RegisterDefaultGestureHandler"));
     Thunk("GetGestureInfo", 2925, stub0("GetGestureInfo"));
+    Thunk("GetGestureInfo_ce7", 2962, stub0("GetGestureInfo"));
     Thunk("GetGestureExtraArguments", stub0("GetGestureExtraArguments"));
     Thunk("CloseGestureInfoHandle", 2924, stub0("CloseGestureInfoHandle"));
     Thunk("CryptProtectData", 1599, stub0("CryptProtectData"));
@@ -231,6 +232,14 @@ void Win32Thunks::RegisterMiscHandlers() {
         regs[0] = 2; /* OEM_CERTIFY — full trust */
         return true;
     });
+    /* WinCE 7 shell stubs, LASS, ShowStartupWindow */
+    Thunk("SHGetAppKeyAssocI", 1783, stub0("SHGetAppKeyAssocI"));
+    Thunk("SHSetNavBarTextI", 1785, stub0("SHSetNavBarTextI"));
+    Thunk("SHCloseAppsI", 1788, stub0("SHCloseAppsI"));
+    Thunk("SHNotificationGetDataI", 1809, stub0("SHNotificationGetDataI"));
+    Thunk("ShowStartupWindow", 1810, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] ShowStartupWindow -> stub\n"); regs[0] = 0; return true; });
+    Thunk("LASSReloadConfig", 1828, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] LASSReloadConfig -> stub\n"); regs[0] = 0; return true; });
+    Thunk("ordinal_2911", 2911, stub0("ordinal_2911"));
     /* PMFindProvider */
     Thunk("QueryAPISetID", 490, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         /* Read 4-char API set name */

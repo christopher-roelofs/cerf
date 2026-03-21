@@ -96,4 +96,17 @@ void Win32Thunks::RegisterKernelApiHandlers() {
     Thunk("CeFlushDBVol", 1217, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeFlushDBVol -> stub TRUE\n"); regs[0] = 1; return true; });
     Thunk("CeCreateDatabaseEx2", 1468, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeCreateDatabaseEx2 -> stub 0\n"); regs[0] = 0; return true; });
     Thunk("CeSeekDatabaseEx", 1470, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeSeekDatabaseEx -> stub 0\n"); regs[0] = 0; return true; });
+
+    /* WinCE 7 CE database + filesystem + registry helpers */
+    Thunk("CeSeekDatabase", 319, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeSeekDatabase -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeReadRecordProps", 321, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeReadRecordProps -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeOpenDatabaseEx", 1192, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeOpenDatabaseEx -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("CeGetVolumeInfoW", 1978, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] CeGetVolumeInfoW -> stub FALSE\n"); regs[0] = 0; return true; });
+    Thunk("RegistryGetDWORD", 2615, [this](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] RegistryGetDWORD -> stub E_FAIL\n");
+        regs[0] = 0x80004005; /* E_FAIL */
+        return true;
+    });
+    Thunk("RegistryNotifyWindow", 2621, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] RegistryNotifyWindow -> stub 0\n"); regs[0] = 0; return true; });
+    Thunk("RegistryCloseNotification", 2624, [](uint32_t* regs, EmulatedMemory&) -> bool { LOG(API, "[API] RegistryCloseNotification -> stub 0\n"); regs[0] = 0; return true; });
 }

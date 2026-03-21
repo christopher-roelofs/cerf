@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""E2E test: WinCE 6 Start menu opens with Programs entries."""
+"""E2E test: WinCE 7 explorer boots, shows desktop with icons and taskbar."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from cerf_test_utils import CerfTestRunner, step, passed, failed, TMP_DIR
 
-LOG = os.path.join(TMP_DIR, "e2e_wince6_start_menu.txt")
-runner = CerfTestRunner(LOG, device="wince6")
+LOG = os.path.join(TMP_DIR, "e2e_wince7_desktop.txt")
+runner = CerfTestRunner(LOG, device="wince7")
 
 try:
-    step("Starting cerf (wince6)...")
+    step("Starting cerf (wince7)...")
     runner.start()
     runner.mark()
     runner.wait_for_explorer()
 
-    # Open Start menu
+    # Verify desktop window created
+    runner.mark()
+    step("Checking DesktopExplorerWindow...")
+    runner.wait_for_log("class='DesktopExplorerWindow'", timeout=5, since_mark=False)
+    step("Desktop window present.")
+
+    # Verify Start menu works
     runner.mark()
     step("Clicking Start...")
     runner.click(25, 478)
@@ -21,15 +27,11 @@ try:
     runner.wait_for_log("TrackPopupMenuEx")
     step("Start menu opened.")
     time.sleep(1)
-
-    # Verify Start menu has entries (Programs folder is read)
-    step("Checking for Programs folder access...")
-    runner.wait_for_log("GetFileAttributesW.*Programs", regex=True, timeout=5,
-                        since_mark=False)
-    step("Programs folder accessed.")
+    runner.key("escape")
+    time.sleep(1)
     runner.screenshot()
 
-    passed("WinCE 6 Start menu opens with entries")
+    passed("WinCE 7 explorer boots with desktop and Start menu")
 
 except TimeoutError as e:
     runner.screenshot()
