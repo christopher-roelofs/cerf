@@ -19,8 +19,8 @@ void Win32Thunks::RegisterResourceHandlers() {
         uint32_t bundle_id = (str_id / 16) + 1, string_idx = str_id % 16;
         uint32_t rsrc_rva = 0, rsrc_sz = 0; bool is_arm = false;
         uint32_t arm_base = 0;
-        if (hmod == emu_hinstance || hmod == 0) {
-            is_arm = true; arm_base = emu_hinstance;
+        if (hmod == GetEmuHInstance() || hmod == 0) {
+            is_arm = true; arm_base = GetEmuHInstance();
             uint32_t dos_lfanew = mem.Read32(arm_base + 0x3C), nt_addr = arm_base + dos_lfanew;
             uint32_t num_rva_sizes = mem.Read32(nt_addr + 0x74);
             if (num_rva_sizes > IMAGE_DIRECTORY_ENTRY_RESOURCE) {
@@ -84,11 +84,11 @@ void Win32Thunks::RegisterResourceHandlers() {
     });
     Thunk("LoadBitmapW", 873, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t hmod = regs[0], name_id = regs[1];
-        bool is_arm_module = (hmod == emu_hinstance);
+        bool is_arm_module = (hmod == GetEmuHInstance());
         for (auto& pair : loaded_dlls) { if (pair.second.base_addr == hmod) { is_arm_module = true; break; } }
         if (is_arm_module) {
             uint32_t rsrc_rva = 0, rsrc_sz = 0;
-            if (hmod == emu_hinstance) {
+            if (hmod == GetEmuHInstance()) {
                 uint32_t dos_lfanew = mem.Read32(hmod + 0x3C), nt_addr = hmod + dos_lfanew;
                 uint32_t n = mem.Read32(nt_addr + 0x74);
                 if (n > IMAGE_DIRECTORY_ENTRY_RESOURCE) {
@@ -135,11 +135,11 @@ void Win32Thunks::RegisterResourceHandlers() {
         uint32_t fuLoad = ReadStackArg(regs, mem, 1);
         LOG(API, "[API] LoadImageW(hmod=0x%08X, id=%d, type=%d, cx=%d, cy=%d, flags=0x%X)\n",
             hmod, name_id, type, cx, cy, fuLoad);
-        bool is_arm_module = (hmod == emu_hinstance);
+        bool is_arm_module = (hmod == GetEmuHInstance());
         for (auto& pair : loaded_dlls) { if (pair.second.base_addr == hmod) { is_arm_module = true; break; } }
         if (is_arm_module && type == IMAGE_BITMAP) {
             uint32_t rsrc_rva = 0, rsrc_sz = 0;
-            if (hmod == emu_hinstance) {
+            if (hmod == GetEmuHInstance()) {
                 uint32_t dos_lfanew = mem.Read32(hmod + 0x3C), nt_addr = hmod + dos_lfanew;
                 uint32_t n = mem.Read32(nt_addr + 0x74);
                 if (n > IMAGE_DIRECTORY_ENTRY_RESOURCE) {
@@ -210,7 +210,7 @@ void Win32Thunks::RegisterResourceHandlers() {
     Thunk("FindResourceW", 532, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         uint32_t hmod = regs[0], name_arg = regs[1], type_arg = regs[2];
         uint32_t rsrc_rva = 0, rsrc_sz = 0;
-        if (hmod == emu_hinstance) {
+        if (hmod == GetEmuHInstance()) {
             uint32_t dos_lfanew = mem.Read32(hmod + 0x3C), nt_addr = hmod + dos_lfanew;
             uint32_t n = mem.Read32(nt_addr + 0x74);
             if (n > IMAGE_DIRECTORY_ENTRY_RESOURCE) {

@@ -110,7 +110,7 @@ void Win32Thunks::RegisterImageListHandlers() {
         LOG(API, "[API] ImageList_LoadImage(0x%08X, %d, cx=%d, cGrow=%d, crMask=0x%X, type=%d, flags=0x%X)\n",
                hmod, lpbmp, cx, cGrow, crMask, uType, uFlags);
         HMODULE native_mod = NULL;
-        bool is_arm = (hmod == emu_hinstance);
+        bool is_arm = (hmod == GetEmuHInstance());
         for (auto& pair : loaded_dlls) { if (pair.second.base_addr == hmod) { is_arm = true; break; } }
         if (is_arm) native_mod = GetNativeModuleForResources(hmod);
         else native_mod = (HMODULE)(intptr_t)(int32_t)hmod;

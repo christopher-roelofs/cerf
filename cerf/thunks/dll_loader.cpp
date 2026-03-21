@@ -173,8 +173,15 @@ Win32Thunks::LoadedDll* Win32Thunks::LoadArmDll(const std::string& dll_name) {
 
     InstallThunks(loaded_dlls[wlower].pe_info, dll_name.c_str());
 
-    EmulatedMemory::process_slot = s_original_slot;
     s_load_depth--;
+    /* Only restore ProcessSlot at the outermost LoadArmDll level.
+       Nested calls (dependency resolution) must keep process_slot = nullptr
+       so InstallThunks writes IAT entries to GLOBAL memory, not per-process
+       overlay. Without this, nested LoadArmDll restores the slot mid-way
+       through the parent's InstallThunks, causing IAT writes to go to
+       CopyOnWrite overlay instead of global. */
+    if (s_load_depth == 0)
+        EmulatedMemory::process_slot = s_original_slot;
 
     /* CopyRegions for runtime-loaded DLLs: if a child process loads a new DLL
        via LoadLibraryW, copy its R/W sections into the process's overlay NOW.

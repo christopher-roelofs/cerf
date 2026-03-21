@@ -168,6 +168,29 @@ struct ProcessSlot {
         return priv + (addr & (PAGE_SIZE - 1));
     }
 
+    /* Refresh overlay pages for a specific DLL from global memory.
+       Called before per-process DllMain to ensure the overlay has the latest
+       data (including patched IAT entries from InstallThunks).
+       On real WinCE, CopyRegions is serialized with DLL loading. In CERF,
+       concurrent DLL loading on device.exe's thread can cause the initial
+       CopyDllWritableSections snapshot to have stale IAT entries. */
+    template<typename Fn>
+    void RefreshDllOverlay(uint32_t dll_base, uint32_t dll_size, Fn global_page_fn) {
+        for (auto& s : dll_writable_sections) {
+            if (s.start < dll_base || s.start >= dll_base + dll_size) continue;
+            uint32_t pg = s.start & ~(PAGE_SIZE - 1);
+            uint32_t end = (s.start + s.size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            for (; pg < end; pg += PAGE_SIZE) {
+                auto it = dll_overlay.find(pg);
+                if (it != dll_overlay.end()) {
+                    /* Re-copy from global to update stale overlay page */
+                    uint8_t* g = global_page_fn(pg);
+                    if (g) memcpy(it->second, g, PAGE_SIZE);
+                }
+            }
+        }
+    }
+
     /* Free all private DLL data pages (called on process exit). */
     void FreeDllOverlay() {
         for (auto& pair : dll_overlay)

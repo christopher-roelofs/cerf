@@ -29,7 +29,7 @@ LRESULT CALLBACK Win32Thunks::MenuBarWndProc(HWND hwnd, UINT msg, WPARAM wParam,
                 LOG(API, "[API] Menu WM_NCCREATE: using HMENU 0x%p directly\n", hMenu);
             } else {
                 /* Load menu from module resources */
-                if (hinst == 0) hinst = s_instance->emu_hinstance;
+                if (hinst == 0) hinst = s_instance->GetEmuHInstance();
                 HMODULE native_mod = s_instance->GetNativeModuleForResources(hinst);
                 if (native_mod && menu_name) {
                     hMenu = LoadMenuW(native_mod, MAKEINTRESOURCEW(menu_name));

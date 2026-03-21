@@ -15,7 +15,7 @@ void Win32Thunks::RegisterResourceExtractHandlers() {
         uint32_t hmod = regs[0], name_id = regs[1];
         LOG(API, "[API] LoadAcceleratorsW(0x%08X, %d)\n", hmod, name_id);
         uint32_t rsrc_rva = 0, rsrc_sz = 0;
-        bool is_arm = (hmod == emu_hinstance);
+        bool is_arm = (hmod == GetEmuHInstance());
         if (is_arm) {
             uint32_t dos_lfanew = mem.Read32(hmod + 0x3C), nt_addr = hmod + dos_lfanew;
             uint32_t n = mem.Read32(nt_addr + 0x74);

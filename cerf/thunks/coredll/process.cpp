@@ -40,11 +40,13 @@ void Win32Thunks::RegisterProcessHandlers() {
             char parent_process[32];
             char parent_exe_path[512];
             ProcessSlot* parent_slot;
+            uint32_t parent_hinstance;
             bool parent_is_kernel;
         };
         auto* info = new ThreadStartInfo{
             lpStartAddress, lpParameter, &mem, this, 0xCAFEC000, {}, {},
             EmulatedMemory::process_slot,
+            t_emu_hinstance,
             t_ctx ? t_ctx->is_kernel_thread : false
         };
         if (t_ctx) {
@@ -70,6 +72,7 @@ void Win32Thunks::RegisterProcessHandlers() {
                          info->parent_exe_path);
                 Log::SetProcessName(ctx.process_name, GetCurrentThreadId());
                 EmulatedMemory::process_slot = info->parent_slot;
+                t_emu_hinstance = info->parent_hinstance;
                 ctx.is_kernel_thread = info->parent_is_kernel;
 
                 /* Allocate per-thread stack in emulated memory */

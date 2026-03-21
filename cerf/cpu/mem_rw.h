@@ -60,13 +60,17 @@
         /* DLL slot-0 alias fallback — same as Translate(). Safe because allocator
            address ranges are configured above the DLL alias range, so heap writes
            never overlap with DLL code/data pages. */
-        if (addr <= WINCE_SLOT_MASK && !dll_aliases.empty()) {
-            for (auto& alias : dll_aliases) {
-                if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
-                    uint32_t real_addr = alias.dll_base + (addr - alias.slot0_base);
-                    for (auto& r : regions) {
-                        if (real_addr >= r.base && real_addr < r.base + r.size)
-                            return r.host_ptr + (real_addr - r.base);
+        {
+            uint32_t alias_n = dll_alias_count.load(std::memory_order_acquire);
+            if (addr <= WINCE_SLOT_MASK && alias_n > 0) {
+                for (uint32_t ai = 0; ai < alias_n; ai++) {
+                    auto& alias = dll_alias_array[ai];
+                    if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
+                        uint32_t real_addr = alias.dll_base + (addr - alias.slot0_base);
+                        for (auto& r : regions) {
+                            if (real_addr >= r.base && real_addr < r.base + r.size)
+                                return r.host_ptr + (real_addr - r.base);
+                        }
                     }
                 }
             }

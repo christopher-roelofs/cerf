@@ -148,7 +148,7 @@ HMODULE Win32Thunks::GetNativeModuleForResources(uint32_t emu_handle) {
         }
     }
     /* Check main exe (or child process exe if running in a ProcessSlot) */
-    if (emu_handle == emu_hinstance) {
+    if (emu_handle == GetEmuHInstance()) {
         /* Child process threads have their own exe_path in ThreadContext.
            Use a per-thread cached HMODULE so each child loads its own resources. */
         if (t_ctx && t_ctx->exe_path[0] != '\0') {

@@ -95,7 +95,7 @@ void Win32Thunks::RegisterMenuHandlers() {
     });
     Thunk("LoadMenuW", 846, [this](uint32_t* regs, EmulatedMemory&) -> bool {
         uint32_t hmod = regs[0];
-        bool is_arm = (hmod == emu_hinstance || hmod == 0);
+        bool is_arm = (hmod == GetEmuHInstance() || hmod == 0);
         if (!is_arm) {
             for (auto& pair : loaded_dlls) {
                 if (pair.second.base_addr == hmod) { is_arm = true; break; }
@@ -103,7 +103,7 @@ void Win32Thunks::RegisterMenuHandlers() {
         }
         HMODULE native_mod = NULL;
         if (is_arm) {
-            uint32_t h = (hmod == 0) ? emu_hinstance : hmod;
+            uint32_t h = (hmod == 0) ? GetEmuHInstance() : hmod;
             native_mod = GetNativeModuleForResources(h);
         } else {
             native_mod = (HMODULE)(intptr_t)(int32_t)hmod;
@@ -148,6 +148,13 @@ void Win32Thunks::RegisterMenuHandlers() {
     });
     Thunk("DeleteMenu", 850, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = DeleteMenu((HMENU)(intptr_t)(int32_t)regs[0], regs[1], regs[2]);
+        return true;
+    });
+    Thunk("RemoveMenu", 843, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        HMENU hMenu = (HMENU)(intptr_t)(int32_t)regs[0];
+        UINT uPosition = regs[1], uFlags = regs[2];
+        LOG(API, "[API] RemoveMenu(0x%p, %u, 0x%X)\n", hMenu, uPosition, uFlags);
+        regs[0] = RemoveMenu(hMenu, uPosition, uFlags);
         return true;
     });
     /* SetMenuItemInfoW — WinCE MENUITEMINFOW is 44 bytes (32-bit pointers):

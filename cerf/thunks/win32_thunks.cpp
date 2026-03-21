@@ -231,7 +231,7 @@ Win32Thunks::Win32Thunks(EmulatedMemory& mem)
     mem.Write32(0xFFFFC800 + 0x000, emu_tls_slots);  /* lpvTls */
     mem.Write32(0xFFFFC800 + 0x004, GetCurrentThreadId());  /* ahSys[0] SH_WIN32 (compat) */
     mem.Write32(0xFFFFC800 + 0x008, GetCurrentThreadId());  /* ahSys[1] SH_CURTHREAD */
-    mem.Write32(0xFFFFC800 + 0x00C, GetCurrentProcessId()); /* ahSys[2] SH_CURPROC */
+    mem.Write32(0xFFFFC800 + 0x00C, 1); /* ahSys[2] SH_CURPROC — orchestrator fake PID */
     LOG(EMU, "[EMU] KData TLS array at 0x%08X, lpvTls at 0xFFFFC800 -> 0x%08X\n",
         0xFFFFC000, emu_tls_slots);
 

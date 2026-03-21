@@ -81,11 +81,12 @@ bool ApiSetManager::Dispatch(uint32_t set_id, uint32_t method,
     LOG(API, "[API] APISet '%.*s' dispatch: method=%u func=0x%08X\n",
         4, entry.name.c_str(), method, func_addr);
 
-    /* Temporarily clear ProcessSlot so the call runs in the registering
-       process's context (no overlay = main process). */
+    /* Switch to the registering process's ProcessSlot so the call runs in
+       that process's address space. On real WinCE, API set calls are dispatched
+       to the server process with its slot-0 mapped. */
     uint32_t args[4] = { regs[0], regs[1], regs[2], regs[3] };
     ProcessSlot* saved_slot = EmulatedMemory::process_slot;
-    EmulatedMemory::process_slot = nullptr;
+    EmulatedMemory::process_slot = entry.process_slot;
     uint32_t result = entry.executor(func_addr, args, 4);
     EmulatedMemory::process_slot = saved_slot;
     regs[0] = result;

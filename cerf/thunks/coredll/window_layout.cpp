@@ -93,7 +93,7 @@ void Win32Thunks::RegisterWindowLayoutHandlers() {
                     mem.Write32(pWC + 4,  proc);
                     mem.Write32(pWC + 8,  wcx.cbClsExtra);
                     mem.Write32(pWC + 12, wcx.cbWndExtra);
-                    mem.Write32(pWC + 16, emu_hinstance);
+                    mem.Write32(pWC + 16, GetEmuHInstance());
                     mem.Write32(pWC + 20, 0);
                     mem.Write32(pWC + 24, 0);
                     mem.Write32(pWC + 28, (uint32_t)(uintptr_t)wcx.hbrBackground);

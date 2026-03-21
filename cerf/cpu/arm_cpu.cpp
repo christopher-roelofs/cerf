@@ -113,10 +113,15 @@ void ArmCpu::Step() {
         uint32_t pc = r[REG_PC];
         /* Prefetch abort handler: if PC points to unmapped memory (e.g. kernel
            space 0x80000xxx, uninitialized _pRawDllMain = 0xFFFFFFFF), return to
-           caller instead of executing NOPs forever. Matches WinCE kernel behavior. */
+           caller instead of executing NOPs forever.
+           WinCE CRT uses _pRawDllMain = 0xFFFFFFFF as a sentinel meaning "no raw
+           DLL main, always succeed". Set R0 = 1 (TRUE) for this case so
+           _DllMainCRTStartup continues to cinit(). For all other addresses,
+           leave R0 unchanged — callers may depend on the prior value. */
         if (!mem->Translate(pc)) {
             LOG(EMU, "[EMU] Prefetch abort at 0x%08X (Thumb), returning to LR=0x%08X\n",
                 pc, r[REG_LR]);
+            if (pc == 0xFFFFFFFF) r[0] = 1;
             uint32_t lr = r[REG_LR];
             if (lr & 1) {
                 r[REG_PC] = lr & ~1u;
@@ -137,10 +142,11 @@ void ArmCpu::Step() {
         uint32_t pc = r[REG_PC];
         /* Per-DLL ARM trace points — see cerf/tracing/ for handlers */
         if (traces) traces->Check(pc, r, mem);
-        /* Prefetch abort handler (ARM mode) — see Thumb path above for details. */
+        /* Prefetch abort handler (ARM mode) — see Thumb path for full comment. */
         if (!mem->Translate(pc)) {
             LOG(EMU, "[EMU] Prefetch abort at 0x%08X (ARM), returning to LR=0x%08X\n",
                 pc, r[REG_LR]);
+            if (pc == 0xFFFFFFFF) r[0] = 1;
             uint32_t lr = r[REG_LR];
             if (lr & 1) {
                 cpsr |= PSR_T;

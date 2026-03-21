@@ -74,7 +74,7 @@ def check_alive(step=""):
         except: pass
         sys.exit(1)
 
-time.sleep(7)
+time.sleep(15)
 check_alive("after startup")
 
 # 4. Open IE via double-click on desktop icon

@@ -192,15 +192,17 @@ void Win32Thunks::RegisterSystemHandlers() {
     Thunk("GetProcessVersion", 536, [](uint32_t* regs, EmulatedMemory&) -> bool {
         regs[0] = 0x0400000A; return true;
     });
-    Thunk("GetOwnerProcess", 606, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetCurrentProcessId(); return true;
-    });
-    /* GetCallerProcess: returns the process handle of the caller.
-       On real WinCE, this returns the HPROCESS of the calling process.
-       In our single-process emulation, return the current process ID. */
-    Thunk("GetCallerProcess", 607, [](uint32_t* regs, EmulatedMemory&) -> bool {
-        regs[0] = GetCurrentProcessId(); return true;
-    });
+    /* GetOwnerProcess / GetCallerProcess: return the emulated process ID.
+       Must match KData SH_CURPROC (slot->fake_pid) — ole32 COleTls::COleTls
+       compares GetCurrentProcessId() (read from KData) with GetOwnerProcess()
+       and fails with CO_E_INIT_TLS if they differ. */
+    auto getEmulatedPid = [](uint32_t* regs, EmulatedMemory&) -> bool {
+        ProcessSlot* slot = EmulatedMemory::process_slot;
+        regs[0] = slot ? slot->fake_pid : 1;
+        return true;
+    };
+    Thunk("GetOwnerProcess", 606, getEmulatedPid);
+    Thunk("GetCallerProcess", 607, getEmulatedPid);
     Thunk("GetStartupInfoW", [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
         for (int i = 0; i < 68; i += 4) mem.Write32(regs[0] + i, 0);
         mem.Write32(regs[0], 68); return true;

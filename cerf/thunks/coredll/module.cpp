@@ -12,7 +12,7 @@ void Win32Thunks::RegisterModuleHandlers() {
         uint32_t name_addr = regs[0];
         if (name_addr == 0) {
             /* Per-process hinstance: each child process has its own image base */
-            regs[0] = t_emu_hinstance ? t_emu_hinstance : emu_hinstance;
+            regs[0] = GetEmuHInstance();
             LOG(API, "[API] GetModuleHandleW(NULL) -> 0x%08X\n", regs[0]);
         } else {
             std::wstring name = ReadWStringFromEmu(mem, name_addr);
@@ -54,7 +54,7 @@ void Win32Thunks::RegisterModuleHandlers() {
                     }
                 }
                 if (!found)
-                    regs[0] = emu_hinstance;
+                    regs[0] = GetEmuHInstance();
             }
             LOG(API, "[API] GetModuleHandleW('%ls') -> 0x%08X\n", name.c_str(), regs[0]);
         }

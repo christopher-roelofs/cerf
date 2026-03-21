@@ -1,18 +1,19 @@
 /* WinCE Built-In Device Manager — emulates device.exe.
-   On real WinCE, device.exe is a separate process that reads
-   HKLM\Drivers\BuiltIn\* and loads each driver DLL, calling its
-   Entry function. device.exe has its own process slot, so DLL writable
-   sections (.data) get per-process copy-on-write — driver modifications
-   to RPCRT4/ole32/etc globals don't affect user processes.
+   On real WinCE, device.exe is a separate process with its own address
+   space, heap, and process slot. DLL writable sections (.data) get
+   per-process copy-on-write. Driver modifications to RPCRT4/ole32/etc
+   globals don't affect user processes. device.exe's heap allocations
+   (malloc, HeapAlloc, LocalAlloc) are isolated from explorer's heap.
 
-   We emulate this by spawning a real thread with its own ProcessSlot,
-   exactly like shell_exec_launch.cpp does for child processes.
+   We emulate this by spawning a real thread with its own ProcessSlot
+   and per-process SlabAllocator, matching shell_exec_launch.cpp.
    DLLs load inside this process context, DllMain runs per-process,
    and everything is naturally isolated. */
 
 #include "win32_thunks.h"
 #include "device_manager.h"
 #include "../cpu/mem.h"
+#include "../cpu/slab_alloc.h"
 #include "../log.h"
 #include "../loader/pe_loader.h"
 #include "../tracing/trace_manager.h"
@@ -142,8 +143,13 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
             snprintf(ctx.process_name, sizeof(ctx.process_name), "device.exe");
             Log::SetProcessName(ctx.process_name, GetCurrentThreadId());
 
-            /* Create device.exe's ProcessSlot — per-process DLL isolation */
+            /* Create device.exe's ProcessSlot — per-process DLL isolation.
+               Must have its own allocator so device.exe heap allocations don't
+               interfere with explorer's heap (prevents use-after-free corruption
+               when dcomssd's background thread reuses blocks freed by explorer). */
             ProcessSlot slot;
+            slot.has_own_allocators = true;
+            slot.proc_slab = new SlabAllocator(0x00C00000, 0x00300000, info->mem);
             slot.RegisterWritableSections(info->mem->dll_writable_sections);
             slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
                 return info->mem->TranslateGlobal(pg);

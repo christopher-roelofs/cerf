@@ -75,6 +75,9 @@ public:
     bool HandleThunk(uint32_t addr, uint32_t* regs, EmulatedMemory& mem);
 
     void SetHInstance(uint32_t hinst) { emu_hinstance = hinst; }
+    /* Get the effective hInstance for the current thread.
+       Per-thread value (from child process) takes priority over global. */
+    uint32_t GetEmuHInstance() const { return t_emu_hinstance ? t_emu_hinstance : emu_hinstance; }
     void SetExePath(const std::wstring& path) { exe_path = path; }
     void SetExeDir(const std::string& dir) { exe_dir = dir; }
     const std::string& GetDeviceName() const { return device_name; }

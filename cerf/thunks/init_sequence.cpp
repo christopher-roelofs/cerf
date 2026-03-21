@@ -12,6 +12,10 @@
 void Win32Thunks::ProcessInitHive(EmulatedMemory& mem) {
     LOG(API, "[INIT] Processing HKLM\\init boot sequence...\n");
 
+    /* Event handles for blacklisted entries — kept alive until init completes
+       so dependent entries can wait on them successfully. */
+    std::vector<HANDLE> blacklist_events;
+
     struct InitEntry {
         uint32_t order;           /* XX from LaunchXX key name */
         std::wstring exe_path;    /* value of LaunchXX */
@@ -102,6 +106,14 @@ void Win32Thunks::ProcessInitHive(EmulatedMemory& mem) {
         if (init_blacklist.count(narrow_fn)) {
             LOG(API, "[INIT] Skipping Launch%u: '%ls' (blacklisted)\n",
                 entry.order, entry.exe_path.c_str());
+            /* Signal this entry's event so dependent entries don't block.
+               On real WinCE, device.exe/gwes.exe would signal after init.
+               Since we provide those services via thunks, signal immediately.
+               Keep handle alive until init sequence completes. */
+            wchar_t event_name[64];
+            swprintf(event_name, 64, L"CerfInitDone_%u", entry.order);
+            HANDLE h = CreateEventW(NULL, TRUE, TRUE, event_name);
+            if (h) blacklist_events.push_back(h);
             continue;
         }
 
@@ -127,8 +139,25 @@ void Win32Thunks::ProcessInitHive(EmulatedMemory& mem) {
             }
         }
 
-        /* Map WinCE path to host path */
-        std::wstring host_path = MapWinCEPath(entry.exe_path);
+        /* Resolve WinCE path to host path.
+           Registry values are often bare filenames (e.g. "explorer.exe").
+           Real WinCE CreateProcess searches \Windows\ for bare names. */
+        std::wstring host_path;
+        bool has_separator = (entry.exe_path.find(L'\\') != std::wstring::npos ||
+                              entry.exe_path.find(L'/') != std::wstring::npos);
+        if (!has_separator) {
+            /* Bare filename — search \Windows\ first (WinCE system dir) */
+            std::wstring in_windows = MapWinCEPath(L"\\Windows\\" + entry.exe_path);
+            DWORD attrs = GetFileAttributesW(in_windows.c_str());
+            if (attrs != INVALID_FILE_ATTRIBUTES) {
+                host_path = in_windows;
+            } else {
+                /* Fall back to VFS root */
+                host_path = MapWinCEPath(entry.exe_path);
+            }
+        } else {
+            host_path = MapWinCEPath(entry.exe_path);
+        }
         LOG(API, "[INIT] Launch%u: '%ls' -> '%ls'\n",
             entry.order, entry.exe_path.c_str(), host_path.c_str());
 
@@ -149,6 +178,9 @@ void Win32Thunks::ProcessInitHive(EmulatedMemory& mem) {
 
     LOG(API, "[INIT] Boot sequence complete (%zu entries processed)\n",
         entries.size());
+
+    /* Clean up blacklist event handles */
+    for (HANDLE h : blacklist_events) CloseHandle(h);
 }
 
 /* Resolve an exe path from CLI input to a host filesystem path.

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdio>
 #include <mutex>
+#include <atomic>
 #include "process_slot.h"
 
 /* Emulated memory manager for ARM address space.
@@ -48,13 +49,17 @@ public:
        this to inherit the caller's real slot, not the apiset-cleared nullptr. */
     static thread_local ProcessSlot* apiset_caller_slot;
 
-    /* DLL slot-0 alias: maps (dll_base & SLOT_MASK) back to dll_base in Translate(). */
+    /* DLL slot-0 alias: maps (dll_base & SLOT_MASK) back to dll_base in Translate().
+       Lock-free append-only array: AddDllAlias writes then increments atomic count,
+       Translate reads count then iterates. No mutex needed on the hot path. */
     struct DllAlias {
         uint32_t slot0_base;  /* dll_base & WINCE_SLOT_MASK */
         uint32_t dll_base;    /* actual load address */
         uint32_t size;        /* size_of_image */
     };
-    std::vector<DllAlias> dll_aliases;
+    static constexpr uint32_t MAX_DLL_ALIASES = 128;
+    DllAlias dll_alias_array[MAX_DLL_ALIASES] = {};
+    std::atomic<uint32_t> dll_alias_count{0};
 
     /* Global registry of DLL writable sections for copy-on-write.
        Populated by LoadArmDll when DLLs are loaded. Used by ProcessSlot to
@@ -84,14 +89,19 @@ public:
         return false;
     }
 
-    /* Register a DLL for slot-0 aliasing. Call after loading a DLL at base >= 0x04000000. */
+    /* Register a DLL for slot-0 aliasing. Call after loading a DLL at base >= 0x04000000.
+       Thread-safe: writes entry then increments atomic count (release order). */
     void AddDllAlias(uint32_t dll_base, uint32_t size_of_image) {
         if (dll_base < WINCE_DLL_REGION_START || dll_base >= WINCE_DLL_REGION_END) return;
-        DllAlias alias;
-        alias.slot0_base = dll_base & WINCE_SLOT_MASK;
-        alias.dll_base   = dll_base;
-        alias.size        = size_of_image;
-        dll_aliases.push_back(alias);
+        uint32_t idx = dll_alias_count.load(std::memory_order_relaxed);
+        if (idx >= MAX_DLL_ALIASES) {
+            fprintf(stderr, "[MEM] DLL alias table full (%u entries)\n", MAX_DLL_ALIASES);
+            return;
+        }
+        dll_alias_array[idx].slot0_base = dll_base & WINCE_SLOT_MASK;
+        dll_alias_array[idx].dll_base   = dll_base;
+        dll_alias_array[idx].size       = size_of_image;
+        dll_alias_count.store(idx + 1, std::memory_order_release);
     }
 
     std::vector<MemRegion> regions;
@@ -223,13 +233,17 @@ public:
            webview.dll at 0x10C10000 aliases to 0x00C10000, inside heap range).
            Allocators must use HasCommittedRegion() instead of IsValid() to
            avoid confusing DLL aliases with committed heap pages. */
-        if (addr <= WINCE_SLOT_MASK && !dll_aliases.empty()) {
-            for (auto& alias : dll_aliases) {
-                if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
-                    uint32_t real_addr = alias.dll_base + (addr - alias.slot0_base);
-                    for (auto& r : regions) {
-                        if (real_addr >= r.base && real_addr < r.base + r.size)
-                            return r.host_ptr + (real_addr - r.base);
+        {
+            uint32_t alias_n = dll_alias_count.load(std::memory_order_acquire);
+            if (addr <= WINCE_SLOT_MASK && alias_n > 0) {
+                for (uint32_t ai = 0; ai < alias_n; ai++) {
+                    auto& alias = dll_alias_array[ai];
+                    if (addr >= alias.slot0_base && addr < alias.slot0_base + alias.size) {
+                        uint32_t real_addr = alias.dll_base + (addr - alias.slot0_base);
+                        for (auto& r : regions) {
+                            if (real_addr >= r.base && real_addr < r.base + r.size)
+                                return r.host_ptr + (real_addr - r.base);
+                        }
                     }
                 }
             }

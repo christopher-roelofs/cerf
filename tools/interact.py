@@ -149,53 +149,6 @@ def get_cerf_window_bbox():
     return (max(0, left - PAD), max(0, top - PAD), right + PAD, bottom + PAD)
 
 
-def bring_cerf_to_foreground():
-    """Find the main cerf window and bring it to the foreground.
-    Called automatically before any mouse/keyboard interaction to prevent
-    accidentally clicking on other windows.
-    Skips if a cerf window is already the foreground window (preserves focus
-    on dialogs/child windows)."""
-    pids = find_cerf_pids()
-    if not pids:
-        print("WARNING: No cerf.exe process found")
-        return False
-
-    # Check if a cerf window is already in the foreground
-    foreground_hwnd = u32.GetForegroundWindow()
-    fore_pid = wt.DWORD()
-    u32.GetWindowThreadProcessId(foreground_hwnd, ctypes.byref(fore_pid))
-    if fore_pid.value in pids:
-        # A cerf window is already foreground - don't disrupt focus
-        return True
-
-    windows = get_cerf_windows()
-    visible = [w for w in windows if w['visible'] and w['size'][0] > 0 and w['size'][1] > 0]
-    if not visible:
-        print("WARNING: No visible cerf.exe windows found to foreground")
-        return False
-
-    # Find the largest visible window (likely the main app window)
-    main_win = max(visible, key=lambda w: w['size'][0] * w['size'][1])
-    hwnd = main_win['hwnd']
-
-    # Use multiple methods to reliably bring to foreground
-    u32.ShowWindow(hwnd, 9)  # SW_RESTORE (in case minimized)
-    time.sleep(0.05)
-
-    # AttachThreadInput trick for reliable SetForegroundWindow
-    fore_tid = u32.GetWindowThreadProcessId(foreground_hwnd, None)
-    our_tid = k32.GetCurrentThreadId()
-    if fore_tid != our_tid:
-        u32.AttachThreadInput(our_tid, fore_tid, True)
-    u32.SetForegroundWindow(hwnd)
-    u32.BringWindowToTop(hwnd)
-    if fore_tid != our_tid:
-        u32.AttachThreadInput(our_tid, fore_tid, False)
-
-    time.sleep(0.15)  # Let the window fully activate
-    print(f"Foregrounded: {main_win['class']} \"{main_win['title']}\" (0x{hwnd:X})")
-    return True
-
 
 # ===== COMMANDS =====
 
@@ -223,7 +176,6 @@ def cmd_screenshot(args):
 
 def cmd_click(args):
     """Left-click at screen coordinates."""
-    bring_cerf_to_foreground()
     x, y = args.x, args.y
     u32.SetCursorPos(x, y)
     time.sleep(0.05)
@@ -234,9 +186,21 @@ def cmd_click(args):
     return 0
 
 
+def cmd_move(args):
+    """Move mouse cursor without clicking."""
+    x, y = args.x, args.y
+    # Use mouse_event with absolute coordinates to generate proper WM_MOUSEMOVE
+    screen_w = u32.GetSystemMetrics(0)  # SM_CXSCREEN
+    screen_h = u32.GetSystemMetrics(1)  # SM_CYSCREEN
+    abs_x = int(x * 65535 / screen_w)
+    abs_y = int(y * 65535 / screen_h)
+    u32.mouse_event(0x0001 | 0x8000, abs_x, abs_y, 0, 0)  # MOVE | ABSOLUTE
+    print(f"Moved to ({x}, {y})")
+    return 0
+
+
 def cmd_rclick(args):
     """Right-click at screen coordinates."""
-    bring_cerf_to_foreground()
     x, y = args.x, args.y
     u32.SetCursorPos(x, y)
     time.sleep(0.05)
@@ -249,7 +213,6 @@ def cmd_rclick(args):
 
 def cmd_dclick(args):
     """Double-click at screen coordinates."""
-    bring_cerf_to_foreground()
     x, y = args.x, args.y
     u32.SetCursorPos(x, y)
     time.sleep(0.05)
@@ -266,7 +229,7 @@ def cmd_dclick(args):
 
 def cmd_drag(args):
     """Click and drag from one position to another."""
-    bring_cerf_to_foreground()
+
     x1, y1, x2, y2 = args.x1, args.y1, args.x2, args.y2
     u32.SetCursorPos(x1, y1)
     time.sleep(0.05)
@@ -287,7 +250,7 @@ def cmd_drag(args):
 
 def cmd_type(args):
     """Type text by simulating key presses."""
-    bring_cerf_to_foreground()
+
     text = args.text
     for char in text:
         vk_scan = u32.VkKeyScanW(ord(char))
@@ -327,7 +290,7 @@ def cmd_type(args):
 
 def cmd_key(args):
     """Press one or more named keys sequentially."""
-    bring_cerf_to_foreground()
+
     for key_name in args.keys:
         key_lower = key_name.lower()
         if key_lower in VK_CODES:
@@ -350,7 +313,7 @@ def cmd_key(args):
 
 def cmd_combo(args):
     """Press a key combination like ctrl+a, alt+f4, ctrl+shift+s."""
-    bring_cerf_to_foreground()
+
     parts = args.combo.lower().split('+')
     if len(parts) < 2:
         print("ERROR: Combo must have at least 2 keys separated by +")
@@ -462,6 +425,11 @@ def main():
     p_click.add_argument('x', type=int, help='X screen coordinate')
     p_click.add_argument('y', type=int, help='Y screen coordinate')
 
+    # move
+    p_move = sub.add_parser('move', help='Move mouse cursor without clicking')
+    p_move.add_argument('x', type=int, help='X screen coordinate')
+    p_move.add_argument('y', type=int, help='Y screen coordinate')
+
     # rclick
     p_rclick = sub.add_parser('rclick', help='Right-click at coordinates')
     p_rclick.add_argument('x', type=int, help='X screen coordinate')
@@ -507,6 +475,7 @@ def main():
     cmd_map = {
         'screenshot': cmd_screenshot, 'ss': cmd_screenshot,
         'click': cmd_click,
+        'move': cmd_move,
         'rclick': cmd_rclick,
         'dclick': cmd_dclick,
         'drag': cmd_drag,

@@ -237,7 +237,7 @@ LRESULT CALLBACK Win32Thunks::EmuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             tls_pending_wce_exstyle = 0;
         }
         MarshalCreateStruct(lParam, s_instance->mem,
-                            s_instance->emu_hinstance, lParam);
+                            s_instance->GetEmuHInstance(), lParam);
         /* Override style/exStyle in the marshaled CREATESTRUCT with original WinCE
            values so ARM code sees the styles it requested, not our WS_POPUP conversion.
            CREATESTRUCT layout: +32 = style, +44 = dwExStyle (matches CS_EMU_ADDR offsets

@@ -62,15 +62,11 @@ bool Win32Thunks::LaunchArmChildProcess(
                 LOG(API, "[API] ShellExecuteEx: ProcessSlot alloc failed\n");
                 delete cpi; t_ctx = nullptr; return 1;
             }
-            /* Register DLL writable sections for copy-on-write.
-               Child process writes to DLL .data pages get private copies. */
+            /* Register DLL writable sections for copy-on-write tracking.
+               Writes to DLL .data pages will trigger private copies.
+               NOTE: CopyDllWritableSections is deferred until after InstallThunks
+               so the overlay snapshot captures fully-patched IAT entries. */
             slot.RegisterWritableSections(cpi->mem->dll_writable_sections);
-            /* Pre-copy all DLL R/W sections per-process (WinCE CopyRegions).
-               Each process gets independent .data/.bss so CRT globals like
-               _pRawDllMain and _initterm state don't leak between processes. */
-            slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
-                return cpi->mem->TranslateGlobal(pg);
-            });
             EmulatedMemory::process_slot = &slot;
 
             /* Per-process handle table for cleanup on exit */
@@ -131,6 +127,24 @@ bool Win32Thunks::LaunchArmChildProcess(
             t_emu_hinstance = child_pe.image_base;
 
             cpi->thunks->InstallThunks(child_pe, ctx.process_name);
+
+            /* Snapshot writable sections AFTER InstallThunks patches IAT entries
+               but BEFORE CallDllEntryPoints runs DllMain.
+               Hold the loader lock to serialize with concurrent DLL loading
+               (dcomssd's background thread). This ensures no DLL is mid-load
+               with unpatched IAT entries when we take the snapshot.
+               On real WinCE, CopyRegions copies from the original PE file data
+               (o32_realaddr), not from runtime-modified pages. Since our thunk
+               addresses are global (same for all processes), copying from the
+               post-InstallThunks global data is equivalent. */
+            {
+                std::lock_guard<std::recursive_mutex> lock(cpi->thunks->dll_load_mutex);
+                slot.RegisterWritableSections(cpi->mem->dll_writable_sections);
+                slot.CopyDllWritableSections([&](uint32_t pg) -> uint8_t* {
+                    return cpi->mem->TranslateGlobal(pg);
+                });
+            }
+
             cpi->thunks->CallDllEntryPoints();
 
             /* Phase 2: Call DLL_PROCESS_ATTACH for ALL previously-loaded DLLs.
@@ -151,6 +165,13 @@ bool Win32Thunks::LaunchArmChildProcess(
                         continue;
                     LOG(API, "[PROC] DLL_PROCESS_ATTACH (child): 0x%08X (base=0x%08X)\n",
                         entry, dll.base_addr);
+                    /* Refresh this DLL's overlay pages from global before DllMain.
+                       Concurrent DLL loading (dcomssd's background thread) may have
+                       patched IAT entries in global AFTER our initial snapshot. */
+                    slot.RefreshDllOverlay(dll.base_addr, dll.pe_info.size_of_image,
+                        [&](uint32_t pg) -> uint8_t* {
+                            return cpi->mem->TranslateGlobal(pg);
+                        });
                     uint32_t args[3] = { dll.base_addr, DLL_PROCESS_ATTACH_REASON, 0 };
                     ctx.callback_executor(entry, args, 3);
                 }
