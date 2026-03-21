@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""E2E test: Start -> Settings -> Control Panel opens with applets."""
+"""E2E test: Start -> Settings -> Control Panel -> double-click System -> opens."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(__file__))
 from cerf_test_utils import CerfTestRunner, step, passed, failed
 
-LOG = "Z:/tmp/e2e_control_panel.txt"
+LOG = "Z:/tmp/e2e_cpanel_system.txt"
 runner = CerfTestRunner(LOG)
 
 try:
@@ -22,7 +22,7 @@ try:
     step("Start menu opened.")
 
     # Hover over Settings to open submenu
-    # Verified: Settings is 3rd item in Start menu at (0,330)-(146,455)
+    # Settings is 3rd item in Start menu at (0,330)-(146,455)
     step("Moving to Settings (73, 388)...")
     runner.move(73, 388)
     time.sleep(2)
@@ -33,12 +33,24 @@ try:
     runner.click(266, 386)
     step("Waiting for Control Panel window creation...")
     runner.wait_for_log("class='CONTROLEXE_MAIN'", timeout=15)
-    step("Waiting for Control Panel to enter message loop...")
+    step("Waiting for Control Panel message loop...")
     runner.wait_for_log("control.*GetMessageW", regex=True, timeout=10)
     step("Control Panel window is running!")
+    time.sleep(2)
+
+    # Double-click System icon in Control Panel
+    # System is in row 2, 7th column at approximately (640, 125)
+    runner.mark()
+    step("Double-clicking System applet (640, 125)...")
+    runner.dclick(640, 125)
+    step("Waiting for System Properties (ctlpnl) process...")
+    runner.wait_for_log("ctlpnl.*CreateWindowExW", regex=True, icase=True, timeout=15)
+    step("Waiting for System Properties dialog message loop...")
+    runner.wait_for_log("ctlpnl.*IsDialogMessageW", regex=True, icase=True, timeout=15)
+    step("System Properties dialog running!")
     runner.screenshot()
 
-    passed("Control Panel opens from Start -> Settings")
+    passed("Control Panel -> System Properties opens successfully")
 
 except TimeoutError as e:
     runner.screenshot()

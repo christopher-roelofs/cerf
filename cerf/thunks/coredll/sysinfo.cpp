@@ -168,6 +168,51 @@ void Win32Thunks::RegisterSysInfoHandlers() {
         }
         return true;
     });
+    /* GetSystemMemoryDivision — returns storage vs RAM page split.
+       On real WinCE, the RAM is divided between storage (object store)
+       and program memory. We report reasonable values. */
+    Thunk("GetSystemMemoryDivision", 336, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t pStorePages = regs[0], pRamPages = regs[1], pPageSize = regs[2];
+        MEMORYSTATUS ms = {};
+        ms.dwLength = sizeof(ms);
+        GlobalMemoryStatus(&ms);
+        uint32_t total_phys = fake_total_phys > 0 ? fake_total_phys
+                              : (uint32_t)std::min(ms.dwTotalPhys, (SIZE_T)0x7FFFFFFF);
+        uint32_t page_size = 4096;
+        uint32_t total_pages = total_phys / page_size;
+        uint32_t store_pages = total_pages / 4;     /* 25% for storage */
+        uint32_t ram_pages = total_pages - store_pages;
+        if (pStorePages) mem.Write32(pStorePages, store_pages);
+        if (pRamPages)   mem.Write32(pRamPages, ram_pages);
+        if (pPageSize)   mem.Write32(pPageSize, page_size);
+        LOG(API, "[API] GetSystemMemoryDivision -> store=%u ram=%u pageSize=%u\n",
+            store_pages, ram_pages, page_size);
+        regs[0] = 1; /* TRUE */
+        return true;
+    });
+    /* GetStoreInformation — returns object store size and free space. */
+    Thunk("GetStoreInformation", 323, [this](uint32_t* regs, EmulatedMemory& mem) -> bool {
+        uint32_t ptr = regs[0]; /* LPSTORE_INFORMATION */
+        if (ptr) {
+            /* Report 32MB store with 16MB free — reasonable for WinCE device */
+            constexpr uint32_t STORE_SIZE = 32 * 1024 * 1024;
+            constexpr uint32_t STORE_FREE = 16 * 1024 * 1024;
+            mem.Write32(ptr + 0, STORE_SIZE);  /* dwStoreSize */
+            mem.Write32(ptr + 4, STORE_FREE);  /* dwFreeSize */
+            LOG(API, "[API] GetStoreInformation -> size=%uMB free=%uMB\n",
+                STORE_SIZE / (1024*1024), STORE_FREE / (1024*1024));
+        }
+        regs[0] = 1; /* TRUE */
+        return true;
+    });
+    /* EnumPnpIds — enumerates Plug and Play device IDs.
+       Called by System Properties to list devices. Return FALSE = no more. */
+    Thunk("EnumPnpIds", 123, [](uint32_t* regs, EmulatedMemory&) -> bool {
+        LOG(API, "[API] EnumPnpIds(flags=0x%X, buf=0x%08X, len=0x%08X) -> FALSE (no PnP)\n",
+            regs[0], regs[1], regs[2]);
+        regs[0] = 0; /* FALSE — no PnP devices */
+        return true;
+    });
     /* KernelIoControl — WinCE kernel I/O control interface.
        Used by device property dialogs to query processor name, OEM info, etc.
        via IOCTL_HAL_GET_DEVICE_INFO and similar control codes. */

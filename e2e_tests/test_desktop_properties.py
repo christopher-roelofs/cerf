@@ -29,9 +29,9 @@ try:
     step("Clicking Properties (280, 226)...")
     runner.click(280, 226)
     step("Waiting for Display Properties window...")
-    runner.wait_for_log("ctlpnl.*CreateWindowExW", regex=True, timeout=15)
+    runner.wait_for_log("ctlpnl.*CreateWindowExW", regex=True, icase=True, timeout=15)
     step("Waiting for ctlpnl message loop...")
-    runner.wait_for_log("ctlpnl.*GetMessageW", regex=True, timeout=15)
+    runner.wait_for_log("ctlpnl.*GetMessageW", regex=True, icase=True, timeout=15)
     step("Display Properties dialog is running!")
     runner.screenshot()
 

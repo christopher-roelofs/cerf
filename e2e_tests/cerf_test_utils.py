@@ -81,12 +81,15 @@ class CerfTestRunner:
         except:
             self._last_check_pos = 0
 
-    def _match(self, line, pattern, use_regex):
+    def _match(self, line, pattern, use_regex, icase=False):
         if use_regex:
-            return re.search(pattern, line) is not None
+            flags = re.IGNORECASE if icase else 0
+            return re.search(pattern, line, flags) is not None
+        if icase:
+            return pattern.lower() in line.lower()
         return pattern in line
 
-    def wait_for_log(self, pattern, timeout=DEFAULT_TIMEOUT, since_mark=True, regex=False):
+    def wait_for_log(self, pattern, timeout=DEFAULT_TIMEOUT, since_mark=True, regex=False, icase=False):
         """Wait until `pattern` appears in the log. Returns the matching line.
         If since_mark=True, only searches lines added after the last mark().
         If regex=True, uses re.search instead of plain string match.
@@ -98,21 +101,21 @@ class CerfTestRunner:
                     if since_mark:
                         f.seek(self._last_check_pos)
                     for line in f:
-                        if self._match(line, pattern, regex):
+                        if self._match(line, pattern, regex, icase):
                             return line.strip()
             except:
                 pass
             time.sleep(0.3)
         raise TimeoutError(f"Timed out waiting for '{pattern}' in log ({timeout}s)")
 
-    def check_log(self, pattern, since_mark=True, regex=False):
+    def check_log(self, pattern, since_mark=True, regex=False, icase=False):
         """Check if pattern exists in log (non-blocking). Returns bool."""
         try:
             with open(self.log_path, "r", errors="replace") as f:
                 if since_mark:
                     f.seek(self._last_check_pos)
                 for line in f:
-                    if self._match(line, pattern, regex):
+                    if self._match(line, pattern, regex, icase):
                         return True
         except:
             pass
