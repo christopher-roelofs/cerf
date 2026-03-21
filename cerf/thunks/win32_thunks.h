@@ -90,7 +90,10 @@ public:
     void RunPerProcessDllInit();
     class TraceManager* GetTraceManager() const { return trace_mgr_; }
 
-    void LoadIniConfig();
+    void LoadIniConfig(const char* device_override = nullptr);
+private:
+    void LoadDeviceConfig();
+public:
     void InitVFS(const std::string& device_override = "");
 
     /* Callback executor: executes ARM code from native context.

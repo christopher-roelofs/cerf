@@ -11,10 +11,7 @@
 #include <algorithm>
 
 
-void Win32Thunks::InitVFS(const std::string& device_override) {
-    if (!device_override.empty())
-        device_name = device_override;
-
+void Win32Thunks::InitVFS(const std::string&) {
     if (device_name.empty()) {
         LOG_ERR("[VFS] FATAL: No device configured. Set device= in cerf.ini or use --device=NAME.\n");
         CerfFatalExit(1);

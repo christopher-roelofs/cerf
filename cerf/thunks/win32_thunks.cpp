@@ -11,68 +11,96 @@
 #include <shlobj.h>
 #include <fstream>
 
-/* Load cerf.ini configuration — called once from main.cpp before anything else. */
-void Win32Thunks::LoadIniConfig() {
+/* Helper: parse key=value lines from an ini file */
+static std::string IniGetVal(const std::string& line, const char* key) {
+    size_t klen = strlen(key);
+    if (line.size() > klen && line.substr(0, klen) == key) {
+        std::string val = line.substr(klen);
+        while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+            val.pop_back();
+        return val;
+    }
+    return "";
+}
+static bool IniIsTrue(const std::string& v) { return v == "true" || v == "1" || v == "yes"; }
+static void IniParseDllList(const std::string& v, std::set<std::string>& out) {
+    out.clear();
+    size_t pos = 0;
+    while (pos < v.size()) {
+        size_t end = v.find(';', pos);
+        if (end == std::string::npos) end = v.size();
+        std::string dll = v.substr(pos, end - pos);
+        while (!dll.empty() && dll.back() == ' ') dll.pop_back();
+        while (!dll.empty() && dll.front() == ' ') dll.erase(dll.begin());
+        if (!dll.empty()) {
+            for (auto& c : dll) if (c >= 'A' && c <= 'Z') c += 32;
+            out.insert(dll);
+        }
+        pos = end + 1;
+    }
+}
+
+/* Load configuration — two-phase:
+   1. Global cerf.ini next to cerf.exe — reads only device= selector
+   2. devices/<device>/cerf.ini — reads all device-specific settings
+   CLI overrides are applied in main.cpp after this returns. */
+void Win32Thunks::LoadIniConfig(const char* device_override) {
     char cerf_path[MAX_PATH];
     ::GetModuleFileNameA(NULL, cerf_path, MAX_PATH);
     std::string cerf_str(cerf_path);
     size_t last_sep = cerf_str.find_last_of("\\/");
     cerf_dir = (last_sep != std::string::npos) ? cerf_str.substr(0, last_sep + 1) : "";
 
-    std::string ini_path = cerf_dir + "cerf.ini";
-    std::ifstream ini(ini_path);
-    if (!ini.is_open()) {
-        LOG_ERR("[CFG] cerf.ini not found at: %s\n", ini_path.c_str());
-        return;
+    /* Phase 1: global cerf.ini — only device= */
+    std::string global_ini = cerf_dir + "cerf.ini";
+    std::ifstream g(global_ini);
+    if (g.is_open()) {
+        std::string line;
+        while (std::getline(g, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+            std::string v = IniGetVal(line, "device=");
+            if (!v.empty()) device_name = v;
+        }
     }
 
+    /* CLI --device= overrides global cerf.ini */
+    if (device_override && device_override[0])
+        device_name = device_override;
+
+    /* Phase 2: device-specific config */
+    LoadDeviceConfig();
+}
+
+/* Phase 2: load device-specific cerf.ini after device_name is finalized
+   (CLI --device= override applied between LoadIniConfig and this call). */
+void Win32Thunks::LoadDeviceConfig() {
+    std::string device_ini = cerf_dir + "devices/" + device_name + "/cerf.ini";
+    std::ifstream f(device_ini);
+    if (!f.is_open()) {
+        LOG(API, "[CFG] No device config: %s (using defaults)\n", device_ini.c_str());
+        return;
+    }
+    LOG(API, "[CFG] Loading device config: %s\n", device_ini.c_str());
+
     std::string line;
-    while (std::getline(ini, line)) {
+    while (std::getline(f, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty() || line[0] == ';' || line[0] == '#') continue;
 
-        auto getval = [&](const char* key) -> std::string {
-            size_t klen = strlen(key);
-            if (line.size() > klen && line.substr(0, klen) == key) {
-                std::string val = line.substr(klen);
-                while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
-                    val.pop_back();
-                return val;
-            }
-            return "";
-        };
-        auto is_true = [](const std::string& v) { return v == "true" || v == "1" || v == "yes"; };
-        auto parseDllList = [](const std::string& v, std::set<std::string>& out) {
-            out.clear();
-            size_t pos = 0;
-            while (pos < v.size()) {
-                size_t end = v.find(';', pos);
-                if (end == std::string::npos) end = v.size();
-                std::string dll = v.substr(pos, end - pos);
-                while (!dll.empty() && dll.back() == ' ') dll.pop_back();
-                while (!dll.empty() && dll.front() == ' ') dll.erase(dll.begin());
-                if (!dll.empty()) {
-                    for (auto& c : dll) if (c >= 'A' && c <= 'Z') c += 32;
-                    out.insert(dll);
-                }
-                pos = end + 1;
-            }
-        };
-
         std::string v;
-        if (!(v = getval("device=")).empty()) device_name = v;
-        if (!(v = getval("screen_width=")).empty()) { int n = atoi(v.c_str()); if (n > 0) screen_width = (uint32_t)n; }
-        if (!(v = getval("screen_height=")).empty()) { int n = atoi(v.c_str()); if (n > 0) screen_height = (uint32_t)n; }
-        if (!(v = getval("fake_screen_resolution=")).empty()) fake_screen_resolution = (v != "false" && v != "0" && v != "no");
-        if (!(v = getval("enable_theming=")).empty()) enable_theming = is_true(v);
-        if (!(v = getval("disable_uxtheme=")).empty()) disable_uxtheme = is_true(v);
-        if (!(v = getval("os_major=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_major = (uint32_t)n; }
-        if (!(v = getval("os_minor=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_minor = (uint32_t)n; }
-        if (!(v = getval("os_build=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_build = (uint32_t)n; }
-        if (!(v = getval("os_build_date=")).empty()) os_build_date = v;
-        if (!(v = getval("fake_total_phys=")).empty()) { int n = atoi(v.c_str()); if (n > 0) fake_total_phys = (uint32_t)n; }
-        if (!(v = getval("boot_services=")).empty()) parseDllList(v, boot_service_dlls);
-        if (!(v = getval("init_blacklist=")).empty()) parseDllList(v, init_blacklist);
+        if (!(v = IniGetVal(line, "screen_width=")).empty()) { int n = atoi(v.c_str()); if (n > 0) screen_width = (uint32_t)n; }
+        if (!(v = IniGetVal(line, "screen_height=")).empty()) { int n = atoi(v.c_str()); if (n > 0) screen_height = (uint32_t)n; }
+        if (!(v = IniGetVal(line, "fake_screen_resolution=")).empty()) fake_screen_resolution = (v != "false" && v != "0" && v != "no");
+        if (!(v = IniGetVal(line, "enable_theming=")).empty()) enable_theming = IniIsTrue(v);
+        if (!(v = IniGetVal(line, "disable_uxtheme=")).empty()) disable_uxtheme = IniIsTrue(v);
+        if (!(v = IniGetVal(line, "os_major=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_major = (uint32_t)n; }
+        if (!(v = IniGetVal(line, "os_minor=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_minor = (uint32_t)n; }
+        if (!(v = IniGetVal(line, "os_build=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_build = (uint32_t)n; }
+        if (!(v = IniGetVal(line, "os_build_date=")).empty()) os_build_date = v;
+        if (!(v = IniGetVal(line, "fake_total_phys=")).empty()) { int n = atoi(v.c_str()); if (n > 0) fake_total_phys = (uint32_t)n; }
+        if (!(v = IniGetVal(line, "boot_services=")).empty()) IniParseDllList(v, boot_service_dlls);
+        if (!(v = IniGetVal(line, "init_blacklist=")).empty()) IniParseDllList(v, init_blacklist);
     }
 }
 

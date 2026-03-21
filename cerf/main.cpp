@@ -47,8 +47,8 @@ int main(int argc, char* argv[]) {
     /* Set up thunks (no EXE loaded yet — orchestrator mode) */
     Win32Thunks thunks(mem);
 
-    /* Load config and apply CLI overrides — need screen dimensions for boot screen */
-    thunks.LoadIniConfig();
+    /* Load config: global cerf.ini (device= only) -> CLI --device= -> device cerf.ini -> CLI overrides */
+    thunks.LoadIniConfig(cfg.device_override);
     if (cfg.cli_fake_screen_resolution >= 0)
         thunks.fake_screen_resolution = (cfg.cli_fake_screen_resolution != 0);
     if (cfg.cli_screen_width > 0)
@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
 
     /* Initialize virtual filesystem — device paths */
     boot.Step("Loading virtual filesystem...");
-    thunks.InitVFS(cfg.device_override ? cfg.device_override : "");
+    thunks.InitVFS();
 
     /* System font and theming (reads registry, patches GetSysColor) */
     boot.Step("Initializing theming...");
