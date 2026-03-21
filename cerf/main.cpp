@@ -41,17 +41,12 @@ int main(int argc, char* argv[]) {
     else
         LOG_RAW("Booting from HKLM\\init\n\n");
 
-    /* Initialize emulated memory (global, shared across all processes) */
+    /* Initialize emulated memory and thunks */
     EmulatedMemory mem;
-
-    /* Set up thunks (no EXE loaded yet — orchestrator mode) */
     Win32Thunks thunks(mem);
 
-    /* Initialize virtual filesystem — reads cerf.ini, sets up device paths.
-       This also sets wince_sys_dir for ARM DLL loading. */
-    thunks.InitVFS(cfg.device_override ? cfg.device_override : "");
-
-    /* CLI overrides take priority over cerf.ini */
+    /* Load config first — need screen dimensions for boot screen */
+    thunks.LoadIniConfig();
     if (cfg.cli_fake_screen_resolution >= 0)
         thunks.fake_screen_resolution = (cfg.cli_fake_screen_resolution != 0);
     if (cfg.cli_screen_width > 0)
@@ -64,13 +59,16 @@ int main(int argc, char* argv[]) {
     if (cfg.cli_os_build_date) thunks.os_build_date = cfg.cli_os_build_date;
     if (cfg.cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cfg.cli_fake_total_phys;
 
-    /* Boot screen — Windows 2000-style splash with progress */
+    /* Boot screen — appears immediately with correct dimensions */
     BootScreen boot;
     boot.Create((int)thunks.screen_width, (int)thunks.screen_height);
     thunks.boot_screen = &boot;
-    /* Initial total = fixed overhead steps (driver/init counts added dynamically) */
     boot.SetTotal(5);
-    boot.Step("Initializing ARM emulator...");
+    boot.Step("Initializing...");
+
+    /* Initialize virtual filesystem — device paths, fonts, themes */
+    boot.Step("Loading virtual filesystem...");
+    thunks.InitVFS(cfg.device_override ? cfg.device_override : "");
 
     /* Shared memory regions used by all ARM processes */
     uint32_t cb_sentinel = 0xCAFEC000;
