@@ -30,6 +30,17 @@ class CerfTestRunner:
             stdout=self.log_file, stderr=self.log_file, cwd="Z:/")
         print(f"  cerf started PID={self.proc.pid}")
 
+    def wait_for_explorer(self):
+        """Wait for explorer to fully initialize (HHTaskBar + Start button).
+        Call after start(). Blocks until explorer is ready for interaction."""
+        self.mark()
+        step("Waiting for explorer boot (HHTaskBar)...")
+        self.wait_for_log("RegisterClassW: 'HHTaskBar'")
+        step("Waiting for Start button render...")
+        self.wait_for_log("DrawTextW.*'Start'", regex=True)
+        time.sleep(5)
+        step("Explorer ready.")
+
     def stop(self):
         """Kill cerf."""
         if self.proc:

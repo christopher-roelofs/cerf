@@ -17,12 +17,7 @@ try:
     step("Starting cerf...")
     runner.start()
     runner.mark()
-    step("Waiting for explorer boot (HHTaskBar creation)...")
-    runner.wait_for_log("RegisterClassW: 'HHTaskBar'")
-    step("Waiting for Start button text to render...")
-    runner.wait_for_log("DrawTextW.*'Start'", regex=True)
-    step("Explorer ready.")
-    time.sleep(2)  # safe delay after init
+    runner.wait_for_explorer()
 
     # --- Step 2: Open Start menu ---
     runner.mark()
