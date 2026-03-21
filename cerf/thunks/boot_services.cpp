@@ -31,10 +31,6 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
 
     LOG(API, "[BOOT] Starting device.exe (built-in device services)...\n");
 
-    /* Read registry and collect services BEFORE spawning the thread,
-       since registry access needs the main thread's context. */
-    LoadRegistry();
-
     struct BootService {
         std::wstring name;
         std::string dll;
@@ -116,10 +112,6 @@ void Win32Thunks::StartBootServices(EmulatedMemory& mem) {
         [](const BootService& a, const BootService& b) { return a.order < b.order; });
 
     if (services.empty()) return;
-
-    /* Update boot screen total with driver count (adds to existing overhead) */
-    if (boot_screen)
-        boot_screen->SetTotal(boot_screen->progress_total + (int)services.size());
 
     /* Spawn device.exe as a real process with its own ProcessSlot.
        This thread stays alive — driver background threads (dcomssd)

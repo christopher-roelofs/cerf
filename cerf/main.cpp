@@ -41,11 +41,13 @@ int main(int argc, char* argv[]) {
     else
         LOG_RAW("Booting from HKLM\\init\n\n");
 
-    /* Initialize emulated memory and thunks */
+    /* Initialize emulated memory (global, shared across all processes) */
     EmulatedMemory mem;
+
+    /* Set up thunks (no EXE loaded yet — orchestrator mode) */
     Win32Thunks thunks(mem);
 
-    /* Load config first — need screen dimensions for boot screen */
+    /* Load config and apply CLI overrides — need screen dimensions for boot screen */
     thunks.LoadIniConfig();
     if (cfg.cli_fake_screen_resolution >= 0)
         thunks.fake_screen_resolution = (cfg.cli_fake_screen_resolution != 0);
@@ -59,18 +61,23 @@ int main(int argc, char* argv[]) {
     if (cfg.cli_os_build_date) thunks.os_build_date = cfg.cli_os_build_date;
     if (cfg.cli_fake_total_phys > 0) thunks.fake_total_phys = (uint32_t)cfg.cli_fake_total_phys;
 
-    /* Boot screen — appears immediately with correct dimensions */
+    /* Boot screen — threaded, appears immediately after config */
     BootScreen boot;
     boot.Create((int)thunks.screen_width, (int)thunks.screen_height);
     thunks.boot_screen = &boot;
-    boot.SetTotal(5);
     boot.Step("Initializing...");
 
-    /* Initialize virtual filesystem — device paths, fonts, themes */
+    /* Initialize virtual filesystem — device paths */
     boot.Step("Loading virtual filesystem...");
     thunks.InitVFS(cfg.device_override ? cfg.device_override : "");
 
-    /* Shared memory regions used by all ARM processes */
+    /* System font and theming (reads registry, patches GetSysColor) */
+    boot.Step("Loading system fonts...");
+    thunks.InitWceSysFont();
+    thunks.InitWceTheme();
+
+    /* Shared memory, thread context, ARM CPU, callback executors */
+    boot.Step("Initializing emulator...");
     uint32_t cb_sentinel = 0xCAFEC000;
     mem.Alloc(cb_sentinel, 0x1000);
     mem.Write32(cb_sentinel, 0xE12FFF1E); /* BX LR — safety net */
@@ -127,11 +134,14 @@ int main(int argc, char* argv[]) {
             return t_ctx->callback_executor(addr, args, nargs);
         });
 
-    /* Start device.exe (boot services: lpcd, dcomssd, etc.) */
+    /* Load registry before boot services (was inside StartBootServices) */
     boot.Step("Loading registry...");
+    thunks.LoadRegistry();
+
+    /* Start device.exe (boot services: lpcd, dcomssd, etc.) */
+    boot.Step("Loading drivers data...");
     thunks.StartBootServices(mem);
 
-    boot.Step("Applying runtime patches...");
     ApplyRuntimePatches(mem);
 
     /* GDB remote debugging */
@@ -149,15 +159,17 @@ int main(int argc, char* argv[]) {
 
     /* Process HKLM\init boot sequence (unless --no-init) */
     if (!cfg.no_init) {
-        boot.Step("Processing init sequence...");
+        boot.Step("Loading init data...");
         thunks.ProcessInitHive(mem);
     }
 
+    boot.ScheduleDestroy(10000);
+
     /* Launch user-specified exe (if any) */
     if (cfg.exe_path) {
+        boot.Step("Launching user executable...");
         std::wstring resolved = thunks.ResolveExePath(cfg.exe_path);
         LOG(EMU, "[EMU] Launching: %ls\n", resolved.c_str());
-        boot.Step("Launching application...");
 
         /* Set exe_dir for DLL search (app-bundled DLLs) */
         {
@@ -187,15 +199,12 @@ int main(int argc, char* argv[]) {
     } else if (cfg.no_init) {
         LOG_ERR("No exe specified and --no-init set. Nothing to run.\n");
         PrintUsage(argv[0]);
-        boot.Destroy();
         if (gdb) { g_debugger = nullptr; delete gdb; }
         Log::Close();
         return 1;
     }
 
-    /* Boot screen: schedule fallback destroy (10s) for --no-init or if
-       explorer never calls SignalStarted. OnShellReady() cancels this. */
-    boot.ScheduleDestroy(10000);
+    boot.Step("");
 
     /* Wait for all child processes with message pump */
     LOG(EMU, "[EMU] Orchestrator waiting for child processes...\n");

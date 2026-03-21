@@ -10,74 +10,8 @@
 #include <fstream>
 #include <algorithm>
 
-void Win32Thunks::LoadIniConfig() {
-    /* Determine cerf.exe directory */
-    char cerf_path[MAX_PATH];
-    ::GetModuleFileNameA(NULL, cerf_path, MAX_PATH);
-    std::string cerf_str(cerf_path);
-    size_t last_sep = cerf_str.find_last_of("\\/");
-    cerf_dir = (last_sep != std::string::npos) ? cerf_str.substr(0, last_sep + 1) : "";
-
-    std::string ini_path = cerf_dir + "cerf.ini";
-    std::ifstream ini(ini_path);
-    if (!ini.is_open()) {
-        LOG_ERR("[CFG] cerf.ini not found at: %s\n", ini_path.c_str());
-        return;
-    }
-
-    std::string line;
-    while (std::getline(ini, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line[0] == ';' || line[0] == '#') continue;
-
-        auto getval = [&](const char* key) -> std::string {
-            size_t klen = strlen(key);
-            if (line.size() > klen && line.substr(0, klen) == key) {
-                std::string val = line.substr(klen);
-                while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
-                    val.pop_back();
-                return val;
-            }
-            return "";
-        };
-        auto is_true = [](const std::string& v) { return v == "true" || v == "1" || v == "yes"; };
-        auto parseDllList = [](const std::string& v, std::set<std::string>& out) {
-            out.clear();
-            size_t pos = 0;
-            while (pos < v.size()) {
-                size_t end = v.find(';', pos);
-                if (end == std::string::npos) end = v.size();
-                std::string dll = v.substr(pos, end - pos);
-                while (!dll.empty() && dll.back() == ' ') dll.pop_back();
-                while (!dll.empty() && dll.front() == ' ') dll.erase(dll.begin());
-                if (!dll.empty()) {
-                    for (auto& c : dll) if (c >= 'A' && c <= 'Z') c += 32;
-                    out.insert(dll);
-                }
-                pos = end + 1;
-            }
-        };
-
-        std::string v;
-        if (!(v = getval("device=")).empty()) device_name = v;
-        if (!(v = getval("screen_width=")).empty()) { int n = atoi(v.c_str()); if (n > 0) screen_width = (uint32_t)n; }
-        if (!(v = getval("screen_height=")).empty()) { int n = atoi(v.c_str()); if (n > 0) screen_height = (uint32_t)n; }
-        if (!(v = getval("fake_screen_resolution=")).empty()) fake_screen_resolution = (v != "false" && v != "0" && v != "no");
-        if (!(v = getval("enable_theming=")).empty()) enable_theming = is_true(v);
-        if (!(v = getval("disable_uxtheme=")).empty()) disable_uxtheme = is_true(v);
-        if (!(v = getval("os_major=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_major = (uint32_t)n; }
-        if (!(v = getval("os_minor=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_minor = (uint32_t)n; }
-        if (!(v = getval("os_build=")).empty()) { int n = atoi(v.c_str()); if (n >= 0) os_build = (uint32_t)n; }
-        if (!(v = getval("os_build_date=")).empty()) os_build_date = v;
-        if (!(v = getval("fake_total_phys=")).empty()) { int n = atoi(v.c_str()); if (n > 0) fake_total_phys = (uint32_t)n; }
-        if (!(v = getval("boot_services=")).empty()) parseDllList(v, boot_service_dlls);
-        if (!(v = getval("init_blacklist=")).empty()) parseDllList(v, init_blacklist);
-    }
-}
 
 void Win32Thunks::InitVFS(const std::string& device_override) {
-    LoadIniConfig();
-
     if (!device_override.empty())
         device_name = device_override;
 
@@ -99,8 +33,7 @@ void Win32Thunks::InitVFS(const std::string& device_override) {
     LOG(VFS, "[VFS] Device FS root: %s\n", device_fs_root.c_str());
 
     wince_sys_dir = device_fs_root + "Windows\\";
-    InitWceSysFont();
-    InitWceTheme();
+    /* InitWceSysFont() and InitWceTheme() are called from main.cpp */
 }
 
 /* Helper: check if a character is a drive letter */

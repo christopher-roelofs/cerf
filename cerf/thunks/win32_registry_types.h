@@ -20,7 +20,9 @@ private:
     bool registry_loaded = false;
     std::string registry_path;
     std::recursive_mutex registry_mutex; /* Protects registry, hkey_map, next_fake_hkey */
+public:
     void LoadRegistry();
+private:
     void SaveRegistry();
     void ImportRegFile(const std::string& path);
     std::wstring ResolveHKey(uint32_t hkey, const std::wstring& subkey);
