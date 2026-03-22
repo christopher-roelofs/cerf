@@ -126,14 +126,16 @@ def _instance_label(inst: dict[str, Any]) -> str:
     return f"  - {inst['instance_id']} (port={inst.get('port')}, pid={inst.get('pid')})"
 
 
-def _resolve_target(target: Optional[str]) -> dict[str, Any]:
+def _resolve_target(target: str) -> dict[str, Any]:
     """
     Resolve a target to a single instance record.
 
-    - If target is None and exactly one instance is running, auto-select it.
-    - If target is None and multiple are running, raise with a listing.
-    - Match by exact instance_id (full path) first, then case-insensitive
-      substring on the full path.
+    target is REQUIRED and must be one of:
+    - The exact full file path (instance_id) as shown by ida_list_instances
+    - A port number (integer or "port=N")
+
+    No substring matching is performed. Call ida_list_instances first to see
+    available targets, then copy the exact instance_id or port.
     """
     instances = _discover_live_instances()
 
@@ -142,54 +144,38 @@ def _resolve_target(target: Optional[str]) -> dict[str, Any]:
             "No IDA instances are running. Load ida_server.py in IDA first."
         )
 
-    if target is None:
-        if len(instances) == 1:
-            return instances[0]
+    if not target or not target.strip():
         raise ToolError(
-            "Multiple IDA instances running. Specify target=<path or substring>:\n"
+            "target is REQUIRED. You must provide either:\n"
+            "  1. The exact full file path (instance_id) from ida_list_instances\n"
+            "  2. The port number (e.g. 58013)\n"
+            "Call ida_list_instances first to see available targets.\n"
+            "Available instances:\n"
             + "\n".join(_instance_label(i) for i in instances)
         )
 
-    # Match by port number (e.g. "port=58013")
-    if target.startswith("port="):
-        try:
-            port_num = int(target[5:])
-            for inst in instances:
-                if inst.get("port") == port_num:
-                    return inst
-        except ValueError:
-            pass
+    target = target.strip()
 
-    # Match by pid (e.g. "pid=12420")
-    if target.startswith("pid="):
-        try:
-            pid_num = int(target[4:])
-            for inst in instances:
-                if inst.get("pid") == pid_num:
-                    return inst
-        except ValueError:
-            pass
+    # Match by port number — accept bare integer or "port=N"
+    port_str = target[5:] if target.startswith("port=") else target
+    try:
+        port_num = int(port_str)
+        for inst in instances:
+            if inst.get("port") == port_num:
+                return inst
+    except ValueError:
+        pass
 
-    # Exact match on instance_id (full path)
+    # Exact match on instance_id (full path) — case-insensitive for Windows paths
     for inst in instances:
-        if inst["instance_id"] == target:
+        if inst["instance_id"].lower() == target.lower():
             return inst
 
-    # Case-insensitive substring match on full path
-    lower_target = target.lower()
-    matches = [i for i in instances if lower_target in i["instance_id"].lower()]
-    if len(matches) == 1:
-        return matches[0]
-
-    if len(matches) > 1:
-        raise ToolError(
-            f'Ambiguous target "{target}" matches {len(matches)} instances:\n'
-            + "\n".join(_instance_label(i) for i in matches)
-            + "\nUse a more specific substring to disambiguate."
-        )
-
     raise ToolError(
-        f'No IDA instance found matching "{target}". Available:\n'
+        f'No IDA instance found for target "{target}".\n'
+        "target must be the EXACT full file path (instance_id) or port number.\n"
+        "Do NOT use substrings or partial paths. Call ida_list_instances to get the exact values.\n"
+        "Available instances:\n"
         + "\n".join(_instance_label(i) for i in instances)
     )
 
@@ -199,13 +185,13 @@ def _resolve_target(target: Optional[str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _base_url(target: Optional[str]) -> str:
+def _base_url(target: str) -> str:
     """Resolve target to a base URL like http://127.0.0.1:51234."""
     inst = _resolve_target(target)
     return f"http://{inst['host']}:{inst['port']}"
 
 
-def _url(target: Optional[str], path: str) -> str:
+def _url(target: str, path: str) -> str:
     base = _base_url(target)
     if not path.startswith("/"):
         path = "/" + path
@@ -226,7 +212,7 @@ def _handle_response(resp: requests.Response, url: str) -> dict[str, Any]:
 
 
 def _ida_get(
-    target: Optional[str], path: str, params: dict[str, Any] | None = None
+    target: str, path: str, params: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """GET JSON from a specific IDA HTTP server."""
     url = _url(target, path)
@@ -240,7 +226,7 @@ def _ida_get(
 
 
 def _ida_post(
-    target: Optional[str], path: str, body: dict[str, Any]
+    target: str, path: str, body: dict[str, Any]
 ) -> dict[str, Any]:
     """POST JSON to a specific IDA HTTP server."""
     url = _url(target, path)
@@ -280,7 +266,12 @@ def _normalize_ea(ea: str) -> str:
 def ida_list_instances() -> dict[str, Any]:
     """
     List all running IDA instances available for analysis.
-    Call this first to see what targets are available.
+    IMPORTANT: Call this FIRST before any other ida_ tool. All other tools require
+    the "target" parameter, which must be either:
+      1. The exact "instance_id" value (full file path) from this response — copy it exactly
+      2. The "port" number from this response
+
+    Do NOT use substrings, partial paths, or DLL names as target. Always use the exact value.
 
     Returns:
         {"count": N, "instances": [{"instance_id", "port", "pid", "started_at"}, ...]}
@@ -305,37 +296,37 @@ def ida_list_instances() -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_ping(target: Optional[str] = None) -> dict[str, Any]:
+def ida_ping(target: str) -> dict[str, Any]:
     """
     Health check. Returns IDA version, Hex-Rays availability, and readonly status.
 
     Args:
-        target: IDA instance to query (e.g. "commctrl" or full path). Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
     """
     return _ida_get(target, "/api/ping")
 
 
 @mcp.tool()
-def ida_info(target: Optional[str] = None) -> dict[str, Any]:
+def ida_info(target: str) -> dict[str, Any]:
     """
     Get metadata about the loaded IDB: file path, imagebase, architecture,
     pointer size, segment bounds, Hex-Rays availability, readonly mode.
 
     Args:
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
     """
     return _ida_get(target, "/api/info")
 
 
 @mcp.tool()
-def ida_get_bytes(ea: str, size: int = 256, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_bytes(target: str, ea: str, size: int = 256) -> dict[str, Any]:
     """
     Read raw bytes at an address.
 
     Args:
         ea: Hex address string (e.g. "0x401000").
         size: Number of bytes to read (default 256).
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "size", "bytes_hex"} where bytes_hex is a lowercase hex string.
@@ -346,14 +337,14 @@ def ida_get_bytes(ea: str, size: int = 256, target: Optional[str] = None) -> dic
 
 
 @mcp.tool()
-def ida_get_disasm(ea: str, count: int = 50, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_disasm(target: str, ea: str, count: int = 50) -> dict[str, Any]:
     """
     Get disassembly lines starting at an address.
 
     Args:
         ea: Hex address string.
         count: Max number of instructions (default 50).
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"start_ea", "count", "disasm": [{"ea", "text"}, ...]}
@@ -364,13 +355,13 @@ def ida_get_disasm(ea: str, count: int = 50, target: Optional[str] = None) -> di
 
 
 @mcp.tool()
-def ida_decompile(ea: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_decompile(ea: str, target: str) -> dict[str, Any]:
     """
     Decompile the function containing the given address using Hex-Rays.
 
     Args:
         ea: Hex address string.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "function": {"name", "start_ea", "end_ea"}, "pseudocode"}
@@ -379,14 +370,14 @@ def ida_decompile(ea: str, target: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_get_function_context(ea: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_function_context(ea: str, target: str) -> dict[str, Any]:
     """
     Get rich context for the function containing an address: disassembly,
     pseudocode, callers, callees, xrefs, and comments.
 
     Args:
         ea: Hex address string.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {
@@ -403,10 +394,10 @@ def ida_get_function_context(ea: str, target: Optional[str] = None) -> dict[str,
 
 @mcp.tool()
 def ida_list_functions(
+    target: str,
     limit: int = 0,
     name_filter: Optional[str] = None,
     mode: Literal["fast", "full"] = "fast",
-    target: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     List functions known to IDA.
@@ -415,7 +406,7 @@ def ida_list_functions(
         limit: Max functions to return. 0 = no limit.
         name_filter: Case-insensitive substring filter on function names.
         mode: "fast" for basic info, "full" to also count xrefs_to and include type.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "functions": [{"start_ea", "end_ea", "name", "size", ...}, ...]}
@@ -432,9 +423,9 @@ def ida_list_functions(
 
 @mcp.tool()
 def ida_get_xrefs(
+    target: str,
     ea: str,
     direction: Literal["from", "to", "both"] = "both",
-    target: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Get cross-references for an address.
@@ -442,7 +433,7 @@ def ida_get_xrefs(
     Args:
         ea: Hex address string.
         direction: "from" (outgoing), "to" (incoming), or "both".
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "xrefs_from": [...], "xrefs_to": [...]}
@@ -455,9 +446,9 @@ def ida_get_xrefs(
 
 @mcp.tool()
 def ida_get_names(
+    target: str,
     limit: int = 0,
     name_filter: Optional[str] = None,
-    target: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     List named addresses in the IDB.
@@ -465,7 +456,7 @@ def ida_get_names(
     Args:
         limit: Max entries. 0 = no limit.
         name_filter: Case-insensitive substring filter.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "names": [{"ea", "name"}, ...]}
@@ -480,9 +471,9 @@ def ida_get_names(
 
 @mcp.tool()
 def ida_get_strings(
+    target: str,
     limit: int = 0,
     min_length: int = 4,
-    target: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     List string literals found in the binary.
@@ -490,7 +481,7 @@ def ida_get_strings(
     Args:
         limit: Max strings to return. 0 = no limit.
         min_length: Minimum string length to include (default 4).
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "strings": [{"ea", "length", "type", "value"}, ...]}
@@ -501,12 +492,12 @@ def ida_get_strings(
 
 
 @mcp.tool()
-def ida_get_segments(target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_segments(target: str) -> dict[str, Any]:
     """
     List all segments (sections) in the binary.
 
     Args:
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "segments": [{"start_ea", "end_ea", "name", "class", "size", "perm", "bitness"}, ...]}
@@ -515,12 +506,12 @@ def ida_get_segments(target: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_get_imports(target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_imports(target: str) -> dict[str, Any]:
     """
     List all imported modules and their functions.
 
     Args:
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "modules": {"dll_name": [{"ea", "name", "ordinal"}, ...], ...}}
@@ -529,12 +520,12 @@ def ida_get_imports(target: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_get_exports(target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_exports(target: str) -> dict[str, Any]:
     """
     List all exported entry points.
 
     Args:
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "exports": [{"index", "ordinal", "ea", "name"}, ...]}
@@ -543,13 +534,13 @@ def ida_get_exports(target: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_list_structs(name_filter: Optional[str] = None, target: Optional[str] = None) -> dict[str, Any]:
+def ida_list_structs(target: str, name_filter: Optional[str] = None) -> dict[str, Any]:
     """
     List structure types defined in the IDB.
 
     Args:
         name_filter: Case-insensitive substring filter.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "structs": [{"index", "id", "name", "size", "is_union"}, ...]}
@@ -561,13 +552,13 @@ def ida_list_structs(name_filter: Optional[str] = None, target: Optional[str] = 
 
 
 @mcp.tool()
-def ida_get_struct(name: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_struct(name: str, target: str) -> dict[str, Any]:
     """
     Get full details of a struct by name, including all members.
 
     Args:
         name: Exact struct name.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"name", "id", "size", "is_union",
@@ -579,13 +570,13 @@ def ida_get_struct(name: str, target: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_list_enums(name_filter: Optional[str] = None, target: Optional[str] = None) -> dict[str, Any]:
+def ida_list_enums(target: str, name_filter: Optional[str] = None) -> dict[str, Any]:
     """
     List enum types defined in the IDB.
 
     Args:
         name_filter: Case-insensitive substring filter.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"count", "enums": [{"id", "name", "is_bitfield", "member_count"}, ...]}
@@ -597,13 +588,13 @@ def ida_list_enums(name_filter: Optional[str] = None, target: Optional[str] = No
 
 
 @mcp.tool()
-def ida_get_enum(name: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_enum(name: str, target: str) -> dict[str, Any]:
     """
     Get full details of an enum by name, including all members.
 
     Args:
         name: Exact enum name.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"name", "id", "is_bitfield",
@@ -615,7 +606,7 @@ def ida_get_enum(name: str, target: Optional[str] = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-def ida_get_vtable(ea: str, count: int = 64, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_vtable(target: str, ea: str, count: int = 64) -> dict[str, Any]:
     """
     Read a vtable as an array of pointers at a given address.
     Each pointer is resolved to a function name where possible.
@@ -624,7 +615,7 @@ def ida_get_vtable(ea: str, count: int = 64, target: Optional[str] = None) -> di
     Args:
         ea: Hex address of the vtable start.
         count: Max number of slots to read (default 64).
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "pointer_size", "count",
@@ -636,14 +627,14 @@ def ida_get_vtable(ea: str, count: int = 64, target: Optional[str] = None) -> di
 
 
 @mcp.tool()
-def ida_get_address_info(ea: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_get_address_info(ea: str, target: str) -> dict[str, Any]:
     """
     Get detailed information about a single address: name, type, segment,
     flags (code/data/head/tail), containing function, comments, raw bytes.
 
     Args:
         ea: Hex address string.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "name", "type", "segment", "is_code", "is_data", "is_head",
@@ -655,11 +646,11 @@ def ida_get_address_info(ea: str, target: Optional[str] = None) -> dict[str, Any
 
 @mcp.tool()
 def ida_search_bytes(
+    target: str,
     pattern: str,
     start: Optional[str] = None,
     direction: Literal["down", "up"] = "down",
     max_results: int = 100,
-    target: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Search for a byte pattern in the binary.
@@ -670,7 +661,7 @@ def ida_search_bytes(
         start: Hex address to start searching from. Defaults to min_ea (down) or max_ea (up).
         direction: "down" (forward) or "up" (backward). Default "down".
         max_results: Max matches to return (default 100).
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"pattern", "count", "results": [{"ea", "name"}, ...]}
@@ -697,14 +688,14 @@ def ida_search_bytes(
 
 
 @mcp.tool()
-def ida_rename(ea: str, name: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_rename(ea: str, name: str, target: str) -> dict[str, Any]:
     """
     Rename an address (function, global, label, etc).
 
     Args:
         ea: Hex address to rename.
         name: New name. Use "" to clear an existing name.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "name", "success": true}
@@ -716,7 +707,7 @@ def ida_rename(ea: str, name: str, target: Optional[str] = None) -> dict[str, An
 
 
 @mcp.tool()
-def ida_set_comment(ea: str, comment: str, repeatable: bool = False, target: Optional[str] = None) -> dict[str, Any]:
+def ida_set_comment(target: str, ea: str, comment: str, repeatable: bool = False) -> dict[str, Any]:
     """
     Set a comment at an address.
 
@@ -724,7 +715,7 @@ def ida_set_comment(ea: str, comment: str, repeatable: bool = False, target: Opt
         ea: Hex address.
         comment: Comment text. Use "" to clear.
         repeatable: If true, set as a repeatable comment.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "comment", "repeatable", "success": true}
@@ -737,7 +728,7 @@ def ida_set_comment(ea: str, comment: str, repeatable: bool = False, target: Opt
 
 
 @mcp.tool()
-def ida_set_func_comment(ea: str, comment: str, repeatable: bool = False, target: Optional[str] = None) -> dict[str, Any]:
+def ida_set_func_comment(target: str, ea: str, comment: str, repeatable: bool = False) -> dict[str, Any]:
     """
     Set a comment on the function containing an address.
 
@@ -745,7 +736,7 @@ def ida_set_func_comment(ea: str, comment: str, repeatable: bool = False, target
         ea: Hex address within the target function.
         comment: Comment text. Use "" to clear.
         repeatable: If true, set as a repeatable comment.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "comment", "repeatable", "success": true}
@@ -758,7 +749,7 @@ def ida_set_func_comment(ea: str, comment: str, repeatable: bool = False, target
 
 
 @mcp.tool()
-def ida_set_type(ea: str, type_decl: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_set_type(ea: str, type_decl: str, target: str) -> dict[str, Any]:
     """
     Apply a C type declaration at an address.
 
@@ -767,7 +758,7 @@ def ida_set_type(ea: str, type_decl: str, target: Optional[str] = None) -> dict[
         type_decl: C type string, e.g. "int __fastcall(int a, int b)"
                    or "struct MyStruct *". The trailing semicolon is
                    added automatically if missing.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "type", "success": true}
@@ -781,7 +772,7 @@ def ida_set_type(ea: str, type_decl: str, target: Optional[str] = None) -> dict[
 
 
 @mcp.tool()
-def ida_create_function(start_ea: str, end_ea: Optional[str] = None, target: Optional[str] = None) -> dict[str, Any]:
+def ida_create_function(target: str, start_ea: str, end_ea: Optional[str] = None) -> dict[str, Any]:
     """
     Create a function at the given address range. If end_ea is omitted,
     IDA will try to determine the function boundaries automatically.
@@ -789,7 +780,7 @@ def ida_create_function(start_ea: str, end_ea: Optional[str] = None, target: Opt
     Args:
         start_ea: Hex address of the function start.
         end_ea: Optional hex address of the function end.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"start_ea", "end_ea", "success": true}
@@ -801,13 +792,13 @@ def ida_create_function(start_ea: str, end_ea: Optional[str] = None, target: Opt
 
 
 @mcp.tool()
-def ida_delete_function(ea: str, target: Optional[str] = None) -> dict[str, Any]:
+def ida_delete_function(ea: str, target: str) -> dict[str, Any]:
     """
     Delete the function containing the given address.
 
     Args:
         ea: Hex address within the function to delete.
-        target: IDA instance to query. Optional if only one instance is running.
+        target: REQUIRED. The exact full file path (instance_id) or port number from ida_list_instances. No substrings.
 
     Returns:
         {"ea", "success": true}

@@ -95,7 +95,7 @@ if not match:
     check_alive("waiting for explorer")
     print("ERROR: Explorer did not start")
     sys.exit(1)
-time.sleep(5)
+time.sleep(15)
 check_alive("after explorer ready")
 print("    Explorer ready.")
 
